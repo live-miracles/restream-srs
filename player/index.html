@@ -113,6 +113,72 @@
 
     .copy-btn:hover { color: #bbb; border-color: #444; }
     .copy-btn.copied { color: #4caf7d; border-color: #4caf7d; }
+
+    .restream-panel {
+      width: 100%;
+      max-width: 960px;
+      background: #151515;
+      border: 1px solid #222;
+      border-radius: 6px;
+      padding: 1.25rem 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .restream-panel h2 {
+      font-size: 0.7rem;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #555;
+    }
+
+    .restream-row {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    #rtmp-url {
+      flex: 1;
+      background: #0d0d0d;
+      border: 1px solid #2a2a2a;
+      border-radius: 3px;
+      color: #ccc;
+      font-family: ui-monospace, monospace;
+      font-size: 0.82rem;
+      padding: 0.35em 0.6em;
+      outline: none;
+    }
+
+    #rtmp-url:focus { border-color: #444; }
+    #rtmp-url:disabled { opacity: 0.4; }
+
+    .stream-btn {
+      flex-shrink: 0;
+      border: 1px solid #2a2a2a;
+      border-radius: 3px;
+      font-size: 0.78rem;
+      padding: 0.35em 1em;
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s, background 0.15s;
+      background: none;
+      color: #aaa;
+    }
+
+    .stream-btn.start { color: #4caf7d; border-color: #4caf7d; }
+    .stream-btn.start:hover { background: #4caf7d22; }
+    .stream-btn.stop { color: #c0392b; border-color: #c0392b; }
+    .stream-btn.stop:hover { background: #c0392b22; }
+    .stream-btn:disabled { opacity: 0.4; cursor: default; }
+
+    #restream-status {
+      font-size: 0.75rem;
+      color: #444;
+      min-height: 1em;
+    }
+
+    #restream-status.streaming { color: #4caf7d; }
   </style>
 </head>
 <body>
@@ -136,6 +202,15 @@
       <dt>ffmpeg</dt>
       <dd><code id="ffmpeg-cmd"></code></dd>
     </dl>
+  </div>
+
+  <div class="restream-panel">
+    <h2>Restream to RTMP</h2>
+    <div class="restream-row">
+      <input id="rtmp-url" type="text" placeholder="rtmp://your-server/live/key" spellcheck="false" />
+      <button id="stream-btn" class="stream-btn start">Start</button>
+    </div>
+    <div id="restream-status"></div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
@@ -166,6 +241,57 @@
       status.textContent = text;
       status.className   = cls || '';
     }
+
+    // Restream panel
+    const API = `http://${location.hostname}:3000`;
+    const streamBtn = document.getElementById('stream-btn');
+    const rtmpInput = document.getElementById('rtmp-url');
+    const restreamStatus = document.getElementById('restream-status');
+
+    function applyStreamState(running) {
+      streamBtn.disabled = false;
+      if (running) {
+        streamBtn.textContent = 'Stop';
+        streamBtn.className = 'stream-btn stop';
+        rtmpInput.disabled = true;
+        restreamStatus.textContent = '● Streaming';
+        restreamStatus.className = 'streaming';
+      } else {
+        streamBtn.textContent = 'Start';
+        streamBtn.className = 'stream-btn start';
+        rtmpInput.disabled = false;
+        restreamStatus.textContent = '';
+        restreamStatus.className = '';
+      }
+    }
+
+    async function pollStatus() {
+      try {
+        const res = await fetch(`${API}/api/status`);
+        const { running } = await res.json();
+        applyStreamState(running);
+      } catch (_) {}
+    }
+
+    streamBtn.addEventListener('click', async () => {
+      streamBtn.disabled = true;
+      const running = streamBtn.classList.contains('stop');
+      if (running) {
+        await fetch(`${API}/api/stop`, { method: 'POST' }).catch(() => {});
+      } else {
+        const url = rtmpInput.value.trim();
+        if (!url) { streamBtn.disabled = false; return; }
+        await fetch(`${API}/api/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rtmpUrl: url }),
+        }).catch(() => {});
+      }
+      pollStatus();
+    });
+
+    pollStatus();
+    setInterval(pollStatus, 2000);
 
     if (Hls.isSupported()) {
       const hls = new Hls({

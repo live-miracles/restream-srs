@@ -10,3 +10,11 @@ services:
     volumes:
       - ./srs.conf:/usr/local/srs/conf/docker.conf
       - ./player:/usr/local/srs/objs/nginx/html/player
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - srs
