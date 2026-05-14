@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Preview</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0d0d0d;
+      color: #e0e0e0;
+      font-family: system-ui, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+      padding: 1.5rem;
+    }
+
+    h1 {
+      font-size: 0.75rem;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #555;
+    }
+
+    video {
+      width: 100%;
+      max-width: 960px;
+      aspect-ratio: 16 / 9;
+      background: #111;
+      border-radius: 6px;
+      outline: none;
+    }
+
+    #status {
+      font-size: 0.78rem;
+      color: #444;
+    }
+
+    #status.live {
+      color: #4caf7d;
+    }
+
+    #status.error {
+      color: #c0392b;
+    }
+
+    .instructions {
+      width: 100%;
+      max-width: 960px;
+      background: #151515;
+      border: 1px solid #222;
+      border-radius: 6px;
+      padding: 1.25rem 1.5rem;
+      margin-top: 0.5rem;
+    }
+
+    .instructions h2 {
+      font-size: 0.7rem;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #555;
+      margin-bottom: 1rem;
+    }
+
+    .instructions dl {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 0.6rem 1.5rem;
+      font-size: 0.82rem;
+    }
+
+    .instructions dt {
+      color: #555;
+      white-space: nowrap;
+      padding-top: 0.15em;
+    }
+
+    .instructions dd {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .instructions code {
+      font-family: ui-monospace, monospace;
+      font-size: 0.8rem;
+      color: #ccc;
+      background: #0d0d0d;
+      border: 1px solid #2a2a2a;
+      border-radius: 3px;
+      padding: 0.2em 0.5em;
+      word-break: break-all;
+    }
+
+    .copy-btn {
+      flex-shrink: 0;
+      background: none;
+      border: 1px solid #2a2a2a;
+      border-radius: 3px;
+      color: #555;
+      font-size: 0.72rem;
+      padding: 0.2em 0.55em;
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
+    }
+
+    .copy-btn:hover { color: #bbb; border-color: #444; }
+    .copy-btn.copied { color: #4caf7d; border-color: #4caf7d; }
+  </style>
+</head>
+<body>
+  <h1>Live Preview</h1>
+  <video id="video" controls autoplay muted playsinline></video>
+  <div id="status">Waiting for stream…</div>
+
+  <div class="instructions">
+    <h2>How to stream</h2>
+    <dl>
+      <dt>SRT URL</dt>
+      <dd>
+        <code id="srt-url"></code>
+        <button class="copy-btn" data-copy="srt-url">Copy</button>
+      </dd>
+      <dt>Stream key</dt>
+      <dd>
+        <code>#!::r=live/stream,mode=publish</code>
+        <button class="copy-btn" data-copy-text="#!::r=live/stream,mode=publish">Copy</button>
+      </dd>
+      <dt>ffmpeg</dt>
+      <dd><code id="ffmpeg-cmd"></code></dd>
+    </dl>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+  <script>
+    const video  = document.getElementById('video');
+    const status = document.getElementById('status');
+    const src    = `http://${location.hostname}:8080/live/stream.m3u8`;
+
+    const srtBase = `srt://${location.hostname}:10080`;
+    const streamId = '#!::r=live/stream,mode=publish';
+    document.getElementById('srt-url').textContent = srtBase;
+    document.getElementById('ffmpeg-cmd').textContent =
+      `ffmpeg -re -i input.mp4 -c:v libx264 -preset veryfast -c:a aac -f mpegts '${srtBase}?streamid=${streamId}&pkt_size=1316'`;
+
+    document.querySelectorAll('.copy-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const text = btn.dataset.copyText
+          || document.getElementById(btn.dataset.copy)?.textContent || '';
+        navigator.clipboard.writeText(text).then(() => {
+          btn.textContent = 'Copied';
+          btn.classList.add('copied');
+          setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+        });
+      });
+    });
+
+    function setStatus(text, cls) {
+      status.textContent = text;
+      status.className   = cls || '';
+    }
+
+    if (Hls.isSupported()) {
+      const hls = new Hls({
+        liveSyncDurationCount:    3,
+        liveMaxLatencyDurationCount: 6,
+        manifestLoadingRetryDelay: 2000,
+        manifestLoadingMaxRetry:   Infinity,
+      });
+
+      hls.loadSource(src);
+      hls.attachMedia(video);
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        setStatus('● Live', 'live');
+        video.play().catch(() => {});
+      });
+
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data.fatal) {
+          setStatus('Waiting for stream…');
+          setTimeout(() => hls.startLoad(), 3000);
+        }
+      });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      // Safari native HLS
+      video.src = src;
+      video.addEventListener('loadedmetadata', () => {
+        setStatus('● Live', 'live');
+        video.play().catch(() => {});
+      });
+    } else {
+      setStatus('HLS is not supported in this browser.', 'error');
+    }
+  </script>
+</body>
+</html>
