@@ -91,3 +91,11 @@ export const startOutput = (pipelineId: string, outId: string) =>
 
 export const stopOutput = (pipelineId: string, outId: string) =>
     apiRequest(`/api/pipelines/${pipelineId}/outputs/${outId}/stop`, { method: 'POST' });
+
+export const startPreview = (pipelineId: string) =>
+    apiRequest<{ hlsUrl: string }>(`/api/pipelines/${pipelineId}/preview/start`, {
+        method: 'POST',
+    });
+
+export const stopPreview = (pipelineId: string) =>
+    apiRequest(`/api/pipelines/${pipelineId}/preview/stop`, { method: 'POST' });

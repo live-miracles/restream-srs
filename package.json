@@ -10,6 +10,8 @@
         "build": "npm run build:backend && npm run build:frontend",
         "build:backend": "npx tsc -p tsconfig.backend.json",
         "build:frontend": "npx tsc -p tsconfig.json && npx tailwindcss -i public/input.css -o public/output.css",
+        "docker:dev": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up",
+        "docker:prod": "docker compose up",
         "format": "npx prettier --write .",
         "format:check": "npx prettier --check ."
     },
