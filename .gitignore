@@ -1,2 +1,9 @@
 .vscode/
-
+node_modules/
+dist/
+public/js/
+public/output.css
+data.db
+*.sqlite
+.env
+*.mp4

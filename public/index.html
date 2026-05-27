@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en" data-theme="dim">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Restream SRS</title>
+    <link rel="stylesheet" type="text/css" href="output.css" />
+    <script type="module" src="js/features/dashboard-entry.js"></script>
+  </head>
+  <body class="bg-base-100 text-base-content flex h-screen flex-col">
+    <!-- Navbar -->
+    <div class="navbar bg-base-100 border-base-content/10 shrink-0 border-b">
+      <div class="flex flex-1 items-center gap-3">
+        <span class="px-2 text-xl font-bold" id="server-name-display">Restream SRS</span>
+        <button class="btn btn-xs btn-ghost opacity-50" onclick="editServerNameBtn()">✎</button>
+        <div id="saving-badge" class="hidden items-center gap-2 text-sm opacity-60">
+          <span class="loading loading-infinity loading-xs"></span>
+          Saving
+        </div>
+      </div>
+      <div class="flex-none">
+        <div class="divide-base-content/15 flex items-center divide-x">
+          <span class="px-3 font-mono text-sm tabular-nums" id="navbar-cpu-value">CPU —</span>
+          <span class="px-3 font-mono text-sm tabular-nums" id="navbar-ram-value">RAM —</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Error banner -->
+    <div class="fixed left-1/2 z-50 -translate-x-1/2" style="top: 0.5rem; pointer-events: none">
+      <div role="alert" id="error-alert" class="alert alert-error hidden max-w-xl opacity-90" style="pointer-events: auto">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0 stroke-current" fill="none" viewBox="0 0 24 24">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span id="error-msg"></span>
+      </div>
+    </div>
+
+    <!-- Copy notification -->
+    <div id="copied-notification" role="alert" class="alert alert-success fixed bottom-3 left-1/2 z-50 hidden w-fit -translate-x-1/2">
+      <span>Copied</span>
+    </div>
+
+    <!-- Server name modal -->
+    <dialog id="server-name-modal" class="modal">
+      <div class="modal-box w-fit">
+        <div class="mx-auto mt-2 w-full max-w-sm space-y-3 px-4">
+          <h2 class="text-xl font-bold">Server Name</h2>
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend">Name</legend>
+            <input type="text" id="server-name-input" class="input w-full" placeholder="Restream SRS" />
+          </fieldset>
+        </div>
+        <div class="modal-action">
+          <form method="dialog">
+            <button class="btn mx-2">Cancel</button>
+            <button type="button" class="btn btn-accent" onclick="serverNameFormBtn()">Save</button>
+          </form>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- Pipeline modal -->
+    <dialog id="edit-pipe-modal" class="modal">
+      <div class="modal-box w-fit">
+        <input type="hidden" id="pipe-id-input" />
+        <div class="mx-auto mt-2 w-full max-w-sm space-y-3 px-4">
+          <h2 class="text-xl font-bold" id="pipe-modal-title">Add Pipeline</h2>
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend">Pipeline Name</legend>
+            <input type="text" id="pipe-name-input" class="input w-full" placeholder="My Stream" />
+          </fieldset>
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend">Stream Key</legend>
+            <select class="select w-full font-mono text-sm" id="pipe-key-select"></select>
+          </fieldset>
+        </div>
+        <div class="modal-action">
+          <form method="dialog">
+            <button class="btn mx-2">Cancel</button>
+            <button type="button" class="btn btn-accent" onclick="pipeFormBtn()">Save</button>
+          </form>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- Output modal -->
+    <dialog id="edit-out-modal" class="modal">
+      <div class="modal-box max-w-lg">
+        <input type="hidden" id="out-pipe-id-input" />
+        <input type="hidden" id="out-id-input" />
+        <div class="mx-auto mt-2 space-y-3 px-4">
+          <h2 class="text-xl font-bold" id="out-modal-title">Add Output</h2>
+
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend">Output Name</legend>
+            <input type="text" id="out-name-input" class="input w-full" placeholder="YouTube" />
+          </fieldset>
+
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend">Server</legend>
+            <select class="select w-full" id="out-server-select" onchange="outServerChange()">
+              <option value="0">YouTube RTMP</option>
+              <option value="1">Facebook RTMP</option>
+              <option value="2">Custom RTMP</option>
+              <option value="3">Custom SRT</option>
+            </select>
+          </fieldset>
+
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend" id="out-key-label">Stream Key</legend>
+            <input type="text" id="out-key-input" class="input w-full font-mono text-sm" placeholder="xxxx-xxxx-xxxx-xxxx" />
+          </fieldset>
+
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend">Encoding</legend>
+            <select class="select" id="out-encoding-input">
+              <option value="source">source (copy)</option>
+              <option value="720p">720p</option>
+              <option value="1080p">1080p</option>
+            </select>
+          </fieldset>
+        </div>
+        <div class="modal-action">
+          <form method="dialog">
+            <button class="btn mx-2">Cancel</button>
+            <button type="button" class="btn btn-accent" onclick="outFormBtn()">Save</button>
+          </form>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- Main grid -->
+    <div class="grid h-screen min-h-0 flex-1 gap-4 p-4 pt-0" style="grid-template-columns: minmax(13rem, 16rem) minmax(0, 1fr) minmax(22rem, 1fr)">
+      <!-- Left: Pipeline list -->
+      <div class="bg-base-300 rounded-box mt-4 overflow-y-auto">
+        <div class="space-y-2 p-4">
+          <div class="grid grid-cols-[5rem_auto] items-center gap-x-3 text-sm">
+            <span><span id="pipe-cnt">0</span> Inputs</span>
+            <div class="flex gap-1">
+              <div class="badge badge-sm badge-success px-2" id="pipe-oks" title="Live"></div>
+              <div class="badge badge-sm badge-neutral px-2" id="pipe-offs" title="Offline"></div>
+            </div>
+          </div>
+          <div class="grid grid-cols-[5rem_auto] items-center gap-x-3 text-sm">
+            <span><span id="out-cnt">0</span> Outputs</span>
+            <div class="flex gap-1">
+              <div class="badge badge-sm badge-success px-2" id="out-oks" title="Running"></div>
+              <div class="badge badge-sm badge-error px-2" id="out-errors" title="Failed"></div>
+              <div class="badge badge-sm badge-neutral px-2" id="out-offs" title="Stopped"></div>
+            </div>
+          </div>
+        </div>
+
+        <ul class="menu rounded-box w-full" id="pipelines"></ul>
+
+        <div class="mt-3 w-full pb-4 text-center">
+          <button class="btn btn-sm btn-accent btn-outline" onclick="addPipeBtn()">Add Pipeline</button>
+        </div>
+      </div>
+
+      <!-- Middle: Pipeline info -->
+      <div class="bg-base-200 mt-4 hidden overflow-y-auto rounded-xl p-4 shadow" id="pipe-info-col">
+        <div class="mb-3 flex items-center justify-between gap-3 text-xl font-bold">
+          <span class="truncate" id="pipe-name"></span>
+          <div class="flex shrink-0 items-center gap-2">
+            <button class="btn btn-xs btn-accent btn-outline" onclick="editPipeBtn()">✎ Edit</button>
+            <button class="btn btn-xs btn-error btn-outline" onclick="deletePipeBtn()">🗙 Delete</button>
+          </div>
+        </div>
+
+        <!-- Input status + SRS stats -->
+        <div class="border-base-content/10 bg-base-100/50 mb-4 rounded-xl border p-3">
+          <div class="mb-2 flex items-center gap-2">
+            <div id="input-live-dot" class="bg-base-content/30 h-2 w-2 rounded-full"></div>
+            <span class="text-sm font-semibold" id="input-status-text">Offline</span>
+          </div>
+          <div id="input-stats"></div>
+        </div>
+
+        <!-- Publish URLs -->
+        <div class="space-y-2">
+          <div class="border-base-content/10 bg-base-100/50 rounded-xl border p-3">
+            <div class="mb-1 flex items-center justify-between gap-2">
+              <span class="text-xs font-semibold opacity-60">RTMP Publish URL</span>
+              <button class="btn btn-xs btn-ghost btn-outline" onclick="copyText(document.getElementById('rtmp-publish-url').dataset.copy)">
+                Copy
+              </button>
+            </div>
+            <code class="font-mono text-xs break-all opacity-80" id="rtmp-publish-url"></code>
+          </div>
+          <div class="border-base-content/10 bg-base-100/50 rounded-xl border p-3">
+            <div class="mb-1 flex items-center justify-between gap-2">
+              <span class="text-xs font-semibold opacity-60">SRT Publish URL</span>
+              <button class="btn btn-xs btn-ghost btn-outline" onclick="copyText(document.getElementById('srt-publish-url').dataset.copy)">
+                Copy
+              </button>
+            </div>
+            <code class="font-mono text-xs break-all opacity-80" id="srt-publish-url"></code>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Outputs -->
+      <div class="bg-base-200 mt-4 hidden overflow-y-auto rounded-xl p-4 shadow" id="outs-col">
+        <h2 class="mb-3 text-xl font-bold">Outputs</h2>
+        <div class="space-y-3" id="outputs-list"></div>
+        <div class="mt-5 text-center">
+          <button class="btn btn-sm btn-accent btn-outline" onclick="addOutBtn()">Add Output</button>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
