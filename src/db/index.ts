@@ -37,9 +37,9 @@ function rowToStreamKey(row: Record<string, unknown>): StreamKey {
     return { id: row.id as number, slot: row.slot as number, key: row.key as string };
 }
 
-export function createDb(): Db {
-    const dbPath = process.env.DB_PATH || path.join(process.cwd(), 'data.db');
-    const sqlite = new BetterSqlite3(dbPath);
+export function createDb(dbPath?: string): Db {
+    const resolvedPath = dbPath ?? process.env.DB_PATH ?? path.join(process.cwd(), 'data.db');
+    const sqlite = new BetterSqlite3(resolvedPath);
     setupDatabaseSchema(sqlite);
 
     // Seed stream key slots 1–99 if missing
