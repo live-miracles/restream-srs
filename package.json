@@ -12,6 +12,8 @@
         "build:frontend": "npx tsc -p tsconfig.json && npx tailwindcss -i public/input.css -o public/output.css",
         "docker:dev": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up",
         "docker:prod": "docker compose up",
+        "typecheck": "npx tsc -p tsconfig.backend.json --noEmit && npx tsc -p tsconfig.json --noEmit",
+        "test": "node --require tsx/cjs --test test/*.test.js",
         "format": "npx prettier --write .",
         "format:check": "npx prettier --check ."
     },

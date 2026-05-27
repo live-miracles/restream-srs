@@ -9,3 +9,4 @@ stable
 v
 *.md
 *.yml
+.claude/
