@@ -3,18 +3,26 @@ services:
     image: ossrs/srs:5
     restart: unless-stopped
     ports:
-      - "8080:8080"       # HTTP + HLS
-      - "1935:1935"       # RTMP (for direct testing)
-      - "1985:1985"       # HTTP API
-      - "10080:10080/udp" # SRT ingest
+      - "1935:1935"         # RTMP input
+      - "10080:10080/udp"   # SRT input
+      - "1985:1985"         # SRS HTTP API
     volumes:
       - ./srs.conf:/usr/local/srs/conf/docker.conf
-      - ./player:/usr/local/srs/objs/nginx/html/player
 
-  backend:
-    build: ./backend
+  app:
+    build: .
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "8080:8080"         # Web UI + REST API
     depends_on:
       - srs
+    volumes:
+      - app-data:/data
+    environment:
+      - SRS_API_URL=http://srs:1985
+      - SRS_RTMP_HOST=srs
+      - SRS_RTMP_PORT=1935
+      - DB_PATH=/data/db.sqlite
+
+volumes:
+  app-data:

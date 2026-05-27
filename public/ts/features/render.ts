@@ -1,0 +1,276 @@
+import {
+    setInnerText,
+    statusColor,
+    formatBitrate,
+    formatBytes,
+    getUrlParam,
+    maskStreamKey,
+} from '../core/utils.js';
+import { state } from '../core/state.js';
+import type { InputHealth, PipelineView, OutputView } from '../types.js';
+
+declare global {
+    interface Window {
+        selectPipeline: (id: string | null) => void;
+    }
+}
+
+// ── Pipeline list (left column) ───────────────────────
+
+function renderPipelineList(): void {
+    const listEl = document.getElementById('pipelines');
+    if (!listEl) return;
+
+    const inputsOn = state.pipelines.filter((p) => p.input.live).length;
+    const totalOutputs = state.pipelines.reduce((s, p) => s + p.outs.length, 0);
+    const outputsOn = state.pipelines.reduce(
+        (s, p) => s + p.outs.filter((o) => o.status === 'running').length,
+        0,
+    );
+    const outputsFailed = state.pipelines.reduce(
+        (s, p) =>
+            s + p.outs.filter((o) => o.desiredState === 'running' && o.status === 'failed').length,
+        0,
+    );
+    const outputsOff = state.pipelines.reduce(
+        (s, p) => s + p.outs.filter((o) => o.desiredState === 'stopped').length,
+        0,
+    );
+
+    setInnerText('pipe-cnt', state.pipelines.length);
+    setInnerText('pipe-oks', inputsOn);
+    setInnerText('pipe-offs', state.pipelines.length - inputsOn);
+    setInnerText('out-cnt', totalOutputs);
+    setInnerText('out-oks', outputsOn);
+    setInnerText('out-errors', outputsFailed);
+    setInnerText('out-offs', outputsOff);
+
+    const selectedId = getUrlParam('p');
+
+    listEl.innerHTML = state.pipelines
+        .map((p) => {
+            const outRunning = p.outs.filter((o) => o.status === 'running').length;
+            const outFailed = p.outs.filter(
+                (o) => o.desiredState === 'running' && o.status === 'failed',
+            ).length;
+            const outOff = p.outs.filter((o) => o.desiredState === 'stopped').length;
+
+            const inColor = statusColor(p.input.live);
+            const outColor = outFailed > 0 ? '#ef4444' : outRunning > 0 ? '#22c55e' : '#6b7280';
+            const selected = p.id === selectedId ? 'bg-base-100' : '';
+
+            const badge = (n: number, cls: string) =>
+                n > 0 ? `<div class="badge badge-sm ${cls} px-2">${n}</div>` : '';
+
+            return `<li>
+            <div class="flex items-center gap-2 ${selected} cursor-pointer js-select-pipeline" data-id="${p.id}">
+                <div class="rounded-box h-5 w-5 shrink-0" style="background:linear-gradient(90deg,${inColor},${inColor} 45%,#242933 45%,#242933 55%,${outColor} 55%)"></div>
+                ${badge(outRunning, 'badge-success')}
+                ${badge(outFailed, 'badge-error')}
+                ${badge(outOff, 'badge-ghost')}
+                <a class="truncate">${p.name}</a>
+            </div>
+        </li>`;
+        })
+        .join('');
+
+    listEl.onclick = (e) => {
+        const row = (e.target as Element).closest('.js-select-pipeline') as HTMLElement | null;
+        if (row?.dataset.id) window.selectPipeline(row.dataset.id);
+    };
+}
+
+// ── Pipeline info (middle column) ─────────────────────
+
+function formatUptime(ms: number | null): string {
+    if (ms === null) return '—';
+    const s = Math.floor(ms / 1000);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+}
+
+function renderInputStats(input: InputHealth): string {
+    if (!input.live) {
+        return `<div class="text-sm opacity-40 italic">No active publisher</div>`;
+    }
+
+    const v = input.video;
+    const a = input.audio;
+
+    const stat = (label: string, val: string | number | null | undefined) =>
+        `<div class="stat p-3">
+            <div class="stat-title text-xs">${label}</div>
+            <div class="stat-value text-sm">${val ?? '—'}</div>
+        </div>`;
+
+    return `
+        <div class="stats shadow mt-2 flex-wrap">
+            ${stat('In Bitrate', formatBitrate(input.recvBitrateKbps))}
+            ${stat('Out Bitrate', formatBitrate(input.sendBitrateKbps))}
+            ${stat('Readers', input.readers)}
+            ${stat('Uptime', formatUptime(input.uptimeMs))}
+        </div>
+        ${
+            v
+                ? `
+        <h3 class="mt-3 text-sm font-semibold opacity-60">Video</h3>
+        <div class="stats shadow mt-1 flex-wrap">
+            ${stat('Codec', v.codec)}
+            ${stat('Resolution', v.width && v.height ? `${v.width}×${v.height}` : null)}
+            ${stat('Profile', v.profile || null)}
+            ${stat('Level', v.level || null)}
+        </div>`
+                : ''
+        }
+        ${
+            a
+                ? `
+        <h3 class="mt-3 text-sm font-semibold opacity-60">Audio</h3>
+        <div class="stats shadow mt-1 flex-wrap">
+            ${stat('Codec', a.codec)}
+            ${stat('Sample Rate', a.sample_rate ? `${(a.sample_rate / 1000).toFixed(1)} kHz` : null)}
+            ${stat('Channels', a.channel)}
+            ${stat('Profile', a.profile || null)}
+        </div>`
+                : ''
+        }
+    `;
+}
+
+function renderPipelineInfo(selectedId: string | null): void {
+    const pipeline = selectedId ? state.pipelines.find((p) => p.id === selectedId) : null;
+    const col = document.getElementById('pipe-info-col');
+    const outsCol = document.getElementById('outs-col');
+
+    if (!pipeline) {
+        col?.classList.add('hidden');
+        outsCol?.classList.add('hidden');
+        return;
+    }
+
+    col?.classList.remove('hidden');
+    outsCol?.classList.remove('hidden');
+
+    setInnerText('pipe-name', pipeline.name);
+
+    const inputDot = document.getElementById('input-live-dot');
+    if (inputDot)
+        inputDot.className = `rounded-full w-2 h-2 ${pipeline.input.live ? 'bg-success' : 'bg-base-content/30'}`;
+    setInnerText('input-status-text', pipeline.input.live ? 'Live' : 'Offline');
+
+    const statsEl = document.getElementById('input-stats');
+    if (statsEl) statsEl.innerHTML = renderInputStats(pipeline.input);
+
+    const masked = maskStreamKey(pipeline.streamKey);
+    const rtmpEl = document.getElementById('rtmp-publish-url');
+    const srtEl = document.getElementById('srt-publish-url');
+    if (rtmpEl) {
+        rtmpEl.dataset.copy = pipeline.rtmpPublishUrl;
+        rtmpEl.textContent = pipeline.rtmpPublishUrl.replace(pipeline.streamKey, masked);
+    }
+    if (srtEl) {
+        srtEl.dataset.copy = pipeline.srtPublishUrl;
+        srtEl.textContent = pipeline.srtPublishUrl.replace(pipeline.streamKey, masked);
+    }
+
+    renderOutputsList(pipeline);
+}
+
+// ── Outputs list (right column) ───────────────────────
+
+function renderOutputCard(o: OutputView): string {
+    const isStopped = o.desiredState === 'stopped';
+    const isRunning = o.status === 'running';
+    const statusClass = isStopped
+        ? 'status-neutral'
+        : isRunning
+          ? 'status-success'
+          : 'status-error';
+    const badges = [`<span class="badge badge-sm whitespace-nowrap">${o.encoding}</span>`];
+    if (isRunning && o.bitrateKbps !== null) {
+        badges.push(
+            `<span class="badge badge-sm whitespace-nowrap">${formatBitrate(o.bitrateKbps)}</span>`,
+        );
+    }
+    return `
+    <div class="bg-base-100 px-3 py-2 shadow rounded-box w-full flex gap-2 items-start">
+        <div class="min-w-0 flex-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <div class="flex items-center gap-2 shrink-0 font-semibold">
+                <div aria-label="status" class="status status-lg ${statusClass} mx-1"></div>
+                <button class="btn btn-xs ${isStopped ? 'btn-accent' : 'btn-accent btn-outline'}"
+                    data-action="${isStopped ? 'start' : 'stop'}" data-out-id="${o.id}">
+                    ${isStopped ? 'Start' : 'Stop'}
+                </button>
+                <span>${o.name}</span>
+            </div>
+            <code class="text-sm font-normal opacity-60 truncate shrink min-w-0"
+                  style="max-width:min(28rem,40%)" title="${o.url}">${o.url}</code>
+            ${badges.join('')}
+        </div>
+        <div class="flex items-center gap-1 shrink-0">
+            <button class="btn btn-xs btn-ghost" data-action="edit" data-out-id="${o.id}">✎</button>
+            <button class="btn btn-xs btn-ghost text-error ${isStopped ? '' : 'btn-disabled'}"
+                data-action="delete" data-out-id="${o.id}">🗙</button>
+        </div>
+    </div>`;
+}
+
+function renderOutputsList(pipeline: PipelineView): void {
+    const listEl = document.getElementById('outputs-list');
+    if (!listEl) return;
+
+    if (pipeline.outs.length === 0) {
+        listEl.innerHTML = '<p class="text-sm opacity-50">No outputs yet.</p>';
+        return;
+    }
+
+    listEl.innerHTML = pipeline.outs.map((o) => renderOutputCard(o)).join('');
+
+    listEl.onclick = (e) => {
+        const btn = (e.target as Element).closest('[data-action]') as HTMLElement | null;
+        if (!btn) return;
+        const outId = btn.dataset.outId!;
+        const action = btn.dataset.action!;
+        if (action === 'start') {
+            void import('../features/editor.js').then(({ startOutput }) =>
+                startOutput(pipeline.id, outId),
+            );
+        } else if (action === 'stop') {
+            void import('../features/editor.js').then(({ stopOutput }) =>
+                stopOutput(pipeline.id, outId),
+            );
+        } else if (action === 'edit') {
+            void import('../features/editor.js').then(({ openEditOutput }) =>
+                openEditOutput(pipeline.id, outId),
+            );
+        } else if (action === 'delete') {
+            if (btn.classList.contains('btn-disabled')) return;
+            void import('../features/editor.js').then(({ confirmDeleteOutput }) =>
+                confirmDeleteOutput(pipeline.id, outId),
+            );
+        }
+    };
+}
+
+// ── Metrics (navbar) ──────────────────────────────────
+
+export function renderMetrics(): void {
+    const m = state.metrics;
+    const cpu = m.cpu?.percent ?? null;
+    const ram = m.ram ?? null;
+    setInnerText('navbar-cpu-value', cpu !== null ? `CPU ${cpu}%` : 'CPU —');
+    setInnerText(
+        'navbar-ram-value',
+        ram ? `RAM ${formatBytes(ram.usedBytes)}/${formatBytes(ram.totalBytes)}` : 'RAM —',
+    );
+}
+
+// ── Entry point ───────────────────────────────────────
+
+export function renderPipelines(): void {
+    const selectedId = getUrlParam('p');
+    renderPipelineList();
+    renderPipelineInfo(selectedId);
+}
