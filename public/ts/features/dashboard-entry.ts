@@ -25,6 +25,8 @@ declare global {
         outFormBtn: () => Promise<void>;
         outServerChange: () => void;
         copyText: (text: string) => Promise<void>;
+        previewPlayBtn: () => Promise<void>;
+        previewStopBtn: () => void;
     }
 }
 
@@ -32,6 +34,7 @@ window.editServerNameBtn = () => openEditServerName();
 window.serverNameFormBtn = () => submitServerNameForm();
 
 window.selectPipeline = (id) => {
+    void import('./render.js').then(({ stopCurrentPreview }) => stopCurrentPreview());
     setUrlParam('p', id);
     void refreshDashboard();
 };
@@ -58,3 +61,18 @@ window.outFormBtn = () => submitOutputForm();
 window.outServerChange = () => onOutServerChange();
 
 window.copyText = copyText;
+
+window.previewPlayBtn = async () => {
+    const id = getUrlParam('p');
+    if (!id) return;
+    const [{ startPreview }, { attachHls }] = await Promise.all([
+        import('../core/api.js'),
+        import('./render.js'),
+    ]);
+    const result = await startPreview(id);
+    if (result?.hlsUrl) attachHls(id, result.hlsUrl);
+};
+
+window.previewStopBtn = () => {
+    void import('./render.js').then(({ stopCurrentPreview }) => stopCurrentPreview());
+};

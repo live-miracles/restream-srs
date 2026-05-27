@@ -3,7 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <title>Restream SRS</title>
+    <link rel="icon" type="image/png" href="logo.png" />
     <link rel="stylesheet" type="text/css" href="output.css" />
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
     <script type="module" src="js/features/dashboard-entry.js"></script>
   </head>
   <body class="bg-base-100 text-base-content flex h-screen flex-col">
@@ -179,6 +181,20 @@
             <span class="text-sm font-semibold" id="input-status-text">Offline</span>
           </div>
           <div id="input-stats"></div>
+        </div>
+
+        <!-- Preview -->
+        <div id="preview-section" class="mb-4 hidden">
+          <div class="border-base-content/10 bg-base-100/50 rounded-xl border p-3">
+            <div class="mb-2 flex items-center justify-between">
+              <span class="text-xs font-semibold opacity-60">PREVIEW</span>
+              <div class="flex gap-2">
+                <button id="preview-play-btn" class="btn btn-xs btn-accent btn-outline" onclick="previewPlayBtn()">&#9654; Preview</button>
+                <button id="preview-stop-btn" class="btn btn-xs btn-ghost hidden" onclick="previewStopBtn()">Stop</button>
+              </div>
+            </div>
+            <video id="preview-video" class="hidden w-full rounded-lg" controls muted playsinline></video>
+          </div>
         </div>
 
         <!-- Publish URLs -->

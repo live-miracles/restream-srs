@@ -88,7 +88,7 @@ export function createHealthService(db: Db, outputService: OutputService) {
                     recvBitrateKbps: s?.kbps?.recv_30s ?? null,
                     sendBitrateKbps: s?.kbps?.send_30s ?? null,
                     readers: s ? Math.max(0, (s.clients ?? 0) - 1) : 0,
-                    uptimeMs: s?.live_ms ?? null,
+                    uptimeMs: s ? Date.now() - s.live_ms : null,
                     video: s?.video ?? null,
                     audio: s?.audio ?? null,
                 },

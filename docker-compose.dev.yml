@@ -1,0 +1,10 @@
+services:
+  app:
+    build:
+      context: .
+      target: dev
+    volumes:
+      - ./src:/app/src
+      - ./public:/app/public
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./tsconfig.backend.json:/app/tsconfig.backend.json

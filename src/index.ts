@@ -8,6 +8,9 @@ import { registerOutputApi } from './api/outputs.js';
 import { registerConfigApi } from './api/config.js';
 import { registerMetricsApi } from './api/metrics.js';
 import { registerSettingsApi } from './api/settings.js';
+import { createPreviewService } from './services/preview.js';
+import { registerPreviewApi } from './api/preview.js';
+import { registerSrsHooks } from './api/srs-hooks.js';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '8080');
@@ -17,13 +20,25 @@ app.use(express.json());
 const db = createDb();
 const outputService = createOutputService(db);
 const healthService = createHealthService(db, outputService);
+const previewService = createPreviewService(db);
 
+registerSrsHooks(app, db);
 registerConfigApi(app, db);
 registerPipelineApi(app, db, outputService);
 registerOutputApi(app, db, outputService);
+registerPreviewApi(app, previewService);
 registerSettingsApi(app, db);
 registerMetricsApi(app);
 healthService.registerRoutes(app);
+
+app.use(
+    '/hls',
+    (_req, res, next) => {
+        res.setHeader('Cache-Control', 'no-cache');
+        next();
+    },
+    express.static(previewService.baseDir),
+);
 
 const publicDir = path.join(__dirname, '..', 'public');
 app.use('/', express.static(publicDir));

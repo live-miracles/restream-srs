@@ -9,6 +9,9 @@ import {
 import { state } from '../core/state.js';
 import type { InputHealth, PipelineView, OutputView } from '../types.js';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+declare const Hls: any;
+
 declare global {
     interface Window {
         selectPipeline: (id: string | null) => void;
@@ -175,6 +178,7 @@ function renderPipelineInfo(selectedId: string | null): void {
         srtEl.textContent = pipeline.srtPublishUrl.replace(pipeline.streamKey, masked);
     }
 
+    renderPreview(pipeline);
     renderOutputsList(pipeline);
 }
 
@@ -252,6 +256,83 @@ function renderOutputsList(pipeline: PipelineView): void {
             );
         }
     };
+}
+
+// ── Preview ───────────────────────────────────────────
+
+let previewPipelineId: string | null = null;
+let hlsInstance: { destroy(): void } | null = null;
+
+function teardownHls(): void {
+    if (hlsInstance) {
+        hlsInstance.destroy();
+        hlsInstance = null;
+    }
+    const video = document.getElementById('preview-video') as HTMLVideoElement | null;
+    if (video) {
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+        video.classList.add('hidden');
+    }
+    document.getElementById('preview-play-btn')?.classList.remove('hidden');
+    document.getElementById('preview-stop-btn')?.classList.add('hidden');
+}
+
+export function stopCurrentPreview(): void {
+    const pid = previewPipelineId;
+    if (!pid) return;
+    previewPipelineId = null;
+    teardownHls();
+    void import('../core/api.js').then(({ stopPreview }) => stopPreview(pid));
+}
+
+export function attachHls(pipelineId: string, hlsUrl: string): void {
+    previewPipelineId = pipelineId;
+    const video = document.getElementById('preview-video') as HTMLVideoElement | null;
+    if (!video) return;
+    video.classList.remove('hidden');
+    document.getElementById('preview-play-btn')?.classList.add('hidden');
+    document.getElementById('preview-stop-btn')?.classList.remove('hidden');
+
+    if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+        const hls = new Hls({ liveSyncDurationCount: 3 }) as {
+            destroy(): void;
+            loadSource(u: string): void;
+            attachMedia(v: HTMLVideoElement): void;
+            on(e: string, cb: () => void): void;
+            Events: { MANIFEST_PARSED: string };
+        };
+        hls.loadSource(hlsUrl);
+        hls.attachMedia(video);
+        (hls as unknown as { on(e: string, cb: () => void): void }).on(
+            Hls.Events.MANIFEST_PARSED as string,
+            () => void video.play(),
+        );
+        hlsInstance = hls;
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = hlsUrl;
+        void video.play();
+    }
+}
+
+function renderPreview(pipeline: PipelineView): void {
+    const section = document.getElementById('preview-section');
+    if (!section) return;
+
+    if (!pipeline.input.live) {
+        section.classList.add('hidden');
+        if (previewPipelineId === pipeline.id) stopCurrentPreview();
+        return;
+    }
+
+    section.classList.remove('hidden');
+
+    if (previewPipelineId && previewPipelineId !== pipeline.id) stopCurrentPreview();
+
+    const isActive = previewPipelineId === pipeline.id;
+    document.getElementById('preview-play-btn')?.classList.toggle('hidden', isActive);
+    document.getElementById('preview-stop-btn')?.classList.toggle('hidden', !isActive);
 }
 
 // ── Metrics (navbar) ──────────────────────────────────

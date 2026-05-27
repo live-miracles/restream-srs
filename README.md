@@ -26,11 +26,19 @@ OBS / ffmpeg  ──RTMP──►  SRS (1935)   ──FFmpeg──►  YouTube /
 
 ## Running
 
+**Production:**
 ```bash
-docker compose up
+npm run docker:prod
+```
+
+**Development** (hot reload — source changes apply without rebuilding):
+```bash
+npm run docker:dev
 ```
 
 Open the dashboard: `http://localhost:8080`
+
+> **WSL users:** Docker Engine must be installed in WSL directly (not just Docker Desktop). See [Install Docker Engine on Ubuntu](https://docs.docker.com/engine/install/ubuntu/).
 
 ### Firewall ports needed
 
@@ -94,19 +102,23 @@ ffmpeg -re -i video.mp4 \
 
 ## Development
 
+Docker is the recommended way to run locally (`npm run docker:dev`). If you want to run outside Docker:
+
 Prerequisites: Node.js 20+, ffmpeg
 
 ```bash
 npm install
-npm run dev
+npm run dev        # tsx watch + tsc watch + tailwind watch
 ```
 
-Starts the Node.js server (tsx watch), TypeScript compiler, and Tailwind CSS — all in watch mode.
-
-Build for production:
+Note: this starts only the Node app. SRS (RTMP/SRT ingest) still requires Docker:
 ```bash
-npm run build
-docker compose up --build
+docker compose up srs
+```
+
+To rebuild the production image:
+```bash
+npm run docker:prod --build
 ```
 
 ---
