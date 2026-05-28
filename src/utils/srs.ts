@@ -22,6 +22,7 @@ export interface SrsStream {
     name: string;
     vhost: string;
     app: string;
+    tcUrl?: string;
     live_ms: number;
     publish: { active: boolean; cid?: string };
     kbps: { recv_30s: number; send_30s: number };
@@ -31,6 +32,22 @@ export interface SrsStream {
     send_bytes: number;
     video?: SrsStreamVideo;
     audio?: SrsStreamAudio;
+}
+
+export async function kickSrsClientsByStream(app: string, stream: string): Promise<void> {
+    const res = await fetch(`${SRS_API_URL}/api/v1/clients?start=0&count=100`, {
+        signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return;
+    const data = (await res.json()) as { clients?: Array<{ id: string; app: string; stream: string }> };
+    for (const client of data.clients ?? []) {
+        if (client.app === app && client.stream === stream) {
+            await fetch(`${SRS_API_URL}/api/v1/clients/${client.id}`, {
+                method: 'DELETE',
+                signal: AbortSignal.timeout(3000),
+            }).catch(() => {});
+        }
+    }
 }
 
 export async function fetchSrsStreams(): Promise<SrsStream[]> {

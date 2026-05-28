@@ -73,11 +73,20 @@ rtmp://YOUR_HOST:1935/live/key01_<random>
 srt://YOUR_HOST:10080?streamid=#!::r=live/key01_<random>,mode=publish
 ```
 
-ffmpeg test command:
+ffmpeg test commands:
+
+RTMP:
 ```bash
 ffmpeg -re -i video.mp4 \
   -c:v libx264 -preset veryfast -b:v 2500k -c:a aac -b:a 128k \
   -f flv rtmp://localhost:1935/live/<stream-key>
+```
+
+SRT:
+```bash
+ffmpeg -re -i video.mp4 \
+  -c:v libx264 -preset veryfast -b:v 2500k -c:a aac -b:a 128k \
+  -f mpegts 'srt://localhost:10080?streamid=#!::r=live/<stream-key>,mode=publish'
 ```
 
 ---
