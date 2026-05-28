@@ -2,6 +2,7 @@ import type { ConfigData, HealthData, InputHealth, PipelineView, OutputView } fr
 
 const EMPTY_INPUT: InputHealth = {
     live: false,
+    isSrt: false,
     recvBitrateKbps: null,
     sendBitrateKbps: null,
     readers: 0,

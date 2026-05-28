@@ -108,10 +108,14 @@ function renderInputStats(input: InputHealth): string {
             <div class="stat-value text-sm">${val ?? '—'}</div>
         </div>`;
 
+    const sourceTag = input.isSrt
+        ? `<span class="badge badge-sm badge-outline badge-info ml-1">SRT</span>`
+        : `<span class="badge badge-sm badge-outline badge-warning ml-1">RTMP</span>`;
+
     return `
+        <div class="flex items-center gap-1 mb-2">${sourceTag}</div>
         <div class="stats shadow mt-2 flex-wrap">
             ${stat('In Bitrate', formatBitrate(input.recvBitrateKbps))}
-            ${stat('Out Bitrate', formatBitrate(input.sendBitrateKbps))}
             ${stat('Readers', input.readers)}
             ${stat('Uptime', formatUptime(input.uptimeMs))}
         </div>
@@ -125,10 +129,13 @@ function renderInputStats(input: InputHealth): string {
             ${stat('Profile', v.profile || null)}
             ${stat('Level', v.level || null)}
         </div>`
+                : input.isSrt
+                ? `<p class="text-xs opacity-50 mt-2">Codec info not available — SRS ingests SRT as raw MPEG-TS without decoding.<br>
+                   RTT, packet drops and retransmissions are also not exposed by SRS.</p>`
                 : ''
         }
         ${
-            a
+            a && !input.isSrt
                 ? `
         <h3 class="mt-3 text-sm font-semibold opacity-60">Audio</h3>
         <div class="stats shadow mt-1 flex-wrap">

@@ -10,6 +10,7 @@ import type { OutputService } from './outputs.js';
 
 export interface InputHealth {
     live: boolean;
+    isSrt: boolean;
     recvBitrateKbps: number | null;
     sendBitrateKbps: number | null;
     readers: number;
@@ -56,7 +57,9 @@ export function createHealthService(db: Db, outputService: OutputService) {
 
         const liveByPath = new Map<string, SrsStream>();
         for (const s of streams) {
-            if (s.publish?.active) {
+            const rtmpLive = s.publish?.active;
+            const srtLive = s.tcUrl?.startsWith('srt://') && (s.kbps?.recv_30s ?? 0) > 0;
+            if (rtmpLive || srtLive) {
                 liveByPath.set(`${s.app}/${s.name}`, s);
             }
         }
@@ -82,9 +85,11 @@ export function createHealthService(db: Db, outputService: OutputService) {
                 outputsHealth[out.id] = outputService.getStats(out.id);
             }
 
+            const srtStream = nowLive && s?.tcUrl?.startsWith('srt://');
             pipelinesHealth[String(pipeline.id)] = {
                 input: {
                     live: nowLive,
+                    isSrt: !!srtStream,
                     recvBitrateKbps: s?.kbps?.recv_30s ?? null,
                     sendBitrateKbps: s?.kbps?.send_30s ?? null,
                     readers: s ? Math.max(0, (s.clients ?? 0) - 1) : 0,

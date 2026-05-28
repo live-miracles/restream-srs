@@ -46,6 +46,7 @@ export interface OutputStatus {
 
 export interface InputHealth {
     live: boolean;
+    isSrt: boolean;
     recvBitrateKbps: number | null;
     sendBitrateKbps: number | null;
     readers: number;
