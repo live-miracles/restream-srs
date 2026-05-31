@@ -3,6 +3,8 @@ import { refreshDashboard } from './dashboard.js';
 import {
     openEditServerName,
     submitServerNameForm,
+    openSettings,
+    submitSettingsForm,
     createPipeline,
     openEditPipeline,
     submitPipelineForm,
@@ -20,6 +22,8 @@ declare global {
     interface Window {
         editServerNameBtn: () => void;
         serverNameFormBtn: () => Promise<void>;
+        openSettingsBtn: () => void;
+        settingsFormBtn: () => Promise<void>;
         selectPipeline: (id: string | null) => void;
         addPipeBtn: () => Promise<void>;
         pipeFormBtn: () => Promise<void>;
@@ -40,6 +44,8 @@ declare global {
 
 window.editServerNameBtn = () => openEditServerName();
 window.serverNameFormBtn = () => submitServerNameForm();
+window.openSettingsBtn = () => openSettings();
+window.settingsFormBtn = () => submitSettingsForm();
 
 window.selectPipeline = (id) => {
     void import('./render.js').then(({ stopCurrentPreview }) => stopCurrentPreview());
