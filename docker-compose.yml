@@ -14,11 +14,13 @@ services:
       - srs
     volumes:
       - app-data:/data
+      - ./srs.conf:/app/srs.conf
     environment:
       - SRS_API_URL=http://localhost:1985
       - SRS_RTMP_HOST=localhost
       - SRS_RTMP_PORT=1935
       - DB_PATH=/data/db.sqlite
+      - SRS_CONF_PATH=/app/srs.conf
 
 volumes:
   app-data:

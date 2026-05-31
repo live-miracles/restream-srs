@@ -10,6 +10,10 @@ import {
     openAddOutput,
     submitOutputForm,
     onOutServerChange,
+    openEditSrtLatency,
+    submitSrtLatencyForm,
+    toggleSrtLatencyInput,
+    dismissSrtPending,
 } from './editor.js';
 
 declare global {
@@ -27,6 +31,10 @@ declare global {
         copyText: (text: string) => Promise<void>;
         previewPlayBtn: () => Promise<void>;
         previewStopBtn: () => void;
+        editSrtLatencyBtn: () => void;
+        srtLatencyModeChange: () => void;
+        srtLatencyFormBtn: () => Promise<void>;
+        dismissSrtPendingBtn: () => Promise<void>;
     }
 }
 
@@ -59,6 +67,11 @@ window.addOutBtn = () => {
 
 window.outFormBtn = () => submitOutputForm();
 window.outServerChange = () => onOutServerChange();
+
+window.editSrtLatencyBtn = () => openEditSrtLatency();
+window.srtLatencyModeChange = () => toggleSrtLatencyInput();
+window.srtLatencyFormBtn = () => submitSrtLatencyForm();
+window.dismissSrtPendingBtn = () => dismissSrtPending();
 
 window.copyText = copyText;
 

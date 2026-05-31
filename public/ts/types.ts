@@ -29,6 +29,7 @@ export interface VideoInfo {
     level: string;
     width: number;
     height: number;
+    fps?: number | null;
 }
 
 export interface AudioInfo {
@@ -72,6 +73,8 @@ export interface ConfigData {
     encodings: string[];
     streamKeys: StreamKey[];
     serverName: string;
+    srtLatency: number | null;
+    srtLatencyPending: boolean;
 }
 
 export interface SystemMetrics {

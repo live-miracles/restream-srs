@@ -16,6 +16,17 @@ export function registerConfigApi(app: Express, db: Db): void {
         const encodings = Object.keys(ENCODINGS);
         const streamKeys = db.listStreamKeys();
         const serverName = db.getSetting('serverName') ?? 'Restream SRS';
-        res.json({ pipelines, outputs, encodings, streamKeys, serverName });
+        const srtLatencyRaw = db.getSetting('srtLatency');
+        const srtLatency = srtLatencyRaw ? parseInt(srtLatencyRaw) : null;
+        const srtLatencyPending = db.getSetting('srtLatencyPending') === 'true';
+        res.json({
+            pipelines,
+            outputs,
+            encodings,
+            streamKeys,
+            serverName,
+            srtLatency,
+            srtLatencyPending,
+        });
     });
 }

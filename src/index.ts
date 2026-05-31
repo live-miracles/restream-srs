@@ -11,6 +11,7 @@ import { registerSettingsApi } from './api/settings.js';
 import { createPreviewService } from './services/preview.js';
 import { registerPreviewApi } from './api/preview.js';
 import { registerSrsHooks } from './api/srs-hooks.js';
+import { writeSrsConf } from './utils/conf.js';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '8080');
@@ -44,6 +45,15 @@ const publicDir = path.join(__dirname, '..', 'public');
 app.use('/', express.static(publicDir));
 
 async function main(): Promise<void> {
+    const srtLatencyRaw = db.getSetting('srtLatency');
+    const srtLatency = srtLatencyRaw ? parseInt(srtLatencyRaw) : null;
+    try {
+        writeSrsConf(srtLatency);
+        console.log('[conf] srs.conf written');
+    } catch (e) {
+        console.warn('[conf] could not write srs.conf:', e);
+    }
+
     const allOutputs = db.listOutputs();
     for (const output of allOutputs) {
         if (output.desiredState === 'running') {

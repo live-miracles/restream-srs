@@ -126,13 +126,14 @@ function renderInputStats(input: InputHealth): string {
         <div class="stats shadow mt-1 flex-wrap">
             ${stat('Codec', v.codec)}
             ${stat('Resolution', v.width && v.height ? `${v.width}×${v.height}` : null)}
+            ${stat('FPS', v.fps != null ? v.fps : null)}
             ${stat('Profile', v.profile || null)}
             ${stat('Level', v.level || null)}
         </div>`
                 : input.isSrt
-                ? `<p class="text-xs opacity-50 mt-2">Codec info not available — SRS ingests SRT as raw MPEG-TS without decoding.<br>
+                  ? `<p class="text-xs opacity-50 mt-2">Codec info not available — SRS ingests SRT as raw MPEG-TS without decoding.<br>
                    RTT, packet drops and retransmissions are also not exposed by SRS.</p>`
-                : ''
+                  : ''
         }
         ${
             a && !input.isSrt
