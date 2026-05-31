@@ -61,6 +61,9 @@ export const getSystemMetrics = () => apiRequest<SystemMetrics>('/metrics/system
 export const updateServerName = (name: string) =>
     apiRequest('/api/settings/server-name', { method: 'POST', body: { name } });
 
+export const updateSettings = (name: string, latency: number | null) =>
+    apiRequest('/api/settings', { method: 'POST', body: { name, latency } });
+
 export const createPipeline = () => apiRequest('/api/pipelines', { method: 'POST' });
 
 export const updatePipeline = (id: string, name: string, streamKeyId?: number) =>

@@ -13,8 +13,15 @@
     <div class="navbar bg-base-100 border-base-content/10 shrink-0 border-b">
       <div class="flex flex-1 items-center gap-3">
         <span class="px-2 text-xl font-bold" id="server-name-display">Restream SRS</span>
-        <button class="btn btn-xs btn-ghost opacity-50" onclick="editServerNameBtn()">✎</button>
-        <button class="btn btn-xs btn-ghost opacity-50" onclick="editSrtLatencyBtn()" title="SRT Settings">SRT</button>
+        <button class="btn btn-square btn-sm btn-ghost opacity-70" onclick="openSettingsBtn()" title="Settings" aria-label="Settings">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1A2 2 0 1 1 4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7A2 2 0 1 1 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1A2 2 0 1 1 19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.1a2 2 0 1 1 0 4H21a1.7 1.7 0 0 0-1.6 1Z" />
+          </svg>
+        </button>
         <div id="saving-badge" class="hidden items-center gap-2 text-sm opacity-60">
           <span class="loading loading-infinity loading-xs"></span>
           Saving
@@ -55,13 +62,17 @@
       <span>Copied</span>
     </div>
 
-    <!-- SRT latency modal -->
-    <dialog id="srt-latency-modal" class="modal">
-      <div class="modal-box w-fit">
+    <!-- Settings modal -->
+    <dialog id="settings-modal" class="modal">
+      <div class="modal-box w-full max-w-md">
         <div class="mx-auto mt-2 w-full max-w-sm space-y-3 px-4">
-          <h2 class="text-xl font-bold">SRT Latency</h2>
+          <h2 class="text-xl font-bold">Settings</h2>
           <fieldset class="fieldset">
-            <legend class="fieldset-legend">Mode</legend>
+            <legend class="fieldset-legend">Server Name</legend>
+            <input type="text" id="settings-server-name-input" class="input w-full" placeholder="Restream SRS" />
+          </fieldset>
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend">SRT Latency</legend>
             <select id="srt-latency-mode" class="select w-full" onchange="srtLatencyModeChange()">
               <option value="default">Default (encoder sets latency)</option>
               <option value="custom">Custom (server overrides)</option>
@@ -76,26 +87,7 @@
         <div class="modal-action">
           <form method="dialog">
             <button class="btn mx-2">Cancel</button>
-            <button type="button" class="btn btn-accent" onclick="srtLatencyFormBtn()">Save</button>
-          </form>
-        </div>
-      </div>
-    </dialog>
-
-    <!-- Server name modal -->
-    <dialog id="server-name-modal" class="modal">
-      <div class="modal-box w-fit">
-        <div class="mx-auto mt-2 w-full max-w-sm space-y-3 px-4">
-          <h2 class="text-xl font-bold">Server Name</h2>
-          <fieldset class="fieldset">
-            <legend class="fieldset-legend">Name</legend>
-            <input type="text" id="server-name-input" class="input w-full" placeholder="Restream SRS" />
-          </fieldset>
-        </div>
-        <div class="modal-action">
-          <form method="dialog">
-            <button class="btn mx-2">Cancel</button>
-            <button type="button" class="btn btn-accent" onclick="serverNameFormBtn()">Save</button>
+            <button type="button" class="btn btn-accent" onclick="settingsFormBtn()">Save</button>
           </form>
         </div>
       </div>

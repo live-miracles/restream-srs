@@ -13,7 +13,9 @@
         "docker:dev": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up",
         "docker:prod": "docker compose up",
         "typecheck": "npx tsc -p tsconfig.backend.json --noEmit && npx tsc -p tsconfig.json --noEmit",
-        "test": "node --require tsx/cjs --test test/*.test.js",
+        "test": "npm run test:unit && npm run test:integration",
+        "test:unit": "node --require tsx/cjs --test test/*.test.js",
+        "test:integration": "node --require tsx/cjs --test test/integration/*.test.js",
         "format": "npx prettier --write .",
         "format:check": "npx prettier --check ."
     },
