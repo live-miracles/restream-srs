@@ -8,6 +8,7 @@ export interface SrsStreamVideo {
     level: string;
     width: number;
     height: number;
+    fps?: number | null;
 }
 
 export interface SrsStreamAudio {
@@ -39,7 +40,9 @@ export async function kickSrsClientsByStream(app: string, stream: string): Promi
         signal: AbortSignal.timeout(3000),
     });
     if (!res.ok) return;
-    const data = (await res.json()) as { clients?: Array<{ id: string; app: string; stream: string }> };
+    const data = (await res.json()) as {
+        clients?: Array<{ id: string; app: string; stream: string }>;
+    };
     for (const client of data.clients ?? []) {
         if (client.app === app && client.stream === stream) {
             await fetch(`${SRS_API_URL}/api/v1/clients/${client.id}`, {

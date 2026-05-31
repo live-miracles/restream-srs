@@ -92,6 +92,12 @@ export const startOutput = (pipelineId: string, outId: string) =>
 export const stopOutput = (pipelineId: string, outId: string) =>
     apiRequest(`/api/pipelines/${pipelineId}/outputs/${outId}/stop`, { method: 'POST' });
 
+export const updateSrtLatency = (latency: number | null) =>
+    apiRequest('/api/settings/srt-latency', { method: 'POST', body: { latency } });
+
+export const dismissSrtLatencyPending = () =>
+    apiRequest('/api/settings/srt-latency/dismiss', { method: 'POST' });
+
 export const startPreview = (pipelineId: string) =>
     apiRequest<{ hlsUrl: string }>(`/api/pipelines/${pipelineId}/preview/start`, {
         method: 'POST',

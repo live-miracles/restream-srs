@@ -4,6 +4,47 @@ import { setUrlParam } from '../core/utils.js';
 import { refreshDashboard } from './dashboard.js';
 import type { StreamKey } from '../types.js';
 
+// ── SRT latency ───────────────────────────────────────
+
+export function openEditSrtLatency(): void {
+    const modal = document.getElementById('srt-latency-modal') as HTMLDialogElement;
+    const latency = state.config.srtLatency ?? null;
+    const modeSelect = document.getElementById('srt-latency-mode') as HTMLSelectElement;
+    const input = document.getElementById('srt-latency-input') as HTMLInputElement;
+    modeSelect.value = latency != null ? 'custom' : 'default';
+    input.value = latency != null ? String(latency) : '500';
+    toggleSrtLatencyInput();
+    modal.showModal();
+}
+
+export function toggleSrtLatencyInput(): void {
+    const mode = (document.getElementById('srt-latency-mode') as HTMLSelectElement).value;
+    const field = document.getElementById('srt-latency-field') as HTMLElement;
+    field.classList.toggle('hidden', mode !== 'custom');
+}
+
+export async function submitSrtLatencyForm(): Promise<void> {
+    const mode = (document.getElementById('srt-latency-mode') as HTMLSelectElement).value;
+    let latency: number | null = null;
+    if (mode === 'custom') {
+        const val = parseInt(
+            (document.getElementById('srt-latency-input') as HTMLInputElement).value,
+        );
+        if (isNaN(val) || val < 20) return;
+        latency = val;
+    }
+    const result = await api.updateSrtLatency(latency);
+    if (result) {
+        (document.getElementById('srt-latency-modal') as HTMLDialogElement).close();
+        await refreshDashboard();
+    }
+}
+
+export async function dismissSrtPending(): Promise<void> {
+    await api.dismissSrtLatencyPending();
+    await refreshDashboard();
+}
+
 // ── Server name ───────────────────────────────────────
 
 export function openEditServerName(): void {

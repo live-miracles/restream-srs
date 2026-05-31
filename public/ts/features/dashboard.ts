@@ -47,6 +47,8 @@ async function fetchAndRender(): Promise<void> {
             if (el) el.textContent = configResult.serverName;
             document.title = configResult.serverName;
         }
+        const banner = document.getElementById('srt-pending-banner');
+        if (banner) banner.classList.toggle('hidden', !configResult.srtLatencyPending);
     }
     if (healthResult) state.health = healthResult;
     if (metricsResult) state.metrics = metricsResult;

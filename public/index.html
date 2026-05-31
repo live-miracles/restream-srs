@@ -14,6 +14,7 @@
       <div class="flex flex-1 items-center gap-3">
         <span class="px-2 text-xl font-bold" id="server-name-display">Restream SRS</span>
         <button class="btn btn-xs btn-ghost opacity-50" onclick="editServerNameBtn()">✎</button>
+        <button class="btn btn-xs btn-ghost opacity-50" onclick="editSrtLatencyBtn()" title="SRT Settings">SRT</button>
         <div id="saving-badge" class="hidden items-center gap-2 text-sm opacity-60">
           <span class="loading loading-infinity loading-xs"></span>
           Saving
@@ -41,10 +42,45 @@
       </div>
     </div>
 
+    <!-- SRT pending restart banner -->
+    <div
+      id="srt-pending-banner"
+      class="bg-warning/15 border-warning/30 flex hidden shrink-0 items-center justify-between gap-3 border-b px-4 py-2 text-sm">
+      <span class="text-warning-content opacity-80">⚠ SRT latency updated — restart the SRS container for the change to take effect.</span>
+      <button class="btn btn-xs btn-ghost opacity-60" onclick="dismissSrtPendingBtn()">Dismiss</button>
+    </div>
+
     <!-- Copy notification -->
     <div id="copied-notification" role="alert" class="alert alert-success fixed bottom-3 left-1/2 z-50 hidden w-fit -translate-x-1/2">
       <span>Copied</span>
     </div>
+
+    <!-- SRT latency modal -->
+    <dialog id="srt-latency-modal" class="modal">
+      <div class="modal-box w-fit">
+        <div class="mx-auto mt-2 w-full max-w-sm space-y-3 px-4">
+          <h2 class="text-xl font-bold">SRT Latency</h2>
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend">Mode</legend>
+            <select id="srt-latency-mode" class="select w-full" onchange="srtLatencyModeChange()">
+              <option value="default">Default (encoder sets latency)</option>
+              <option value="custom">Custom (server overrides)</option>
+            </select>
+          </fieldset>
+          <fieldset id="srt-latency-field" class="fieldset hidden">
+            <legend class="fieldset-legend">Latency (ms)</legend>
+            <input type="number" id="srt-latency-input" class="input w-full" min="20" max="60000" step="1" placeholder="500" />
+            <p class="fieldset-label text-xs opacity-50">Min 20ms. Server wins if higher than encoder's value.</p>
+          </fieldset>
+        </div>
+        <div class="modal-action">
+          <form method="dialog">
+            <button class="btn mx-2">Cancel</button>
+            <button type="button" class="btn btn-accent" onclick="srtLatencyFormBtn()">Save</button>
+          </form>
+        </div>
+      </div>
+    </dialog>
 
     <!-- Server name modal -->
     <dialog id="server-name-modal" class="modal">
