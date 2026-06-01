@@ -74,6 +74,7 @@ export interface ConfigData {
     streamKeys: StreamKey[];
     serverName: string;
     srtLatency: number | null;
+    srtPassphrase: string | null;
     srtLatencyPending: boolean;
 }
 

@@ -7,10 +7,11 @@ const HOST = process.env.PUBLIC_HOST || 'localhost';
 
 export function registerConfigApi(app: Express, db: Db): void {
     app.get('/config', (_req, res) => {
+        const srtPassphrase = db.getSetting('srtPassphrase') || null;
         const pipelines = db.listPipelines().map((p) => ({
             ...p,
             rtmpPublishUrl: rtmpPublishUrl(p.streamKey, HOST),
-            srtPublishUrl: srtPublishUrl(p.streamKey, HOST),
+            srtPublishUrl: srtPublishUrl(p.streamKey, HOST, srtPassphrase),
         }));
         const outputs = db.listOutputs();
         const encodings = Object.keys(ENCODINGS);
@@ -26,6 +27,7 @@ export function registerConfigApi(app: Express, db: Db): void {
             streamKeys,
             serverName,
             srtLatency,
+            srtPassphrase,
             srtLatencyPending,
         });
     });

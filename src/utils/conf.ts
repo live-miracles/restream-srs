@@ -3,8 +3,15 @@ import path from 'path';
 
 const CONF_PATH = process.env.SRS_CONF_PATH ?? path.join(process.cwd(), 'srs.conf');
 
-export function writeSrsConf(latencyMs: number | null): void {
+function quoteSrsString(value: string): string {
+    return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+export function writeSrsConf(latencyMs: number | null, passphrase?: string | null): void {
     const latencyLine = latencyMs != null ? `\n    latency         ${latencyMs};` : '';
+    const passphraseLine = passphrase
+        ? `\n    passphrase      ${quoteSrsString(passphrase)};\n    pbkeylen        16;`
+        : '';
     const conf = `listen              1935;
 max_connections     1000;
 daemon              off;
@@ -23,7 +30,7 @@ http_server {
 
 srt_server {
     enabled         on;
-    listen          10080;${latencyLine}
+    listen          10080;${latencyLine}${passphraseLine}
 }
 
 vhost __defaultVhost__ {

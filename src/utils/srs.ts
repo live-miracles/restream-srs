@@ -70,6 +70,8 @@ export function rtmpPublishUrl(streamKey: string, host: string): string {
     return `rtmp://${host}:1935/live/${streamKey}`;
 }
 
-export function srtPublishUrl(streamKey: string, host: string): string {
-    return `srt://${host}:10080?streamid=#!::r=live/${streamKey},mode=publish`;
+export function srtPublishUrl(streamKey: string, host: string, passphrase?: string | null): string {
+    const url = `srt://${host}:10080?streamid=#!::r=live/${streamKey},m=publish`;
+    if (!passphrase) return url;
+    return `${url}&passphrase=${encodeURIComponent(passphrase)}&pbkeylen=16`;
 }

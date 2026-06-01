@@ -8,7 +8,7 @@ export function registerSrsHooks(app: Express, db: Db): void {
         const hookApp = req.body?.app as string | undefined;
         if (!stream) return res.status(400).json({ code: 400 });
 
-        const valid = db.listStreamKeys().some((k) => k.key === stream);
+        const valid = db.listPipelines().some((p) => p.streamKey === stream);
         if (!valid) {
             console.log(`[srs-hook] rejected publish: ${stream}`);
             if (hookApp) void kickSrsClientsByStream(hookApp, stream).catch(() => {});

@@ -53,7 +53,7 @@
     <div
       id="srt-pending-banner"
       class="bg-warning/15 border-warning/30 flex hidden shrink-0 items-center justify-between gap-3 border-b px-4 py-2 text-sm">
-      <span class="text-warning-content opacity-80">⚠ SRT latency updated — restart the SRS container for the change to take effect.</span>
+      <span class="text-warning-content opacity-80">SRT settings updated. Restart the SRS container for the change to take effect.</span>
       <button class="btn btn-xs btn-ghost opacity-60" onclick="dismissSrtPendingBtn()">Dismiss</button>
     </div>
 
@@ -82,6 +82,17 @@
             <legend class="fieldset-legend">Latency (ms)</legend>
             <input type="number" id="srt-latency-input" class="input w-full" min="20" max="60000" step="1" placeholder="500" />
             <p class="fieldset-label text-xs opacity-50">Min 20ms. Server wins if higher than encoder's value.</p>
+          </fieldset>
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend">SRT Passphrase</legend>
+            <input
+              type="text"
+              id="srt-passphrase-input"
+              class="input w-full"
+              minlength="10"
+              maxlength="79"
+              placeholder="Blank disables SRT encryption" />
+            <p class="fieldset-label text-xs opacity-50">Optional. Must be 10-79 characters when enabled.</p>
           </fieldset>
         </div>
         <div class="modal-action">

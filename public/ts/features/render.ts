@@ -131,12 +131,12 @@ function renderInputStats(input: InputHealth): string {
             ${stat('Level', v.level || null)}
         </div>`
                 : input.isSrt
-                  ? `<p class="text-xs opacity-50 mt-2">Codec info not available — SRS ingests SRT as raw MPEG-TS without decoding.<br>
-                   RTT, packet drops and retransmissions are also not exposed by SRS.</p>`
+                  ? `<p class="text-xs opacity-50 mt-2">Codec info is still being probed through SRS's RTMP bridge.<br>
+                   RTT, packet drops and retransmissions are not exposed by SRS.</p>`
                   : ''
         }
         ${
-            a && !input.isSrt
+            a
                 ? `
         <h3 class="mt-3 text-sm font-semibold opacity-60">Audio</h3>
         <div class="stats shadow mt-1 flex-wrap">
