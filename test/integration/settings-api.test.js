@@ -127,6 +127,7 @@ describe('Settings API integration', () => {
         assert.deepEqual(res.body, {
             serverName: 'Control Room',
             srtLatency: 1200,
+            srtPassphrase: null,
             pending: true,
         });
         assert.equal(harness.db.getSetting('serverName'), 'Control Room');
@@ -152,21 +153,59 @@ describe('Settings API integration', () => {
         const harness = createHarness();
         harness.db.setSetting('serverName', 'Old Name');
         harness.db.setSetting('srtLatency', '500');
+        harness.db.setSetting('srtPassphrase', 'secret-value');
         harness.db.setSetting('srtLatencyPending', 'false');
 
         const res = await harness.request('POST', '/api/settings', {
             name: 'New Name',
             latency: 500,
+            srtPassphrase: 'secret-value',
         });
 
         assert.equal(res.status, 200);
         assert.deepEqual(res.body, {
             serverName: 'New Name',
             srtLatency: 500,
+            srtPassphrase: 'secret-value',
             pending: false,
         });
         assert.equal(harness.db.getSetting('serverName'), 'New Name');
         assert.equal(harness.db.getSetting('srtLatency'), '500');
+        assert.equal(harness.db.getSetting('srtPassphrase'), 'secret-value');
         assert.equal(harness.db.getSetting('srtLatencyPending'), 'false');
+    });
+
+    test('combined settings endpoint writes SRT passphrase settings', async () => {
+        const harness = createHarness();
+        const res = await harness.request('POST', '/api/settings', {
+            name: 'Control Room',
+            latency: null,
+            srtPassphrase: 'secret-value',
+        });
+
+        assert.equal(res.status, 200);
+        assert.deepEqual(res.body, {
+            serverName: 'Control Room',
+            srtLatency: null,
+            srtPassphrase: 'secret-value',
+            pending: true,
+        });
+        assert.equal(harness.db.getSetting('srtPassphrase'), 'secret-value');
+        const conf = fs.readFileSync(process.env.SRS_CONF_PATH, 'utf8');
+        assert.match(conf, /passphrase\s+"secret-value";/);
+        assert.match(conf, /pbkeylen\s+16;/);
+    });
+
+    test('combined settings endpoint rejects invalid SRT passphrase', async () => {
+        const harness = createHarness();
+        const res = await harness.request('POST', '/api/settings', {
+            name: 'Control Room',
+            latency: null,
+            srtPassphrase: 'short',
+        });
+
+        assert.equal(res.status, 400);
+        assert.match(res.body.error, /10 to 79/);
+        assert.equal(harness.db.getSetting('srtPassphrase'), null);
     });
 });

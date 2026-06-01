@@ -10,7 +10,9 @@ export function openSettings(): void {
     const modal = document.getElementById('settings-modal') as HTMLDialogElement;
     const current = state.config.serverName ?? 'Restream SRS';
     const latency = state.config.srtLatency ?? null;
+    const passphrase = state.config.srtPassphrase ?? '';
     (document.getElementById('settings-server-name-input') as HTMLInputElement).value = current;
+    (document.getElementById('srt-passphrase-input') as HTMLInputElement).value = passphrase;
     const modeSelect = document.getElementById('srt-latency-mode') as HTMLSelectElement;
     const input = document.getElementById('srt-latency-input') as HTMLInputElement;
     modeSelect.value = latency != null ? 'custom' : 'default';
@@ -39,14 +41,24 @@ function getSettingsLatency(): number | null | undefined {
     return null;
 }
 
+function getSrtPassphrase(): string | null | undefined {
+    const value = (
+        document.getElementById('srt-passphrase-input') as HTMLInputElement
+    ).value.trim();
+    if (!value) return null;
+    if (value.length < 10 || value.length > 79) return undefined;
+    return value;
+}
+
 export async function submitSettingsForm(): Promise<void> {
     const name = (
         document.getElementById('settings-server-name-input') as HTMLInputElement
     ).value.trim();
     const latency = getSettingsLatency();
-    if (!name || latency === undefined) return;
+    const passphrase = getSrtPassphrase();
+    if (!name || latency === undefined || passphrase === undefined) return;
 
-    const result = await api.updateSettings(name, latency);
+    const result = await api.updateSettings(name, latency, passphrase);
     if (result) {
         const el = document.getElementById('server-name-display');
         if (el) el.textContent = name;

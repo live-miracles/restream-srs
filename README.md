@@ -52,7 +52,7 @@ Open the dashboard: `http://localhost:8080`
 
 ## Dashboard
 
-- **Server name** — editable via the `✎` button next to the title in the navbar
+- **Settings** — editable via the gear button next to the title in the navbar; includes server name, SRT latency, and optional SRT passphrase
 - **Pipelines** — created with one click; auto-named `Pipeline N` and assigned the next available stream key
 - **Stream keys** — shown masked (`key01_as...ks`) in the pipeline info panel; copy button copies the full URL
 - **Outputs** — per-pipeline list; supports YouTube RTMP, Facebook RTMP, Custom RTMP, Custom SRT; encoding choices include `source`, `720p`, `1080p`, `vertical_rotate`
@@ -70,8 +70,10 @@ rtmp://YOUR_HOST:1935/live/key01_<random>
 
 **SRT:**
 ```
-srt://YOUR_HOST:10080?streamid=#!::r=live/key01_<random>,mode=publish
+srt://YOUR_HOST:10080?streamid=#!::r=live/key01_<random>,m=publish
 ```
+
+When an SRT passphrase is configured, the dashboard appends `passphrase` and `pbkeylen=16` to the publish URL. Clients without the matching passphrase are rejected by SRS during the SRT handshake.
 
 ffmpeg test commands:
 
@@ -86,7 +88,14 @@ SRT:
 ```bash
 ffmpeg -re -i video.mp4 \
   -c:v libx264 -preset veryfast -b:v 2500k -c:a aac -b:a 128k \
-  -f mpegts 'srt://localhost:10080?streamid=#!::r=live/<stream-key>,mode=publish'
+  -f mpegts 'srt://localhost:10080?streamid=#!::r=live/<stream-key>,m=publish'
+```
+
+SRT with passphrase:
+```bash
+ffmpeg -re -i video.mp4 \
+  -c:v libx264 -preset veryfast -b:v 2500k -c:a aac -b:a 128k \
+  -f mpegts 'srt://localhost:10080?streamid=#!::r=live/<stream-key>,m=publish&passphrase=<srt-passphrase>&pbkeylen=16'
 ```
 
 ---
@@ -105,7 +114,9 @@ ffmpeg -re -i video.mp4 \
 | DELETE | `/api/pipelines/:id/outputs/:outId` | Delete output |
 | POST | `/api/pipelines/:id/outputs/:outId/start` | Start output |
 | POST | `/api/pipelines/:id/outputs/:outId/stop` | Stop output |
+| POST | `/api/settings` | Set server display name, SRT latency, and SRT passphrase `{ name, latency, srtPassphrase }` |
 | POST | `/api/settings/server-name` | Set server display name `{ name }` |
+| POST | `/api/settings/srt-latency` | Set SRT latency `{ latency }` |
 
 ---
 

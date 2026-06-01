@@ -81,7 +81,14 @@ describe('URL builders', () => {
     test('srtPublishUrl', () => {
         assert.equal(
             srtPublishUrl('mykey', 'myhost'),
-            'srt://myhost:10080?streamid=#!::r=live/mykey,mode=publish',
+            'srt://myhost:10080?streamid=#!::r=live/mykey,m=publish',
+        );
+    });
+
+    test('srtPublishUrl includes passphrase settings when configured', () => {
+        assert.equal(
+            srtPublishUrl('mykey', 'myhost', 'secret value'),
+            'srt://myhost:10080?streamid=#!::r=live/mykey,m=publish&passphrase=secret%20value&pbkeylen=16',
         );
     });
 });
