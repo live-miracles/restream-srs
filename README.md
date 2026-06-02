@@ -18,27 +18,44 @@ OBS / ffmpeg  ──RTMP──►  SRS (1935)   ──FFmpeg──►  YouTube /
 | FFmpeg | One process per output, spawned and managed by the app |
 | SQLite | Persistent state for pipelines, outputs, stream keys, settings |
 
-**Pipeline IDs:** Gap-filling integers (1, 2, 3 …). If pipeline 2 is deleted, the next created pipeline takes ID 2.  
-**Output IDs:** `{pipelineId}-{seq}` (e.g. 1-1, 1-2, 2-1)  
-**Stream keys:** 99 pre-generated keys in the format `key01_<random>` … `key99_<random>`. Keys are never deleted — when a pipeline is deleted its key returns to the available pool.
-
 ---
 
 ## Running
 
-**Production:**
+This app now runs natively on Linux. The production setup uses two systemd services:
+
+| Service | Purpose |
+|---------|---------|
+| `srs.service` | Native SRS binary, started as `/usr/local/bin/srs -c /etc/restream-srs/srs.conf` |
+| `restream-srs.service` | Node.js dashboard/API, started from `/opt/restream-srs/dist/index.js` |
+
+**Production install:**
 ```bash
-npm run docker:prod
+sudo git clone https://github.com/live-miracles/restream-srs /opt/restream-srs
+sudo bash /opt/restream-srs/scripts/server-install.sh
 ```
 
-**Development** (hot reload — source changes apply without rebuilding):
+The install script downloads SRS `6.0-r0` by default. To install from an existing Linux SRS binary file instead:
 ```bash
-npm run docker:dev
+SRS_BINARY_PATH=/path/to/srs sudo bash /opt/restream-srs/scripts/server-install.sh
 ```
 
-Open the dashboard: `http://localhost:8080`
+Set the public host shown in dashboard publish URLs during install:
+```bash
+PUBLIC_HOST=stream.example.com sudo bash /opt/restream-srs/scripts/server-install.sh
+```
 
-> **WSL users:** Docker Engine must be installed in WSL directly (not just Docker Desktop). See [Install Docker Engine on Ubuntu](https://docs.docker.com/engine/install/ubuntu/).
+**Update an installed server:**
+```bash
+sudo bash /opt/restream-srs/scripts/server-update.sh
+```
+
+**Stop services:**
+```bash
+sudo bash /opt/restream-srs/scripts/server-down.sh
+```
+
+Open the dashboard: `http://SERVER_IP:8080`
 
 ### Firewall ports needed
 
@@ -47,6 +64,16 @@ Open the dashboard: `http://localhost:8080`
 | 1935 | TCP | RTMP input |
 | 10080 | UDP | SRT input |
 | 8080 | TCP | Dashboard + API |
+
+### SRS config reload
+
+The app writes SRS settings to `/etc/restream-srs/srs.conf`. SRS only reads this file at startup, so changes such as SRT latency or passphrase require:
+
+```bash
+sudo systemctl restart srs.service
+```
+
+The Node app does not need to restart for SRT config reloads.
 
 ---
 
@@ -122,23 +149,32 @@ ffmpeg -re -i video.mp4 \
 
 ## Development
 
-Docker is the recommended way to run locally (`npm run docker:dev`). If you want to run outside Docker:
+Prerequisites: Node.js 20+, FFmpeg, and the SRS binary available as `srs` in `PATH`.
 
-Prerequisites: Node.js 20+, ffmpeg
+**Downloading the SRS binary (Linux / WSL2):**
+```bash
+curl -fsSL https://github.com/ossrs/srs/releases/download/v6.0-r0/SRS-CentOS7-x86_64-6.0-r0.zip -o /tmp/srs.zip
+unzip /tmp/srs.zip -d /tmp/srs
+SRS_BIN=$(find /tmp/srs -type f -name srs | head -1)
+sudo install -m 755 "$SRS_BIN" /usr/local/bin/srs
+rm -rf /tmp/srs /tmp/srs.zip
+srs -v   # should print 6.0-r0
+```
 
 ```bash
 npm install
 npm run dev        # tsx watch + tsc watch + tailwind watch
 ```
 
-Note: this starts only the Node app. SRS (RTMP/SRT ingest) still requires Docker:
+Run SRS in another terminal:
 ```bash
-docker compose up srs
+npm run srs
 ```
 
-To rebuild the production image:
+If the app rewrites `srs.conf` after a settings change, restart the local SRS process:
 ```bash
-npm run docker:prod --build
+Ctrl-C
+npm run srs
 ```
 
 ---
@@ -152,4 +188,5 @@ npm run docker:prod --build
 | `SRS_RTMP_PORT` | `1935` | SRS RTMP port |
 | `PUBLIC_HOST` | `localhost` | Host shown in publish URL hints in the dashboard |
 | `DB_PATH` | `./data.db` | SQLite database path |
+| `SRS_CONF_PATH` | `./srs.conf` | SRS config path written by the app |
 | `PORT` | `8080` | App HTTP port |

@@ -9,3 +9,4 @@ data.db
 *.sqlite
 .env
 *.mp4
+objs/
