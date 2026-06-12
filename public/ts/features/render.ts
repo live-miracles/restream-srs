@@ -19,6 +19,19 @@ declare global {
     }
 }
 
+type OutStatus = 'good' | 'warn' | 'error' | 'off';
+
+function outStatus(o: OutputView, inputLive: boolean): OutStatus {
+    if (o.desiredState === 'stopped') return 'off';
+    if (o.status === 'failed') return 'error';
+    if (o.status === 'running') {
+        if (o.bitrateKbps !== null && o.bitrateKbps >= 1000) return 'good';
+        if (o.bitrateKbps === null && !inputLive) return 'error';
+        return 'warn';
+    }
+    return 'off';
+}
+
 // ── Pipeline list (left column) ───────────────────────
 
 function renderPipelineList(): void {
@@ -31,20 +44,15 @@ function renderPipelineList(): void {
     ).length;
     const totalOutputs = state.pipelines.reduce((s, p) => s + p.outs.length, 0);
     const outputsOn = state.pipelines.reduce(
-        (s, p) => s + p.outs.filter((o) => o.status === 'running').length,
+        (s, p) => s + p.outs.filter((o) => outStatus(o, p.input.live) === 'good').length,
         0,
     );
     const outputsWarn = state.pipelines.reduce(
-        (s, p) =>
-            s +
-            p.outs.filter(
-                (o) => o.status === 'running' && o.bitrateKbps !== null && o.bitrateKbps < 1000,
-            ).length,
+        (s, p) => s + p.outs.filter((o) => outStatus(o, p.input.live) === 'warn').length,
         0,
     );
     const outputsFailed = state.pipelines.reduce(
-        (s, p) =>
-            s + p.outs.filter((o) => o.desiredState === 'running' && o.status === 'failed').length,
+        (s, p) => s + p.outs.filter((o) => outStatus(o, p.input.live) === 'error').length,
         0,
     );
     const outputsOff = state.pipelines.reduce(
@@ -66,22 +74,18 @@ function renderPipelineList(): void {
 
     listEl.innerHTML = state.pipelines
         .map((p) => {
-            const outRunning = p.outs.filter((o) => o.status === 'running').length;
-            const outFailed = p.outs.filter(
-                (o) => o.desiredState === 'running' && o.status === 'failed',
-            ).length;
-            const outOff = p.outs.filter((o) => o.desiredState === 'stopped').length;
+            const outGood = p.outs.filter((o) => outStatus(o, p.input.live) === 'good').length;
+            const outWarn = p.outs.filter((o) => outStatus(o, p.input.live) === 'warn').length;
+            const outFailed = p.outs.filter((o) => outStatus(o, p.input.live) === 'error').length;
+            const outOff = p.outs.filter((o) => outStatus(o, p.input.live) === 'off').length;
 
             const inColor = statusColor(p.input.live, p.input.recvBitrateKbps);
-            const outLowBitrate = p.outs.filter(
-                (o) => o.status === 'running' && o.bitrateKbps !== null && o.bitrateKbps < 1000,
-            ).length;
             const outColor =
                 outFailed > 0
                     ? '#ef4444'
-                    : outLowBitrate > 0
+                    : outWarn > 0
                       ? '#eab308'
-                      : outRunning > 0
+                      : outGood > 0
                         ? '#22c55e'
                         : '#6b7280';
             const selected = p.id === selectedId ? 'bg-base-100' : '';
@@ -95,7 +99,8 @@ function renderPipelineList(): void {
             return `<li>
             <div class="flex items-center gap-2 ${selected} cursor-pointer js-select-pipeline" data-id="${p.id}">
                 <div class="rounded-box h-5 w-5 shrink-0" style="background:linear-gradient(90deg,${inColor},${inColor} 45%,#242933 45%,#242933 55%,${outColor} 55%)"></div>
-                ${badge(outRunning, 'badge-success')}
+                ${badge(outGood, 'badge-success')}
+                ${badge(outWarn, 'badge-warning')}
                 ${badge(outFailed, 'badge-error')}
                 ${badge(outOff, 'badge-ghost')}
                 <a class="truncate">${p.name}</a>
@@ -171,16 +176,137 @@ function renderInputStats(input: InputHealth): string {
     `;
 }
 
+function renderOverview(): void {
+    const overviewEl = document.getElementById('overview-col');
+    if (!overviewEl) return;
+
+    const fmtHz = (hz: number | null | undefined): string => {
+        if (!hz) return '—';
+        const k = hz / 1000;
+        return `${Number.isInteger(k) ? k : k.toFixed(1)} kHz`;
+    };
+
+    const td = (val: string | number | null | undefined): string =>
+        `<td class="font-mono text-xs">${val ?? '—'}</td>`;
+
+    const statusBg = (error: boolean, warn: boolean): string =>
+        error
+            ? 'style="background:color-mix(in oklch, var(--color-error) 15%, transparent)"'
+            : warn
+              ? 'style="background:color-mix(in oklch, var(--color-warning) 15%, transparent)"'
+              : '';
+
+    const totalOuts = state.pipelines.reduce((s, p) => s + p.outs.length, 0);
+
+    // ── Inputs ────────────────────────────────────────────
+    let inputRows = '';
+    if (state.pipelines.length === 0) {
+        inputRows = `<tr><td colspan="11" class="py-4 text-center opacity-50">No pipelines yet.</td></tr>`;
+    } else {
+        for (const p of state.pipelines) {
+            const inp = p.input;
+            const isWarn = inp.live && inp.recvBitrateKbps !== null && inp.recvBitrateKbps < 1000;
+            const badge = !inp.live
+                ? `<span class="badge badge-sm badge-neutral">Offline</span>`
+                : isWarn
+                  ? `<span class="badge badge-sm badge-warning">Low Bitrate</span>`
+                  : `<span class="badge badge-sm badge-success">Live</span>`;
+            inputRows += `<tr class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(false, isWarn)}>
+                <td class="font-semibold">${p.name}</td>
+                <td>${badge}</td>
+                ${td(inp.live ? formatUptime(inp.uptimeMs) : null)}
+                ${td(inp.live ? formatBitrate(inp.recvBitrateKbps) : null)}
+                ${td(inp.live ? (inp.isSrt ? 'SRT' : 'RTMP') : null)}
+                ${td(inp.video?.codec)}
+                ${td(inp.video ? `${inp.video.width}×${inp.video.height}` : null)}
+                ${td(inp.video?.fps)}
+                ${td(inp.audio?.codec)}
+                ${td(inp.audio?.channel)}
+                ${td(fmtHz(inp.audio?.sample_rate))}
+            </tr>`;
+        }
+    }
+
+    // ── Outputs ───────────────────────────────────────────
+    let outputRows = '';
+    if (totalOuts === 0) {
+        outputRows = `<tr><td colspan="10" class="py-4 text-center opacity-50">No outputs yet.</td></tr>`;
+    } else {
+        for (const p of state.pipelines) {
+            for (const o of p.outs) {
+                const isRunning = o.status === 'running';
+                const st = outStatus(o, p.input.live);
+                const badge =
+                    st === 'off'
+                        ? `<span class="badge badge-sm badge-neutral">Stopped</span>`
+                        : st === 'good'
+                          ? `<span class="badge badge-sm badge-success">Running</span>`
+                          : st === 'warn'
+                            ? o.bitrateKbps === null
+                                ? `<span class="badge badge-sm badge-warning">No Output</span>`
+                                : `<span class="badge badge-sm badge-warning">Low Bitrate</span>`
+                            : isRunning
+                              ? `<span class="badge badge-sm badge-error">No Input</span>`
+                              : `<span class="badge badge-sm badge-error">Failed</span>`;
+
+                const isOn = o.status === 'running';
+                const src = isOn && o.encoding === 'source' ? p.input : null;
+                outputRows += `<tr class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(st === 'error', st === 'warn')}>
+                    <td><span class="opacity-40 text-xs">${p.name} ·</span> ${o.name}</td>
+                    <td>${badge}${o.retries > 0 ? ` <span class="font-mono text-xs opacity-60">↺${o.retries}</span>` : ''}</td>
+                    ${td(formatBitrate(o.bitrateKbps))}
+                    ${td(isOn ? o.encoding : null)}
+                    ${td(src?.video?.codec)}
+                    ${td(src?.video ? `${src.video.width}×${src.video.height}` : null)}
+                    ${td(src?.video?.fps)}
+                    ${td(src?.audio?.codec)}
+                    ${td(src?.audio?.channel)}
+                    ${td(isOn ? fmtHz(src?.audio?.sample_rate) : null)}
+                </tr>`;
+            }
+        }
+    }
+
+    const thead = (cols: string[]) =>
+        `<thead><tr>${cols.map((c) => `<th>${c}</th>`).join('')}</tr></thead>`;
+
+    overviewEl.innerHTML = `
+        <h2 class="mb-2 text-lg font-bold">Inputs <span class="badge badge-neutral badge-sm ml-1">${state.pipelines.length}</span></h2>
+        <div class="overflow-x-auto mb-6">
+            <table class="table table-sm">
+                ${thead(['Pipeline', 'Status', 'Uptime', 'Bitrate', 'Proto', 'V.Codec', 'Resolution', 'FPS', 'A.Codec', 'Ch', 'Sample Rate'])}
+                <tbody>${inputRows}</tbody>
+            </table>
+        </div>
+        <h2 class="mb-2 text-lg font-bold">Outputs <span class="badge badge-neutral badge-sm ml-1">${totalOuts}</span></h2>
+        <div class="overflow-x-auto">
+            <table class="table table-sm">
+                ${thead(['Pipeline · Output', 'Status', 'Bitrate', 'Encoding', 'V.Codec', 'Resolution', 'FPS', 'A.Codec', 'Ch', 'Sample Rate'])}
+                <tbody>${outputRows}</tbody>
+            </table>
+        </div>`;
+
+    overviewEl.onclick = (e) => {
+        const row = (e.target as Element).closest('.js-overview-select') as HTMLElement | null;
+        if (row?.dataset.id) window.selectPipeline(row.dataset.id);
+    };
+}
+
 function renderPipelineInfo(selectedId: string | null): void {
     const pipeline = selectedId ? state.pipelines.find((p) => p.id === selectedId) : null;
     const col = document.getElementById('pipe-info-col');
     const outsCol = document.getElementById('outs-col');
+    const overviewCol = document.getElementById('overview-col');
 
     if (!pipeline) {
         col?.classList.add('hidden');
         outsCol?.classList.add('hidden');
+        overviewCol?.classList.remove('hidden');
+        renderOverview();
         return;
     }
+
+    overviewCol?.classList.add('hidden');
 
     col?.classList.remove('hidden');
     outsCol?.classList.remove('hidden');
@@ -222,17 +348,24 @@ function renderPipelineInfo(selectedId: string | null): void {
 const ICON_PENCIL = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>`;
 const ICON_TRASH = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>`;
 
-function renderOutputCard(o: OutputView): string {
+function renderOutputCard(o: OutputView, inputLive: boolean): string {
     const isStopped = o.desiredState === 'stopped';
     const isRunning = o.status === 'running';
-    const statusClass = isStopped
-        ? 'status-neutral'
-        : isRunning
-          ? o.bitrateKbps !== null && o.bitrateKbps < 1000
+    const st = outStatus(o, inputLive);
+    const statusClass =
+        st === 'good'
+            ? 'status-success'
+            : st === 'warn'
               ? 'status-warning'
-              : 'status-success'
-          : 'status-error';
+              : st === 'error'
+                ? 'status-error'
+                : 'status-neutral';
     const badges = [`<span class="badge badge-sm whitespace-nowrap">${o.encoding}</span>`];
+    if (o.retries > 0) {
+        badges.push(
+            `<span class="badge badge-sm badge-warning whitespace-nowrap" title="Retry attempts">↺ ${o.retries}</span>`,
+        );
+    }
     if (isRunning && o.bitrateKbps !== null) {
         badges.push(
             `<span class="badge badge-sm whitespace-nowrap">${formatBitrate(o.bitrateKbps)}</span>`,
@@ -270,7 +403,7 @@ function renderOutputsList(pipeline: PipelineView): void {
         return;
     }
 
-    listEl.innerHTML = pipeline.outs.map((o) => renderOutputCard(o)).join('');
+    listEl.innerHTML = pipeline.outs.map((o) => renderOutputCard(o, pipeline.input.live)).join('');
 
     listEl.onclick = (e) => {
         const btn = (e.target as Element).closest('[data-action]') as HTMLElement | null;

@@ -43,6 +43,7 @@ export interface OutputStatus {
     status: 'running' | 'stopped' | 'failed';
     pid: number | null;
     bitrateKbps: number | null;
+    retries: number;
 }
 
 export interface InputHealth {
@@ -100,4 +101,5 @@ export interface OutputView extends Output {
     status: 'running' | 'stopped' | 'failed';
     pid: number | null;
     bitrateKbps: number | null;
+    retries: number;
 }

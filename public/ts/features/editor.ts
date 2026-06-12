@@ -230,6 +230,8 @@ export function openAddOutput(pipelineId: string): void {
     const encSelect = document.getElementById('out-encoding-input') as HTMLSelectElement;
     encSelect.innerHTML = outEncodingOptions('source');
     (document.getElementById('out-modal-title') as HTMLElement).textContent = 'Add Output';
+    (document.getElementById('out-save-btn') as HTMLButtonElement).disabled = false;
+    (document.getElementById('out-running-hint') as HTMLElement).classList.add('hidden');
     modal.showModal();
 }
 
@@ -250,6 +252,14 @@ export function openEditOutput(pipelineId: string, outId: string): void {
     const encSelect = document.getElementById('out-encoding-input') as HTMLSelectElement;
     encSelect.innerHTML = outEncodingOptions(output.encoding);
     (document.getElementById('out-modal-title') as HTMLElement).textContent = 'Edit Output';
+
+    const pipeline = state.pipelines.find((p) => p.id === pipelineId);
+    const isRunning = pipeline?.outs.find((o) => o.id === outId)?.status === 'running';
+    const saveBtn = document.getElementById('out-save-btn') as HTMLButtonElement;
+    const hint = document.getElementById('out-running-hint') as HTMLElement;
+    saveBtn.disabled = isRunning;
+    hint.classList.toggle('hidden', !isRunning);
+
     modal.showModal();
 }
 

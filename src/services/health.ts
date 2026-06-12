@@ -26,7 +26,10 @@ export interface InputHealth {
 
 interface PipelineHealth {
     input: InputHealth;
-    outputs: Record<string, { status: string; pid: number | null; bitrateKbps: number | null }>;
+    outputs: Record<
+        string,
+        { status: string; pid: number | null; bitrateKbps: number | null; retries: number }
+    >;
 }
 
 export interface HealthSnapshot {
@@ -179,9 +182,14 @@ export function createHealthService(db: Db, outputService: OutputService) {
             }
 
             const pipelineOutputs = outputs.filter((o) => o.pipelineId === pipeline.id);
+            if (!nowLive) {
+                for (const out of pipelineOutputs) {
+                    if (out.desiredState === 'running') outputService.notifyBlocked(out.id);
+                }
+            }
             const outputsHealth: Record<
                 string,
-                { status: string; pid: number | null; bitrateKbps: number | null }
+                { status: string; pid: number | null; bitrateKbps: number | null; retries: number }
             > = {};
             for (const out of pipelineOutputs) {
                 outputsHealth[out.id] = outputService.getStats(out.id);

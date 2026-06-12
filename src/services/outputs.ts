@@ -13,6 +13,7 @@ interface OutputStats {
     status: 'running' | 'stopped' | 'failed';
     pid: number | null;
     bitrateKbps: number | null;
+    retries: number;
 }
 
 export interface OutputService {
@@ -22,6 +23,7 @@ export interface OutputService {
     stopAndWait(outputId: string): Promise<void>;
     restartPipelineOutputs(pipelineId: number): void;
     clearRetryState(outputId: string): void;
+    notifyBlocked(outputId: string): void;
 }
 
 export function createOutputService(db: Db): OutputService {
@@ -34,10 +36,37 @@ export function createOutputService(db: Db): OutputService {
     const stopRequested = new Set<string>();
     const startLocks = new Set<string>();
     const retryState = new Map<string, { failures: number; timer: NodeJS.Timeout | null }>();
+    const blockedState = new Map<string, { count: number; timer: NodeJS.Timeout | null }>();
+    const exhausted = new Set<string>();
 
     function getStats(outputId: string): OutputStats {
         const s = statuses.get(outputId) ?? { status: 'stopped' as const, pid: null };
-        return { ...s, bitrateKbps: bitrates.get(outputId) ?? null };
+        return {
+            ...s,
+            bitrateKbps: bitrates.get(outputId) ?? null,
+            retries:
+                (retryState.get(outputId)?.failures ?? 0) +
+                (blockedState.get(outputId)?.count ?? 0),
+        };
+    }
+
+    function scheduleBlockedRetry(outputId: string): void {
+        const b = blockedState.get(outputId);
+        if (!b) return;
+        const delay = RETRY_DELAYS_MS[Math.min(b.count, RETRY_DELAYS_MS.length - 1)];
+        b.timer = setTimeout(() => {
+            b.timer = null;
+            if (!blockedState.has(outputId)) return;
+            b.count++;
+            scheduleBlockedRetry(outputId);
+        }, delay);
+        b.timer.unref?.();
+    }
+
+    function clearBlockedRetry(outputId: string): void {
+        const b = blockedState.get(outputId);
+        if (b?.timer) clearTimeout(b.timer);
+        blockedState.delete(outputId);
     }
 
     function setStatus(
@@ -67,8 +96,8 @@ export function createOutputService(db: Db): OutputService {
         const r = getRetry(output.id);
         if (r.failures >= MAX_RETRIES) {
             console.log(`[outputs] ${output.id} max retries reached, giving up`);
-            db.setOutputDesiredState(output.id, 'stopped');
-            clearRetry(output.id);
+            exhausted.add(output.id);
+            clearBlockedRetry(output.id);
             return;
         }
         const delayMs = RETRY_DELAYS_MS[Math.min(r.failures - 1, RETRY_DELAYS_MS.length - 1)];
@@ -82,6 +111,7 @@ export function createOutputService(db: Db): OutputService {
 
     async function tryStart(outputId: string): Promise<void> {
         if (startLocks.has(outputId)) return;
+        if (exhausted.has(outputId)) return;
         startLocks.add(outputId);
         try {
             const output = db.getOutput(outputId);
@@ -185,13 +215,17 @@ export function createOutputService(db: Db): OutputService {
             const output = db.getOutput(outputId);
             if (!output) throw new Error('Output not found');
             if (!validateOutputUrl(output.url)) throw new Error('Invalid output URL');
+            exhausted.delete(outputId);
             clearRetry(outputId);
             getRetry(outputId).failures = 0;
+            clearBlockedRetry(outputId);
             await startJob(output);
         },
 
         stop(outputId: string): void {
+            exhausted.delete(outputId);
             clearRetry(outputId);
+            clearBlockedRetry(outputId);
             const proc = processes.get(outputId);
             if (proc) {
                 void killProcess(outputId, proc);
@@ -201,7 +235,9 @@ export function createOutputService(db: Db): OutputService {
         },
 
         async stopAndWait(outputId: string): Promise<void> {
+            exhausted.delete(outputId);
             clearRetry(outputId);
+            clearBlockedRetry(outputId);
             const proc = processes.get(outputId);
             if (!proc) {
                 setStatus(outputId, 'stopped', null);
@@ -214,6 +250,8 @@ export function createOutputService(db: Db): OutputService {
             const outputs = db.listOutputsForPipeline(pipelineId);
             outputs.forEach((output, i) => {
                 if (output.desiredState !== 'running') return;
+                if (exhausted.has(output.id)) return;
+                clearBlockedRetry(output.id);
                 if (statuses.get(output.id)?.status === 'running') return;
                 const r = getRetry(output.id);
                 r.failures = 0;
@@ -227,5 +265,12 @@ export function createOutputService(db: Db): OutputService {
         },
 
         clearRetryState: clearRetry,
+
+        notifyBlocked(outputId: string): void {
+            if (exhausted.has(outputId)) return;
+            if (blockedState.has(outputId)) return;
+            blockedState.set(outputId, { count: 0, timer: null });
+            scheduleBlockedRetry(outputId);
+        },
     };
 }

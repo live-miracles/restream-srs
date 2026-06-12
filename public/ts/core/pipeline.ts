@@ -31,6 +31,7 @@ export function parsePipelines(
                 status: oh?.status ?? 'stopped',
                 pid: oh?.pid ?? null,
                 bitrateKbps: oh?.bitrateKbps ?? null,
+                retries: oh?.retries ?? 0,
             };
         });
 
