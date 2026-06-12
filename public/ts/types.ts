@@ -79,8 +79,10 @@ export interface ConfigData {
 }
 
 export interface SystemMetrics {
-    cpu: { percent: number };
+    cpu: { cores: number; percent: number };
     ram: { usedBytes: number; totalBytes: number };
+    disk: { totalBytes: number; usedBytes: number } | null;
+    net: { rxBytesPerSec: number; txBytesPerSec: number };
 }
 
 export interface PipelineView {

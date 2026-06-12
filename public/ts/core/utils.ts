@@ -37,6 +37,12 @@ export function formatBytes(bytes: number): string {
     return `${(bytes / 1024).toFixed(0)} KB`;
 }
 
+export function formatBytesCompact(bytes: number): string {
+    if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)}G`;
+    if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(0)}M`;
+    return `${(bytes / 1024).toFixed(0)}K`;
+}
+
 export function maskStreamKey(key: string | null | undefined): string {
     const k = String(key ?? '');
     const idx = k.indexOf('_');

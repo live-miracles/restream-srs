@@ -3,6 +3,7 @@ import {
     statusColor,
     formatBitrate,
     formatBytes,
+    formatBytesCompact,
     getUrlParam,
     maskStreamKey,
 } from '../core/utils.js';
@@ -253,24 +254,13 @@ function renderOutputsList(pipeline: PipelineView): void {
         if (!btn) return;
         const outId = btn.dataset.outId!;
         const action = btn.dataset.action!;
-        if (action === 'start') {
-            void import('../features/editor.js').then(({ startOutput }) =>
-                startOutput(pipeline.id, outId),
-            );
-        } else if (action === 'stop') {
-            void import('../features/editor.js').then(({ stopOutput }) =>
-                stopOutput(pipeline.id, outId),
-            );
-        } else if (action === 'edit') {
-            void import('../features/editor.js').then(({ openEditOutput }) =>
-                openEditOutput(pipeline.id, outId),
-            );
-        } else if (action === 'delete') {
-            if (btn.classList.contains('btn-disabled')) return;
-            void import('../features/editor.js').then(({ confirmDeleteOutput }) =>
-                confirmDeleteOutput(pipeline.id, outId),
-            );
-        }
+        if (action === 'delete' && btn.classList.contains('btn-disabled')) return;
+        void import('../features/editor.js').then((ed) => {
+            if (action === 'start') ed.startOutput(pipeline.id, outId);
+            else if (action === 'stop') ed.stopOutput(pipeline.id, outId);
+            else if (action === 'edit') ed.openEditOutput(pipeline.id, outId);
+            else if (action === 'delete') ed.confirmDeleteOutput(pipeline.id, outId);
+        });
     };
 }
 
@@ -355,12 +345,31 @@ function renderPreview(pipeline: PipelineView): void {
 
 export function renderMetrics(): void {
     const m = state.metrics;
-    const cpu = m.cpu?.percent ?? null;
+    const cpu = m.cpu ?? null;
     const ram = m.ram ?? null;
-    setInnerText('navbar-cpu-value', cpu !== null ? `CPU ${cpu}%` : 'CPU —');
+    const disk = m.disk ?? null;
+    const net = m.net ?? null;
+
+    setInnerText('navbar-cpu-value', cpu ? `${cpu.cores}c CPU: ${cpu.percent}%` : 'CPU —');
     setInnerText(
         'navbar-ram-value',
-        ram ? `RAM ${formatBytes(ram.usedBytes)}/${formatBytes(ram.totalBytes)}` : 'RAM —',
+        ram
+            ? `${formatBytesCompact(ram.totalBytes)} RAM: ${Math.round((ram.usedBytes / ram.totalBytes) * 100)}%`
+            : 'RAM —',
+    );
+    setInnerText(
+        'navbar-disk-value',
+        disk
+            ? `${formatBytesCompact(disk.totalBytes)} Disk: ${Math.round((disk.usedBytes / disk.totalBytes) * 100)}%`
+            : 'Disk —',
+    );
+    setInnerText(
+        'navbar-net-rx',
+        net ? `↓ ${((net.rxBytesPerSec * 8) / 1_000_000).toFixed(1)} Mb/s` : '↓ —',
+    );
+    setInnerText(
+        'navbar-net-tx',
+        net ? `↑ ${((net.txBytesPerSec * 8) / 1_000_000).toFixed(1)} Mb/s` : '↑ —',
     );
 }
 

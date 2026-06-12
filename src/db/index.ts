@@ -51,6 +51,9 @@ export function createDb(dbPath?: string): Db {
         }
     }
 
+    const stmtGetPipeline = sqlite.prepare(`${PIPELINE_SELECT} WHERE p.id = ?`);
+    const stmtGetOutput = sqlite.prepare('SELECT * FROM outputs WHERE id = ?');
+
     function nextPipelineId(): number {
         const ids = new Set(
             (sqlite.prepare('SELECT id FROM pipelines').all() as { id: number }[]).map((r) => r.id),
@@ -101,18 +104,11 @@ export function createDb(dbPath?: string): Db {
             sqlite
                 .prepare('INSERT INTO pipelines (id, name, stream_key_id) VALUES (?, ?, ?)')
                 .run(id, name, keyRow.id);
-            return rowToPipeline(
-                sqlite.prepare(`${PIPELINE_SELECT} WHERE p.id = ?`).get(id) as Record<
-                    string,
-                    unknown
-                >,
-            );
+            return rowToPipeline(stmtGetPipeline.get(id) as Record<string, unknown>);
         },
 
         getPipeline(id: number): Pipeline | undefined {
-            const row = sqlite.prepare(`${PIPELINE_SELECT} WHERE p.id = ?`).get(id) as
-                | Record<string, unknown>
-                | undefined;
+            const row = stmtGetPipeline.get(id) as Record<string, unknown> | undefined;
             return row ? rowToPipeline(row) : undefined;
         },
 
@@ -133,9 +129,7 @@ export function createDb(dbPath?: string): Db {
             } else {
                 sqlite.prepare('UPDATE pipelines SET name = ? WHERE id = ?').run(name, id);
             }
-            const row = sqlite.prepare(`${PIPELINE_SELECT} WHERE p.id = ?`).get(id) as
-                | Record<string, unknown>
-                | undefined;
+            const row = stmtGetPipeline.get(id) as Record<string, unknown> | undefined;
             return row ? rowToPipeline(row) : null;
         },
 
@@ -157,18 +151,11 @@ export function createDb(dbPath?: string): Db {
                     'INSERT INTO outputs (id, pipeline_id, seq, name, url, desired_state, encoding) VALUES (?, ?, ?, ?, ?, ?, ?)',
                 )
                 .run(id, pipelineId, seq, name, url, 'stopped', encoding);
-            return rowToOutput(
-                sqlite.prepare('SELECT * FROM outputs WHERE id = ?').get(id) as Record<
-                    string,
-                    unknown
-                >,
-            );
+            return rowToOutput(stmtGetOutput.get(id) as Record<string, unknown>);
         },
 
         getOutput(id: string): Output | undefined {
-            const row = sqlite.prepare('SELECT * FROM outputs WHERE id = ?').get(id) as
-                | Record<string, unknown>
-                | undefined;
+            const row = stmtGetOutput.get(id) as Record<string, unknown> | undefined;
             return row ? rowToOutput(row) : undefined;
         },
 
@@ -193,9 +180,7 @@ export function createDb(dbPath?: string): Db {
             sqlite
                 .prepare('UPDATE outputs SET name = ?, url = ?, encoding = ? WHERE id = ?')
                 .run(name, url, encoding, id);
-            const row = sqlite.prepare('SELECT * FROM outputs WHERE id = ?').get(id) as
-                | Record<string, unknown>
-                | undefined;
+            const row = stmtGetOutput.get(id) as Record<string, unknown> | undefined;
             return row ? rowToOutput(row) : null;
         },
 
@@ -203,9 +188,7 @@ export function createDb(dbPath?: string): Db {
             sqlite
                 .prepare('UPDATE outputs SET desired_state = ? WHERE id = ?')
                 .run(desiredState, id);
-            const row = sqlite.prepare('SELECT * FROM outputs WHERE id = ?').get(id) as
-                | Record<string, unknown>
-                | undefined;
+            const row = stmtGetOutput.get(id) as Record<string, unknown> | undefined;
             return row ? rowToOutput(row) : null;
         },
 

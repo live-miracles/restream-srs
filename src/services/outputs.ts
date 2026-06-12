@@ -103,6 +103,24 @@ export function createOutputService(db: Db): OutputService {
         return match ? parseFloat(match[1]) : null;
     }
 
+    function killProcess(outputId: string, proc: ChildProcess): Promise<void> {
+        stopRequested.add(outputId);
+        proc.kill('SIGTERM');
+        return new Promise<void>((resolve) => {
+            const t = setTimeout(() => {
+                try {
+                    proc.kill('SIGKILL');
+                } catch {
+                    /* already gone */
+                }
+            }, SIGKILL_DELAY_MS);
+            proc.once('exit', () => {
+                clearTimeout(t);
+                resolve();
+            });
+        });
+    }
+
     async function startJob(output: Output): Promise<void> {
         if (!validateOutputUrl(output.url)) throw new Error('Invalid output URL');
 
@@ -176,16 +194,7 @@ export function createOutputService(db: Db): OutputService {
             clearRetry(outputId);
             const proc = processes.get(outputId);
             if (proc) {
-                stopRequested.add(outputId);
-                proc.kill('SIGTERM');
-                const t = setTimeout(() => {
-                    try {
-                        proc.kill('SIGKILL');
-                    } catch {
-                        /* already gone */
-                    }
-                }, SIGKILL_DELAY_MS);
-                proc.once('exit', () => clearTimeout(t));
+                void killProcess(outputId, proc);
             } else {
                 setStatus(outputId, 'stopped', null);
             }
@@ -198,21 +207,7 @@ export function createOutputService(db: Db): OutputService {
                 setStatus(outputId, 'stopped', null);
                 return;
             }
-            await new Promise<void>((resolve) => {
-                const t = setTimeout(() => {
-                    try {
-                        proc.kill('SIGKILL');
-                    } catch {
-                        /* ok */
-                    }
-                }, SIGKILL_DELAY_MS);
-                proc.once('exit', () => {
-                    clearTimeout(t);
-                    resolve();
-                });
-                stopRequested.add(outputId);
-                proc.kill('SIGTERM');
-            });
+            await killProcess(outputId, proc);
         },
 
         restartPipelineOutputs(pipelineId: number): void {
