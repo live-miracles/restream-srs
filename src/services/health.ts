@@ -28,7 +28,13 @@ interface PipelineHealth {
     input: InputHealth;
     outputs: Record<
         string,
-        { status: string; pid: number | null; bitrateKbps: number | null; retries: number }
+        {
+            status: string;
+            pid: number | null;
+            bitrateKbps: number | null;
+            retries: number;
+            startedAtMs: number | null;
+        }
     >;
 }
 
@@ -107,6 +113,7 @@ export function createHealthService(db: Db, outputService: OutputService) {
     };
 
     const inputLive = new Map<number, boolean>();
+    const inputLiveStartMs = new Map<number, number>();
     const ffprobeResults = new Map<number, ProbeResult>();
     const ffprobeRetries = new Map<number, { timer: NodeJS.Timeout | null; attempt: number }>();
 
@@ -173,23 +180,26 @@ export function createHealthService(db: Db, outputService: OutputService) {
             inputLive.set(pipeline.id, nowLive);
 
             if (!wasLive && nowLive) {
+                inputLiveStartMs.set(pipeline.id, Date.now());
                 outputService.restartPipelineOutputs(pipeline.id);
                 scheduleFfprobe(pipeline.id, pipeline.streamKey);
             }
 
             if (wasLive && !nowLive) {
+                inputLiveStartMs.delete(pipeline.id);
                 clearFfprobeState(pipeline.id);
             }
 
             const pipelineOutputs = outputs.filter((o) => o.pipelineId === pipeline.id);
-            if (!nowLive) {
-                for (const out of pipelineOutputs) {
-                    if (out.desiredState === 'running') outputService.notifyBlocked(out.id);
-                }
-            }
             const outputsHealth: Record<
                 string,
-                { status: string; pid: number | null; bitrateKbps: number | null; retries: number }
+                {
+                    status: string;
+                    pid: number | null;
+                    bitrateKbps: number | null;
+                    retries: number;
+                    startedAtMs: number | null;
+                }
             > = {};
             for (const out of pipelineOutputs) {
                 outputsHealth[out.id] = outputService.getStats(out.id);
@@ -205,7 +215,9 @@ export function createHealthService(db: Db, outputService: OutputService) {
                     recvBitrateKbps: s?.kbps?.recv_30s ?? null,
                     sendBitrateKbps: s?.kbps?.send_30s ?? null,
                     readers: s ? Math.max(0, (s.clients ?? 0) - 1) : 0,
-                    uptimeMs: s ? Date.now() - s.live_ms : null,
+                    uptimeMs: nowLive
+                        ? Date.now() - (inputLiveStartMs.get(pipeline.id) ?? Date.now())
+                        : null,
                     video: probe?.video ?? (s?.video ? { ...s.video, fps: null } : null),
                     audio: probe?.audio ?? s?.audio ?? null,
                 },

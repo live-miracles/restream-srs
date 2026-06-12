@@ -57,11 +57,13 @@ window.addPipeBtn = () => createPipeline();
 window.pipeFormBtn = () => submitPipelineForm();
 
 window.editPipeBtn = () => {
+    if (document.getElementById('pipe-edit-btn')?.classList.contains('btn-disabled')) return;
     const id = getUrlParam('p');
     if (id) openEditPipeline(id);
 };
 
 window.deletePipeBtn = async () => {
+    if (document.getElementById('pipe-delete-btn')?.classList.contains('btn-disabled')) return;
     const id = getUrlParam('p');
     if (id) await confirmDeletePipeline(id);
 };

@@ -14,6 +14,7 @@ interface OutputStats {
     pid: number | null;
     bitrateKbps: number | null;
     retries: number;
+    startedAtMs: number | null;
 }
 
 export interface OutputService {
@@ -23,7 +24,6 @@ export interface OutputService {
     stopAndWait(outputId: string): Promise<void>;
     restartPipelineOutputs(pipelineId: number): void;
     clearRetryState(outputId: string): void;
-    notifyBlocked(outputId: string): void;
 }
 
 export function createOutputService(db: Db): OutputService {
@@ -33,10 +33,10 @@ export function createOutputService(db: Db): OutputService {
         { status: 'running' | 'stopped' | 'failed'; pid: number | null }
     >();
     const bitrates = new Map<string, number | null>();
+    const startTimes = new Map<string, number>();
     const stopRequested = new Set<string>();
     const startLocks = new Set<string>();
     const retryState = new Map<string, { failures: number; timer: NodeJS.Timeout | null }>();
-    const blockedState = new Map<string, { count: number; timer: NodeJS.Timeout | null }>();
     const exhausted = new Set<string>();
 
     function getStats(outputId: string): OutputStats {
@@ -44,29 +44,9 @@ export function createOutputService(db: Db): OutputService {
         return {
             ...s,
             bitrateKbps: bitrates.get(outputId) ?? null,
-            retries:
-                (retryState.get(outputId)?.failures ?? 0) +
-                (blockedState.get(outputId)?.count ?? 0),
+            retries: retryState.get(outputId)?.failures ?? 0,
+            startedAtMs: startTimes.get(outputId) ?? null,
         };
-    }
-
-    function scheduleBlockedRetry(outputId: string): void {
-        const b = blockedState.get(outputId);
-        if (!b) return;
-        const delay = RETRY_DELAYS_MS[Math.min(b.count, RETRY_DELAYS_MS.length - 1)];
-        b.timer = setTimeout(() => {
-            b.timer = null;
-            if (!blockedState.has(outputId)) return;
-            b.count++;
-            scheduleBlockedRetry(outputId);
-        }, delay);
-        b.timer.unref?.();
-    }
-
-    function clearBlockedRetry(outputId: string): void {
-        const b = blockedState.get(outputId);
-        if (b?.timer) clearTimeout(b.timer);
-        blockedState.delete(outputId);
     }
 
     function setStatus(
@@ -75,7 +55,12 @@ export function createOutputService(db: Db): OutputService {
         pid: number | null,
     ): void {
         statuses.set(outputId, { status, pid });
-        if (status !== 'running') bitrates.delete(outputId);
+        if (status === 'running') {
+            startTimes.set(outputId, Date.now());
+        } else {
+            bitrates.delete(outputId);
+            startTimes.delete(outputId);
+        }
     }
 
     function getRetry(outputId: string) {
@@ -97,7 +82,6 @@ export function createOutputService(db: Db): OutputService {
         if (r.failures >= MAX_RETRIES) {
             console.log(`[outputs] ${output.id} max retries reached, giving up`);
             exhausted.add(output.id);
-            clearBlockedRetry(output.id);
             return;
         }
         const delayMs = RETRY_DELAYS_MS[Math.min(r.failures - 1, RETRY_DELAYS_MS.length - 1)];
@@ -126,7 +110,6 @@ export function createOutputService(db: Db): OutputService {
     }
 
     function parseBitrateKbps(line: string): number | null {
-        // FFmpeg progress line: "bitrate=2500.5kbits/s" or "bitrate=N/A"
         const val = line.slice('bitrate='.length).trim();
         if (val === 'N/A' || val === '0.0kbits/s') return null;
         const match = val.match(/^([\d.]+)kbits\/s$/);
@@ -168,7 +151,6 @@ export function createOutputService(db: Db): OutputService {
         setStatus(output.id, 'running', child.pid ?? null);
         console.log(`[outputs] ${output.id} started pid=${child.pid}`);
 
-        // Parse FFmpeg progress output (stdout) for bitrate
         let buf = '';
         child.stdout?.on('data', (d: Buffer) => {
             buf += d.toString();
@@ -183,16 +165,9 @@ export function createOutputService(db: Db): OutputService {
 
         child.on('error', (err) => {
             console.warn(`[outputs] ${output.id} error:`, err.message);
-            processes.delete(output.id);
-            setStatus(output.id, 'failed', null);
-            stopRequested.delete(output.id);
-            if (db.getOutput(output.id)?.desiredState === 'running') {
-                getRetry(output.id).failures++;
-                scheduleRetry(output);
-            }
         });
 
-        child.on('exit', (code, signal) => {
+        child.on('close', (code, signal) => {
             const wasStop = stopRequested.delete(output.id);
             const status = wasStop || code === 0 ? 'stopped' : 'failed';
             processes.delete(output.id);
@@ -218,14 +193,12 @@ export function createOutputService(db: Db): OutputService {
             exhausted.delete(outputId);
             clearRetry(outputId);
             getRetry(outputId).failures = 0;
-            clearBlockedRetry(outputId);
             await startJob(output);
         },
 
         stop(outputId: string): void {
             exhausted.delete(outputId);
             clearRetry(outputId);
-            clearBlockedRetry(outputId);
             const proc = processes.get(outputId);
             if (proc) {
                 void killProcess(outputId, proc);
@@ -237,7 +210,6 @@ export function createOutputService(db: Db): OutputService {
         async stopAndWait(outputId: string): Promise<void> {
             exhausted.delete(outputId);
             clearRetry(outputId);
-            clearBlockedRetry(outputId);
             const proc = processes.get(outputId);
             if (!proc) {
                 setStatus(outputId, 'stopped', null);
@@ -251,8 +223,10 @@ export function createOutputService(db: Db): OutputService {
             outputs.forEach((output, i) => {
                 if (output.desiredState !== 'running') return;
                 if (exhausted.has(output.id)) return;
-                clearBlockedRetry(output.id);
-                if (statuses.get(output.id)?.status === 'running') return;
+                if (statuses.get(output.id)?.status === 'running') {
+                    startTimes.set(output.id, Date.now());
+                    return;
+                }
                 const r = getRetry(output.id);
                 r.failures = 0;
                 if (r.timer) clearTimeout(r.timer);
@@ -265,12 +239,5 @@ export function createOutputService(db: Db): OutputService {
         },
 
         clearRetryState: clearRetry,
-
-        notifyBlocked(outputId: string): void {
-            if (exhausted.has(outputId)) return;
-            if (blockedState.has(outputId)) return;
-            blockedState.set(outputId, { count: 0, timer: null });
-            scheduleBlockedRetry(outputId);
-        },
     };
 }

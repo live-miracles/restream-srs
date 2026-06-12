@@ -32,6 +32,7 @@ export function parsePipelines(
                 pid: oh?.pid ?? null,
                 bitrateKbps: oh?.bitrateKbps ?? null,
                 retries: oh?.retries ?? 0,
+                startedAtMs: oh?.startedAtMs ?? null,
             };
         });
 

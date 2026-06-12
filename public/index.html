@@ -187,7 +187,7 @@
     </dialog>
 
     <!-- Main grid -->
-    <div class="grid h-screen min-h-0 flex-1 gap-4 p-4 pt-0" style="grid-template-columns: minmax(15rem, 20rem) minmax(0, 1fr) minmax(22rem, 1fr)">
+    <div class="grid h-screen min-h-0 flex-1 gap-4 p-4 pt-0" style="grid-template-columns: minmax(15rem, 20rem) minmax(0, 3fr) minmax(22rem, 4fr)">
       <!-- Left: Pipeline list -->
       <div class="bg-base-300 rounded-box mt-4 overflow-y-auto">
         <div class="space-y-2 p-4">
@@ -222,7 +222,7 @@
         <div class="mb-3 flex items-center justify-between gap-3 text-xl font-bold">
           <span class="truncate" id="pipe-name"></span>
           <div class="flex shrink-0 items-center gap-2">
-            <button class="btn btn-xs btn-accent btn-outline" onclick="editPipeBtn()">
+            <button id="pipe-edit-btn" class="btn btn-xs btn-accent btn-outline" onclick="editPipeBtn()">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="14"
@@ -238,7 +238,7 @@
               </svg>
               Edit
             </button>
-            <button class="btn btn-xs btn-error btn-outline" onclick="deletePipeBtn()">
+            <button id="pipe-delete-btn" class="btn btn-xs btn-error btn-outline" onclick="deletePipeBtn()">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="14"

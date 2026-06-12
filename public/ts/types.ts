@@ -44,6 +44,7 @@ export interface OutputStatus {
     pid: number | null;
     bitrateKbps: number | null;
     retries: number;
+    startedAtMs: number | null;
 }
 
 export interface InputHealth {
@@ -102,4 +103,5 @@ export interface OutputView extends Output {
     pid: number | null;
     bitrateKbps: number | null;
     retries: number;
+    startedAtMs: number | null;
 }

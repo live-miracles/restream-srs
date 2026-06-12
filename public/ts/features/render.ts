@@ -25,8 +25,8 @@ function outStatus(o: OutputView, inputLive: boolean): OutStatus {
     if (o.desiredState === 'stopped') return 'off';
     if (o.status === 'failed') return 'error';
     if (o.status === 'running') {
+        if (!inputLive) return 'error';
         if (o.bitrateKbps !== null && o.bitrateKbps >= 1000) return 'good';
-        if (o.bitrateKbps === null && !inputLive) return 'error';
         return 'warn';
     }
     return 'off';
@@ -92,6 +92,10 @@ function renderPipelineList(): void {
 
             const badge = (n: number, cls: string) =>
                 n > 0 ? `<div class="badge badge-sm ${cls} px-2">${n}</div>` : '';
+            const uptimeSpan =
+                p.input.live && p.input.uptimeMs !== null
+                    ? `<span class="font-mono text-xs opacity-60 shrink-0">${formatUptime(p.input.uptimeMs)}</span>`
+                    : '';
             const inputTypeBadge = p.input.live
                 ? `<span class="badge badge-sm badge-outline shrink-0">${p.input.isSrt ? 'SRT' : 'RTMP'}</span>`
                 : '';
@@ -103,7 +107,8 @@ function renderPipelineList(): void {
                 ${badge(outWarn, 'badge-warning')}
                 ${badge(outFailed, 'badge-error')}
                 ${badge(outOff, 'badge-ghost')}
-                <a class="truncate">${p.name}</a>
+                <a class="truncate min-w-0">${p.name}</a>
+                ${uptimeSpan}
                 ${inputTypeBadge}
             </div>
         </li>`;
@@ -313,6 +318,14 @@ function renderPipelineInfo(selectedId: string | null): void {
 
     setInnerText('pipe-name', pipeline.name);
 
+    const hasActiveOutputs = pipeline.outs.some((o) => o.desiredState !== 'stopped');
+    const editBtn = document.getElementById('pipe-edit-btn');
+    const deleteBtn = document.getElementById('pipe-delete-btn');
+    editBtn?.classList.toggle('btn-disabled', hasActiveOutputs);
+    deleteBtn?.classList.toggle('btn-disabled', hasActiveOutputs);
+    if (editBtn) editBtn.title = hasActiveOutputs ? 'Stop all outputs before editing' : '';
+    if (deleteBtn) deleteBtn.title = hasActiveOutputs ? 'Stop all outputs before deleting' : '';
+
     const statsContainer = document.getElementById('input-stats-container');
     const statsEl = document.getElementById('input-stats');
     const inputHtml = renderInputStats(pipeline.input);
@@ -360,7 +373,13 @@ function renderOutputCard(o: OutputView, inputLive: boolean): string {
               : st === 'error'
                 ? 'status-error'
                 : 'status-neutral';
+    const uptimeMs = st === 'good' && o.startedAtMs !== null ? Date.now() - o.startedAtMs : null;
     const badges = [`<span class="badge badge-sm whitespace-nowrap">${o.encoding}</span>`];
+    if (uptimeMs !== null) {
+        badges.push(
+            `<span class="font-mono text-xs opacity-60 whitespace-nowrap">${formatUptime(uptimeMs)}</span>`,
+        );
+    }
     if (o.retries > 0) {
         badges.push(
             `<span class="badge badge-sm badge-warning whitespace-nowrap" title="Retry attempts">↺ ${o.retries}</span>`,
