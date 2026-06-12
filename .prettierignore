@@ -1,3 +1,5 @@
+hls/
+objs/
 bundle.js
 bundle.json
 package-lock.json

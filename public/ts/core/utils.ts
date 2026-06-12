@@ -14,15 +14,10 @@ export function setUrlParam(key: string, value: string | null): void {
     window.history.replaceState({}, '', url);
 }
 
-export function statusColor(live: boolean): string {
-    return live ? '#22c55e' : '#6b7280';
-}
-
-export function outputStatusColor(status: string, desiredState: string): string {
-    if (desiredState === 'stopped') return '#6b7280';
-    if (status === 'running') return '#22c55e';
-    if (status === 'failed') return '#ef4444';
-    return '#6b7280';
+export function statusColor(live: boolean, bitrateKbps?: number | null): string {
+    if (!live) return '#6b7280';
+    if (bitrateKbps != null && bitrateKbps < 1000) return '#eab308';
+    return '#22c55e';
 }
 
 export function formatBitrate(kbps: number | null): string {

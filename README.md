@@ -149,31 +149,32 @@ ffmpeg -re -i video.mp4 \
 
 ## Development
 
-Prerequisites: Node.js 20+, FFmpeg, and the SRS binary available as `srs` in `PATH`.
+Prerequisites: Node.js 20+, FFmpeg.
 
-**Downloading the SRS binary (Linux / WSL2):**
-```bash
-curl -fsSL https://github.com/ossrs/srs/releases/download/v6.0-r0/SRS-CentOS7-x86_64-6.0-r0.zip -o /tmp/srs.zip
-unzip /tmp/srs.zip -d /tmp/srs
-SRS_BIN=$(find /tmp/srs -type f -name srs | head -1)
-sudo install -m 755 "$SRS_BIN" /usr/local/bin/srs
-rm -rf /tmp/srs /tmp/srs.zip
-srs -v   # should print 6.0-r0
-```
-
+**1. Install dependencies and the SRS binary:**
 ```bash
 npm install
-npm run dev        # tsx watch + tsc watch + tailwind watch
+npm run dev-install   # downloads SRS 6.0-r0 into ./objs/srs, no root required
 ```
 
-Run SRS in another terminal:
+To use a local SRS binary instead of downloading:
 ```bash
-npm run srs
+SRS_BINARY_PATH=/path/to/srs npm run dev-install
 ```
 
-If the app rewrites `srs.conf` after a settings change, restart the local SRS process:
+**2. Start SRS** (terminal 1):
 ```bash
-Ctrl-C
+npm run srs           # runs ./objs/srs -c srs.conf in the foreground
+```
+
+**3. Start the app** (terminal 2):
+```bash
+npm run dev           # tsx watch + tsc watch + tailwind watch
+```
+
+If the app rewrites `srs.conf` after a settings change (SRT latency / passphrase), restart SRS:
+```bash
+Ctrl-C  # in terminal 1
 npm run srs
 ```
 

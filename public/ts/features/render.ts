@@ -26,9 +26,20 @@ function renderPipelineList(): void {
     if (!listEl) return;
 
     const inputsOn = state.pipelines.filter((p) => p.input.live).length;
+    const inputsWarn = state.pipelines.filter(
+        (p) => p.input.live && p.input.recvBitrateKbps !== null && p.input.recvBitrateKbps < 1000,
+    ).length;
     const totalOutputs = state.pipelines.reduce((s, p) => s + p.outs.length, 0);
     const outputsOn = state.pipelines.reduce(
         (s, p) => s + p.outs.filter((o) => o.status === 'running').length,
+        0,
+    );
+    const outputsWarn = state.pipelines.reduce(
+        (s, p) =>
+            s +
+            p.outs.filter(
+                (o) => o.status === 'running' && o.bitrateKbps !== null && o.bitrateKbps < 1000,
+            ).length,
         0,
     );
     const outputsFailed = state.pipelines.reduce(
@@ -42,10 +53,12 @@ function renderPipelineList(): void {
     );
 
     setInnerText('pipe-cnt', state.pipelines.length);
-    setInnerText('pipe-oks', inputsOn);
+    setInnerText('pipe-oks', inputsOn - inputsWarn);
+    setInnerText('pipe-warns', inputsWarn);
     setInnerText('pipe-offs', state.pipelines.length - inputsOn);
     setInnerText('out-cnt', totalOutputs);
-    setInnerText('out-oks', outputsOn);
+    setInnerText('out-oks', outputsOn - outputsWarn);
+    setInnerText('out-warns', outputsWarn);
     setInnerText('out-errors', outputsFailed);
     setInnerText('out-offs', outputsOff);
 
@@ -59,12 +72,25 @@ function renderPipelineList(): void {
             ).length;
             const outOff = p.outs.filter((o) => o.desiredState === 'stopped').length;
 
-            const inColor = statusColor(p.input.live);
-            const outColor = outFailed > 0 ? '#ef4444' : outRunning > 0 ? '#22c55e' : '#6b7280';
+            const inColor = statusColor(p.input.live, p.input.recvBitrateKbps);
+            const outLowBitrate = p.outs.filter(
+                (o) => o.status === 'running' && o.bitrateKbps !== null && o.bitrateKbps < 1000,
+            ).length;
+            const outColor =
+                outFailed > 0
+                    ? '#ef4444'
+                    : outLowBitrate > 0
+                      ? '#eab308'
+                      : outRunning > 0
+                        ? '#22c55e'
+                        : '#6b7280';
             const selected = p.id === selectedId ? 'bg-base-100' : '';
 
             const badge = (n: number, cls: string) =>
                 n > 0 ? `<div class="badge badge-sm ${cls} px-2">${n}</div>` : '';
+            const inputTypeBadge = p.input.live
+                ? `<span class="badge badge-sm badge-outline shrink-0">${p.input.isSrt ? 'SRT' : 'RTMP'}</span>`
+                : '';
 
             return `<li>
             <div class="flex items-center gap-2 ${selected} cursor-pointer js-select-pipeline" data-id="${p.id}">
@@ -73,6 +99,7 @@ function renderPipelineList(): void {
                 ${badge(outFailed, 'badge-error')}
                 ${badge(outOff, 'badge-ghost')}
                 <a class="truncate">${p.name}</a>
+                ${inputTypeBadge}
             </div>
         </li>`;
         })
@@ -96,9 +123,7 @@ function formatUptime(ms: number | null): string {
 }
 
 function renderInputStats(input: InputHealth): string {
-    if (!input.live) {
-        return `<div class="text-sm opacity-40 italic">No active publisher</div>`;
-    }
+    if (!input.live) return '';
 
     const v = input.video;
     const a = input.audio;
@@ -109,13 +134,8 @@ function renderInputStats(input: InputHealth): string {
             <div class="stat-value text-sm">${val ?? '—'}</div>
         </div>`;
 
-    const sourceTag = input.isSrt
-        ? `<span class="badge badge-sm badge-outline badge-info ml-1">SRT</span>`
-        : `<span class="badge badge-sm badge-outline badge-warning ml-1">RTMP</span>`;
-
     return `
-        <div class="flex items-center gap-1 mb-2">${sourceTag}</div>
-        <div class="stats shadow mt-2 flex-wrap">
+        <div class="stats shadow flex-wrap">
             ${stat('In Bitrate', formatBitrate(input.recvBitrateKbps))}
             ${stat('Readers', input.readers)}
             ${stat('Uptime', formatUptime(input.uptimeMs))}
@@ -167,13 +187,11 @@ function renderPipelineInfo(selectedId: string | null): void {
 
     setInnerText('pipe-name', pipeline.name);
 
-    const inputDot = document.getElementById('input-live-dot');
-    if (inputDot)
-        inputDot.className = `rounded-full w-2 h-2 ${pipeline.input.live ? 'bg-success' : 'bg-base-content/30'}`;
-    setInnerText('input-status-text', pipeline.input.live ? 'Live' : 'Offline');
-
+    const statsContainer = document.getElementById('input-stats-container');
     const statsEl = document.getElementById('input-stats');
-    if (statsEl) statsEl.innerHTML = renderInputStats(pipeline.input);
+    const inputHtml = renderInputStats(pipeline.input);
+    if (statsContainer) statsContainer.classList.toggle('hidden', !pipeline.input.live);
+    if (statsEl) statsEl.innerHTML = inputHtml;
 
     const masked = maskStreamKey(pipeline.streamKey);
     const rtmpEl = document.getElementById('rtmp-publish-url');
@@ -201,13 +219,18 @@ function renderPipelineInfo(selectedId: string | null): void {
 
 // ── Outputs list (right column) ───────────────────────
 
+const ICON_PENCIL = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>`;
+const ICON_TRASH = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>`;
+
 function renderOutputCard(o: OutputView): string {
     const isStopped = o.desiredState === 'stopped';
     const isRunning = o.status === 'running';
     const statusClass = isStopped
         ? 'status-neutral'
         : isRunning
-          ? 'status-success'
+          ? o.bitrateKbps !== null && o.bitrateKbps < 1000
+              ? 'status-warning'
+              : 'status-success'
           : 'status-error';
     const badges = [`<span class="badge badge-sm whitespace-nowrap">${o.encoding}</span>`];
     if (isRunning && o.bitrateKbps !== null) {
@@ -231,9 +254,9 @@ function renderOutputCard(o: OutputView): string {
             ${badges.join('')}
         </div>
         <div class="flex items-center gap-1 shrink-0">
-            <button class="btn btn-xs btn-ghost" data-action="edit" data-out-id="${o.id}">✎</button>
+            <button class="btn btn-xs btn-ghost" data-action="edit" data-out-id="${o.id}">${ICON_PENCIL}</button>
             <button class="btn btn-xs btn-ghost text-error ${isStopped ? '' : 'btn-disabled'}"
-                data-action="delete" data-out-id="${o.id}">🗙</button>
+                data-action="delete" data-out-id="${o.id}">${ICON_TRASH}</button>
         </div>
     </div>`;
 }

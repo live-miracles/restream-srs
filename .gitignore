@@ -10,3 +10,4 @@ data.db
 .env
 *.mp4
 objs/
+hls/

@@ -111,16 +111,18 @@
     <dialog id="edit-pipe-modal" class="modal">
       <div class="modal-box w-fit">
         <input type="hidden" id="pipe-id-input" />
-        <div class="mx-auto mt-2 w-full max-w-sm space-y-3 px-4">
-          <h2 class="text-xl font-bold" id="pipe-modal-title">Add Pipeline</h2>
-          <fieldset class="fieldset">
-            <legend class="fieldset-legend">Pipeline Name</legend>
-            <input type="text" id="pipe-name-input" class="input w-full" placeholder="My Stream" />
-          </fieldset>
-          <fieldset class="fieldset">
-            <legend class="fieldset-legend">Stream Key</legend>
-            <select class="select w-full font-mono text-sm" id="pipe-key-select"></select>
-          </fieldset>
+        <div class="mx-auto mt-2 px-4">
+          <h2 class="mb-3 text-xl font-bold" id="pipe-modal-title">Add Pipeline</h2>
+          <div class="flex items-end gap-3">
+            <fieldset class="fieldset">
+              <legend class="fieldset-legend">Pipeline Name</legend>
+              <input type="text" id="pipe-name-input" class="input w-48" placeholder="My Stream" oninput="this.classList.remove('input-error')" />
+            </fieldset>
+            <fieldset class="fieldset">
+              <legend class="fieldset-legend">Stream Key</legend>
+              <select class="select w-44 font-mono text-sm" id="pipe-key-select"></select>
+            </fieldset>
+          </div>
         </div>
         <div class="modal-action">
           <form method="dialog">
@@ -139,24 +141,30 @@
         <div class="mx-auto mt-2 space-y-3 px-4">
           <h2 class="text-xl font-bold" id="out-modal-title">Add Output</h2>
 
-          <fieldset class="fieldset">
-            <legend class="fieldset-legend">Output Name</legend>
-            <input type="text" id="out-name-input" class="input w-full" placeholder="YouTube" />
-          </fieldset>
-
-          <fieldset class="fieldset">
-            <legend class="fieldset-legend">Server</legend>
-            <select class="select w-full" id="out-server-select" onchange="outServerChange()">
-              <option value="0">YouTube RTMP</option>
-              <option value="1">Facebook RTMP</option>
-              <option value="2">Custom RTMP</option>
-              <option value="3">Custom SRT</option>
-            </select>
-          </fieldset>
+          <div class="flex items-end gap-3">
+            <fieldset class="fieldset">
+              <legend class="fieldset-legend">Output Name</legend>
+              <input type="text" id="out-name-input" class="input w-40" placeholder="YouTube" oninput="this.classList.remove('input-error')" />
+            </fieldset>
+            <fieldset class="fieldset flex-1">
+              <legend class="fieldset-legend">Server</legend>
+              <select class="select w-full" id="out-server-select" onchange="outServerChange()">
+                <option value="0">YouTube RTMP</option>
+                <option value="1">Facebook RTMP</option>
+                <option value="2">Custom RTMP</option>
+                <option value="3">Custom SRT</option>
+              </select>
+            </fieldset>
+          </div>
 
           <fieldset class="fieldset">
             <legend class="fieldset-legend" id="out-key-label">Stream Key</legend>
-            <input type="text" id="out-key-input" class="input w-full font-mono text-sm" placeholder="xxxx-xxxx-xxxx-xxxx" />
+            <input
+              type="text"
+              id="out-key-input"
+              class="input w-full font-mono text-sm"
+              placeholder="xxxx-xxxx-xxxx-xxxx"
+              oninput="this.classList.remove('input-error')" />
           </fieldset>
 
           <fieldset class="fieldset">
@@ -186,6 +194,7 @@
             <span><span id="pipe-cnt">0</span> Inputs</span>
             <div class="flex gap-1">
               <div class="badge badge-sm badge-success px-2" id="pipe-oks" title="Live"></div>
+              <div class="badge badge-sm badge-warning px-2" id="pipe-warns" title="Low bitrate"></div>
               <div class="badge badge-sm badge-neutral px-2" id="pipe-offs" title="Offline"></div>
             </div>
           </div>
@@ -193,6 +202,7 @@
             <span><span id="out-cnt">0</span> Outputs</span>
             <div class="flex gap-1">
               <div class="badge badge-sm badge-success px-2" id="out-oks" title="Running"></div>
+              <div class="badge badge-sm badge-warning px-2" id="out-warns" title="Low bitrate"></div>
               <div class="badge badge-sm badge-error px-2" id="out-errors" title="Failed"></div>
               <div class="badge badge-sm badge-neutral px-2" id="out-offs" title="Stopped"></div>
             </div>
@@ -211,17 +221,46 @@
         <div class="mb-3 flex items-center justify-between gap-3 text-xl font-bold">
           <span class="truncate" id="pipe-name"></span>
           <div class="flex shrink-0 items-center gap-2">
-            <button class="btn btn-xs btn-accent btn-outline" onclick="editPipeBtn()">✎ Edit</button>
-            <button class="btn btn-xs btn-error btn-outline" onclick="deletePipeBtn()">🗙 Delete</button>
+            <button class="btn btn-xs btn-accent btn-outline" onclick="editPipeBtn()">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round">
+                <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                <path d="m15 5 4 4" />
+              </svg>
+              Edit
+            </button>
+            <button class="btn btn-xs btn-error btn-outline" onclick="deletePipeBtn()">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round">
+                <path d="M3 6h18" />
+                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                <line x1="10" x2="10" y1="11" y2="17" />
+                <line x1="14" x2="14" y1="11" y2="17" />
+              </svg>
+              Delete
+            </button>
           </div>
         </div>
 
-        <!-- Input status + SRS stats -->
-        <div class="border-base-content/10 bg-base-100/50 mb-4 rounded-xl border p-3">
-          <div class="mb-2 flex items-center gap-2">
-            <div id="input-live-dot" class="bg-base-content/30 h-2 w-2 rounded-full"></div>
-            <span class="text-sm font-semibold" id="input-status-text">Offline</span>
-          </div>
+        <!-- Input stats -->
+        <div id="input-stats-container" class="border-base-content/10 bg-base-100/50 mb-4 hidden rounded-xl border p-3">
           <div id="input-stats"></div>
         </div>
 
@@ -231,8 +270,18 @@
             <div class="mb-2 flex items-center justify-between">
               <span class="text-xs font-semibold opacity-60">PREVIEW</span>
               <div class="flex gap-2">
-                <button id="preview-play-btn" class="btn btn-xs btn-accent btn-outline" onclick="previewPlayBtn()">&#9654; Preview</button>
-                <button id="preview-stop-btn" class="btn btn-xs btn-ghost hidden" onclick="previewStopBtn()">Stop</button>
+                <button id="preview-play-btn" class="btn btn-xs btn-accent btn-outline" onclick="previewPlayBtn()">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                    <polygon points="5 3 19 12 5 21 5 3" />
+                  </svg>
+                  Preview
+                </button>
+                <button id="preview-stop-btn" class="btn btn-xs btn-ghost hidden" onclick="previewStopBtn()">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                    <rect width="14" height="14" x="5" y="5" rx="2" />
+                  </svg>
+                  Stop
+                </button>
               </div>
             </div>
             <video id="preview-video" class="hidden w-full rounded-lg" controls muted playsinline></video>

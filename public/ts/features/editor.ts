@@ -1,6 +1,6 @@
 import * as api from '../core/api.js';
 import { state } from '../core/state.js';
-import { setUrlParam } from '../core/utils.js';
+import { setUrlParam, maskStreamKey } from '../core/utils.js';
 import { refreshDashboard } from './dashboard.js';
 import type { StreamKey } from '../types.js';
 
@@ -97,7 +97,7 @@ function populateKeySelect(currentKeyId: number): void {
     const options: string[] = [];
     for (const k of state.streamKeys as StreamKey[]) {
         if (!assignedIds.has(k.id) || k.id === currentKeyId) {
-            const label = k.key.slice(0, 16) + '...';
+            const label = maskStreamKey(k.key);
             const selected = k.id === currentKeyId ? ' selected' : '';
             options.push(`<option value="${k.id}"${selected}>${label}</option>`);
         }
@@ -118,8 +118,10 @@ export function openEditPipeline(id: string): void {
     const pipeline = state.pipelines.find((p) => p.id === id);
     if (!pipeline) return;
     const modal = pipeModal();
+    const nameEl = document.getElementById('pipe-name-input') as HTMLInputElement;
+    nameEl.value = pipeline.name;
+    nameEl.classList.remove('input-error');
     (document.getElementById('pipe-id-input') as HTMLInputElement).value = id;
-    (document.getElementById('pipe-name-input') as HTMLInputElement).value = pipeline.name;
     (document.getElementById('pipe-modal-title') as HTMLElement).textContent = 'Edit Pipeline';
     populateKeySelect(pipeline.streamKeyId);
     modal.showModal();
@@ -127,7 +129,9 @@ export function openEditPipeline(id: string): void {
 
 export async function submitPipelineForm(): Promise<void> {
     const id = (document.getElementById('pipe-id-input') as HTMLInputElement).value.trim();
-    const name = (document.getElementById('pipe-name-input') as HTMLInputElement).value.trim();
+    const nameEl = document.getElementById('pipe-name-input') as HTMLInputElement;
+    const name = nameEl.value.trim();
+    nameEl.classList.toggle('input-error', !name);
     if (!name) return;
     const streamKeyId = parseInt(
         (document.getElementById('pipe-key-select') as HTMLSelectElement).value,
@@ -205,13 +209,23 @@ function outEncodingOptions(selected: string): string {
         .join('');
 }
 
+function clearOutErrors(): void {
+    (document.getElementById('out-name-input') as HTMLInputElement).classList.remove('input-error');
+    (document.getElementById('out-key-input') as HTMLInputElement).classList.remove('input-error');
+}
+
 export function openAddOutput(pipelineId: string): void {
     const modal = outModal();
+    const existingCount = (state.config.outputs ?? []).filter(
+        (o) => String(o.pipelineId) === pipelineId,
+    ).length;
     (document.getElementById('out-pipe-id-input') as HTMLInputElement).value = pipelineId;
     (document.getElementById('out-id-input') as HTMLInputElement).value = '';
-    (document.getElementById('out-name-input') as HTMLInputElement).value = '';
+    (document.getElementById('out-name-input') as HTMLInputElement).value =
+        `Output ${existingCount + 1}`;
     (document.getElementById('out-server-select') as HTMLSelectElement).value = '0';
     (document.getElementById('out-key-input') as HTMLInputElement).value = '';
+    clearOutErrors();
     applyServerSelection(0);
     const encSelect = document.getElementById('out-encoding-input') as HTMLSelectElement;
     encSelect.innerHTML = outEncodingOptions('source');
@@ -231,6 +245,7 @@ export function openEditOutput(pipelineId: string, outId: string): void {
     (document.getElementById('out-name-input') as HTMLInputElement).value = output.name;
     (document.getElementById('out-server-select') as HTMLSelectElement).value = String(idx);
     (document.getElementById('out-key-input') as HTMLInputElement).value = key;
+    clearOutErrors();
     applyServerSelection(idx);
     const encSelect = document.getElementById('out-encoding-input') as HTMLSelectElement;
     encSelect.innerHTML = outEncodingOptions(output.encoding);
@@ -251,6 +266,10 @@ export async function submitOutputForm(): Promise<void> {
     const url = SERVERS[serverIdx].prefix + key;
     const encoding = (document.getElementById('out-encoding-input') as HTMLSelectElement).value;
 
+    const nameEl = document.getElementById('out-name-input') as HTMLInputElement;
+    const keyEl = document.getElementById('out-key-input') as HTMLInputElement;
+    nameEl.classList.toggle('input-error', !name);
+    keyEl.classList.toggle('input-error', !key);
     if (!name || !key) return;
 
     let result;
