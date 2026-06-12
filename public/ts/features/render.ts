@@ -180,10 +180,18 @@ function renderPipelineInfo(selectedId: string | null): void {
     if (rtmpEl) {
         rtmpEl.dataset.copy = pipeline.rtmpPublishUrl;
         rtmpEl.textContent = pipeline.rtmpPublishUrl.replace(pipeline.streamKey, masked);
+        const lastSlash = pipeline.rtmpPublishUrl.lastIndexOf('/');
+        rtmpEl.dataset.serverUrl =
+            lastSlash > -1
+                ? pipeline.rtmpPublishUrl.substring(0, lastSlash)
+                : pipeline.rtmpPublishUrl;
+        rtmpEl.dataset.streamKey = pipeline.streamKey;
     }
     if (srtEl) {
         srtEl.dataset.copy = pipeline.srtPublishUrl;
         srtEl.textContent = pipeline.srtPublishUrl.replace(pipeline.streamKey, masked);
+        srtEl.dataset.ip = pipeline.srtPublishUrl.slice(6, pipeline.srtPublishUrl.indexOf(':', 6));
+        srtEl.dataset.streamId = `#!::r=live/${pipeline.streamKey},m=publish`;
     }
 
     renderPreview(pipeline);

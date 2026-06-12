@@ -241,18 +241,34 @@
           <div class="border-base-content/10 bg-base-100/50 rounded-xl border p-3">
             <div class="mb-1 flex items-center justify-between gap-2">
               <span class="text-xs font-semibold opacity-60">RTMP Publish URL</span>
-              <button class="btn btn-xs btn-ghost btn-outline" onclick="copyText(document.getElementById('rtmp-publish-url').dataset.copy)">
-                Copy
-              </button>
+              <div class="flex gap-1">
+                <button class="btn btn-xs btn-ghost btn-outline" onclick="copyText(document.getElementById('rtmp-publish-url').dataset.serverUrl)">
+                  Copy Server URL
+                </button>
+                <button class="btn btn-xs btn-ghost btn-outline" onclick="copyText(document.getElementById('rtmp-publish-url').dataset.streamKey)">
+                  Copy Stream Key
+                </button>
+                <button class="btn btn-xs btn-accent btn-outline" onclick="copyText(document.getElementById('rtmp-publish-url').dataset.copy)">
+                  Copy
+                </button>
+              </div>
             </div>
             <code class="font-mono text-xs break-all opacity-80" id="rtmp-publish-url"></code>
           </div>
           <div class="border-base-content/10 bg-base-100/50 rounded-xl border p-3">
             <div class="mb-1 flex items-center justify-between gap-2">
               <span class="text-xs font-semibold opacity-60">SRT Publish URL</span>
-              <button class="btn btn-xs btn-ghost btn-outline" onclick="copyText(document.getElementById('srt-publish-url').dataset.copy)">
-                Copy
-              </button>
+              <div class="flex gap-1">
+                <button class="btn btn-xs btn-ghost btn-outline" onclick="copyText(document.getElementById('srt-publish-url').dataset.ip)">
+                  Copy IP
+                </button>
+                <button class="btn btn-xs btn-ghost btn-outline" onclick="copyText(document.getElementById('srt-publish-url').dataset.streamId)">
+                  Copy Stream ID
+                </button>
+                <button class="btn btn-xs btn-accent btn-outline" onclick="copyText(document.getElementById('srt-publish-url').dataset.copy)">
+                  Copy
+                </button>
+              </div>
             </div>
             <code class="font-mono text-xs break-all opacity-80" id="srt-publish-url"></code>
           </div>
