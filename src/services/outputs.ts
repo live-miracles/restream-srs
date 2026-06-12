@@ -187,6 +187,8 @@ export function createOutputService(db: Db): OutputService {
         getStats,
 
         async start(outputId: string): Promise<void> {
+            if (startLocks.has(outputId)) return;
+            if (statuses.get(outputId)?.status === 'running') return;
             const output = db.getOutput(outputId);
             if (!output) throw new Error('Output not found');
             if (!validateOutputUrl(output.url)) throw new Error('Invalid output URL');

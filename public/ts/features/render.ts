@@ -21,6 +21,8 @@ declare global {
 
 type OutStatus = 'good' | 'warn' | 'error' | 'off';
 
+const pendingOutputs = new Set<string>();
+
 function outStatus(o: OutputView, inputLive: boolean): OutStatus {
     if (o.desiredState === 'stopped') return 'off';
     if (o.status === 'failed') return 'error';
@@ -390,13 +392,14 @@ function renderOutputCard(o: OutputView, inputLive: boolean): string {
             `<span class="badge badge-sm whitespace-nowrap">${formatBitrate(o.bitrateKbps)}</span>`,
         );
     }
+    const isPending = pendingOutputs.has(o.id);
     return `
     <div class="bg-base-100 px-3 py-2 shadow rounded-box w-full flex gap-2 items-start">
         <div class="min-w-0 flex-1 flex flex-wrap items-center gap-x-2 gap-y-1">
             <div class="flex items-center gap-2 shrink-0 font-semibold">
                 <div aria-label="status" class="status status-lg ${statusClass} mx-1"></div>
                 <button class="btn btn-xs ${isStopped ? 'btn-accent' : 'btn-accent btn-outline'}"
-                    data-action="${isStopped ? 'start' : 'stop'}" data-out-id="${o.id}">
+                    data-action="${isStopped ? 'start' : 'stop'}" data-out-id="${o.id}"${isPending ? ' disabled' : ''}>
                     ${isStopped ? 'Start' : 'Stop'}
                 </button>
                 <span>${o.name}</span>
@@ -422,14 +425,31 @@ function renderOutputsList(pipeline: PipelineView): void {
         return;
     }
 
+    // Clear pending state once the output's actual status has settled into the
+    // desired state (or for outputs that no longer exist, e.g. deleted).
+    const presentIds = new Set(pipeline.outs.map((o) => o.id));
+    for (const id of pendingOutputs) {
+        if (!presentIds.has(id)) pendingOutputs.delete(id);
+    }
+    for (const o of pipeline.outs) {
+        if (!pendingOutputs.has(o.id)) continue;
+        const settled =
+            (o.desiredState === 'running' && (o.status === 'running' || o.status === 'failed')) ||
+            (o.desiredState === 'stopped' && o.status === 'stopped');
+        if (settled) pendingOutputs.delete(o.id);
+    }
+
     listEl.innerHTML = pipeline.outs.map((o) => renderOutputCard(o, pipeline.input.live)).join('');
 
     listEl.onclick = (e) => {
-        const btn = (e.target as Element).closest('[data-action]') as HTMLElement | null;
-        if (!btn) return;
+        const btn = (e.target as Element).closest('[data-action]') as HTMLButtonElement | null;
+        if (!btn || btn.disabled || btn.classList.contains('btn-disabled')) return;
         const outId = btn.dataset.outId!;
         const action = btn.dataset.action!;
-        if (action === 'delete' && btn.classList.contains('btn-disabled')) return;
+        if (action === 'start' || action === 'stop') {
+            pendingOutputs.add(outId);
+            btn.disabled = true;
+        }
         void import('../features/editor.js').then((ed) => {
             if (action === 'start') ed.startOutput(pipeline.id, outId);
             else if (action === 'stop') ed.stopOutput(pipeline.id, outId);

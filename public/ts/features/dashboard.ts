@@ -25,11 +25,20 @@ export async function refreshDashboard(): Promise<void> {
     } while (refreshQueued);
 }
 
-let fetchConfigNextTick = true;
+let configStale = true;
+
+export function invalidateConfig(): void {
+    configStale = true;
+}
+
+export async function refreshAfterMutation(): Promise<void> {
+    invalidateConfig();
+    await refreshDashboard();
+}
 
 async function fetchAndRender(): Promise<void> {
-    const doConfig = fetchConfigNextTick;
-    fetchConfigNextTick = !fetchConfigNextTick;
+    const doConfig = configStale;
+    configStale = false;
 
     const [configResult, healthResult, metricsResult] = await Promise.all([
         doConfig ? getConfig() : Promise.resolve(null),
@@ -71,7 +80,6 @@ document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
         startPolling(HIDDEN_POLL_MS);
     } else {
-        fetchConfigNextTick = true;
         startPolling(POLL_MS);
         void refreshDashboard();
     }

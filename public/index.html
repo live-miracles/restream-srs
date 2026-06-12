@@ -101,7 +101,7 @@
         <div class="modal-action">
           <form method="dialog">
             <button class="btn mx-2">Cancel</button>
-            <button type="button" class="btn btn-accent" onclick="settingsFormBtn()">Save</button>
+            <button type="button" class="btn btn-accent" onclick="settingsFormBtn(this)">Save</button>
           </form>
         </div>
       </div>
@@ -127,7 +127,7 @@
         <div class="modal-action">
           <form method="dialog">
             <button class="btn mx-2">Cancel</button>
-            <button type="button" class="btn btn-accent" onclick="pipeFormBtn()">Save</button>
+            <button type="button" class="btn btn-accent" onclick="pipeFormBtn(this)">Save</button>
           </form>
         </div>
       </div>
@@ -180,7 +180,7 @@
           <p id="out-running-hint" class="text-warning hidden text-xs">Stop the output before editing.</p>
           <form method="dialog">
             <button class="btn mx-2">Cancel</button>
-            <button type="button" id="out-save-btn" class="btn btn-accent" onclick="outFormBtn()">Save</button>
+            <button type="button" id="out-save-btn" class="btn btn-accent" onclick="outFormBtn(this)">Save</button>
           </form>
         </div>
       </div>
@@ -213,7 +213,7 @@
         <ul class="menu rounded-box w-full" id="pipelines"></ul>
 
         <div class="mt-3 w-full pb-4 text-center">
-          <button class="btn btn-sm btn-accent btn-outline" onclick="addPipeBtn()">Add Pipeline</button>
+          <button class="btn btn-sm btn-accent btn-outline" onclick="addPipeBtn(this)">Add Pipeline</button>
         </div>
       </div>
 
@@ -238,7 +238,7 @@
               </svg>
               Edit
             </button>
-            <button id="pipe-delete-btn" class="btn btn-xs btn-error btn-outline" onclick="deletePipeBtn()">
+            <button id="pipe-delete-btn" class="btn btn-xs btn-error btn-outline" onclick="deletePipeBtn(this)">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="14"

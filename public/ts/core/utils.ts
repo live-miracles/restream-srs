@@ -48,6 +48,35 @@ export function maskStreamKey(key: string | null | undefined): string {
     return `${name}_${secret.slice(0, 2)}...${secret.slice(-2)}`;
 }
 
+// Disables a button and shows a spinner while an async action runs, so the
+// user gets immediate feedback even when the server takes a moment to respond.
+export async function withBusy(
+    btn: HTMLButtonElement | null | undefined,
+    fn: () => Promise<void>,
+): Promise<void> {
+    if (!btn) {
+        await fn();
+        return;
+    }
+    if (btn.dataset.busy === '1') return;
+    btn.dataset.busy = '1';
+    const original = btn.innerHTML;
+    const wasDisabled = btn.disabled;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="loading loading-spinner loading-xs"></span>';
+    try {
+        await fn();
+    } finally {
+        // Only restore if the button is still in the DOM (it may have been
+        // re-rendered or removed by the refresh that the action triggered).
+        if (btn.isConnected) {
+            btn.innerHTML = original;
+            btn.disabled = wasDisabled;
+            delete btn.dataset.busy;
+        }
+    }
+}
+
 export async function copyText(text: string): Promise<void> {
     try {
         await navigator.clipboard.writeText(text);

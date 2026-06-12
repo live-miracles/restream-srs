@@ -23,14 +23,14 @@ declare global {
         editServerNameBtn: () => void;
         serverNameFormBtn: () => Promise<void>;
         openSettingsBtn: () => void;
-        settingsFormBtn: () => Promise<void>;
+        settingsFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
         selectPipeline: (id: string | null) => void;
-        addPipeBtn: () => Promise<void>;
-        pipeFormBtn: () => Promise<void>;
+        addPipeBtn: (btn?: HTMLButtonElement) => Promise<void>;
+        pipeFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
         editPipeBtn: () => void;
-        deletePipeBtn: () => Promise<void>;
+        deletePipeBtn: (btn?: HTMLButtonElement) => Promise<void>;
         addOutBtn: () => void;
-        outFormBtn: () => Promise<void>;
+        outFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
         outServerChange: () => void;
         copyText: (text: string) => Promise<void>;
         previewPlayBtn: () => Promise<void>;
@@ -45,7 +45,7 @@ declare global {
 window.editServerNameBtn = () => openEditServerName();
 window.serverNameFormBtn = () => submitServerNameForm();
 window.openSettingsBtn = () => openSettings();
-window.settingsFormBtn = () => submitSettingsForm();
+window.settingsFormBtn = (btn) => submitSettingsForm(btn);
 
 window.selectPipeline = (id) => {
     void import('./render.js').then(({ stopCurrentPreview }) => stopCurrentPreview());
@@ -53,8 +53,8 @@ window.selectPipeline = (id) => {
     void refreshDashboard();
 };
 
-window.addPipeBtn = () => createPipeline();
-window.pipeFormBtn = () => submitPipelineForm();
+window.addPipeBtn = (btn) => createPipeline(btn);
+window.pipeFormBtn = (btn) => submitPipelineForm(btn);
 
 window.editPipeBtn = () => {
     if (document.getElementById('pipe-edit-btn')?.classList.contains('btn-disabled')) return;
@@ -62,10 +62,10 @@ window.editPipeBtn = () => {
     if (id) openEditPipeline(id);
 };
 
-window.deletePipeBtn = async () => {
+window.deletePipeBtn = async (btn) => {
     if (document.getElementById('pipe-delete-btn')?.classList.contains('btn-disabled')) return;
     const id = getUrlParam('p');
-    if (id) await confirmDeletePipeline(id);
+    if (id) await confirmDeletePipeline(id, btn);
 };
 
 window.addOutBtn = () => {
@@ -73,7 +73,7 @@ window.addOutBtn = () => {
     if (id) openAddOutput(id);
 };
 
-window.outFormBtn = () => submitOutputForm();
+window.outFormBtn = (btn) => submitOutputForm(btn);
 window.outServerChange = () => onOutServerChange();
 
 window.editSrtLatencyBtn = () => openEditSrtLatency();

@@ -1,7 +1,7 @@
 import * as api from '../core/api.js';
 import { state } from '../core/state.js';
-import { setUrlParam, maskStreamKey } from '../core/utils.js';
-import { refreshDashboard } from './dashboard.js';
+import { setUrlParam, maskStreamKey, withBusy } from '../core/utils.js';
+import { refreshAfterMutation } from './dashboard.js';
 import type { StreamKey } from '../types.js';
 
 // ── Settings ──────────────────────────────────────────
@@ -50,7 +50,7 @@ function getSrtPassphrase(): string | null | undefined {
     return value;
 }
 
-export async function submitSettingsForm(): Promise<void> {
+export async function submitSettingsForm(btn?: HTMLButtonElement): Promise<void> {
     const name = (
         document.getElementById('settings-server-name-input') as HTMLInputElement
     ).value.trim();
@@ -58,21 +58,23 @@ export async function submitSettingsForm(): Promise<void> {
     const passphrase = getSrtPassphrase();
     if (!name || latency === undefined || passphrase === undefined) return;
 
-    const result = await api.updateSettings(name, latency, passphrase);
-    if (result) {
-        const el = document.getElementById('server-name-display');
-        if (el) el.textContent = name;
-        document.title = name;
-        (document.getElementById('settings-modal') as HTMLDialogElement).close();
-        await refreshDashboard();
-    }
+    await withBusy(btn, async () => {
+        const result = await api.updateSettings(name, latency, passphrase);
+        if (result) {
+            const el = document.getElementById('server-name-display');
+            if (el) el.textContent = name;
+            document.title = name;
+            (document.getElementById('settings-modal') as HTMLDialogElement).close();
+            await refreshAfterMutation();
+        }
+    });
 }
 
 export const submitSrtLatencyForm = submitSettingsForm;
 
 export async function dismissSrtPending(): Promise<void> {
     await api.dismissSrtLatencyPending();
-    await refreshDashboard();
+    await refreshAfterMutation();
 }
 
 // ── Server name ───────────────────────────────────────
@@ -105,13 +107,15 @@ function populateKeySelect(currentKeyId: number): void {
     select.innerHTML = options.join('');
 }
 
-export async function createPipeline(): Promise<void> {
-    const result = await api.createPipeline();
-    if (result) {
-        const created = result as { id: string };
-        setUrlParam('p', String(created.id));
-        await refreshDashboard();
-    }
+export async function createPipeline(btn?: HTMLButtonElement): Promise<void> {
+    await withBusy(btn, async () => {
+        const result = await api.createPipeline();
+        if (result) {
+            const created = result as { id: string };
+            setUrlParam('p', String(created.id));
+            await refreshAfterMutation();
+        }
+    });
 }
 
 export function openEditPipeline(id: string): void {
@@ -127,7 +131,7 @@ export function openEditPipeline(id: string): void {
     modal.showModal();
 }
 
-export async function submitPipelineForm(): Promise<void> {
+export async function submitPipelineForm(btn?: HTMLButtonElement): Promise<void> {
     const id = (document.getElementById('pipe-id-input') as HTMLInputElement).value.trim();
     const nameEl = document.getElementById('pipe-name-input') as HTMLInputElement;
     const name = nameEl.value.trim();
@@ -137,20 +141,24 @@ export async function submitPipelineForm(): Promise<void> {
         (document.getElementById('pipe-key-select') as HTMLSelectElement).value,
     );
 
-    const result = await api.updatePipeline(id, name, streamKeyId);
-    if (result) {
-        pipeModal().close();
-        await refreshDashboard();
-    }
+    await withBusy(btn, async () => {
+        const result = await api.updatePipeline(id, name, streamKeyId);
+        if (result) {
+            pipeModal().close();
+            await refreshAfterMutation();
+        }
+    });
 }
 
-export async function confirmDeletePipeline(id: string): Promise<void> {
+export async function confirmDeletePipeline(id: string, btn?: HTMLButtonElement): Promise<void> {
     if (!confirm('Delete this pipeline and all its outputs?')) return;
-    const ok = await api.deletePipeline(id);
-    if (ok) {
-        setUrlParam('p', null);
-        await refreshDashboard();
-    }
+    await withBusy(btn, async () => {
+        const ok = await api.deletePipeline(id);
+        if (ok) {
+            setUrlParam('p', null);
+            await refreshAfterMutation();
+        }
+    });
 }
 
 // ── Output modal ──────────────────────────────────────
@@ -263,7 +271,7 @@ export function openEditOutput(pipelineId: string, outId: string): void {
     modal.showModal();
 }
 
-export async function submitOutputForm(): Promise<void> {
+export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
     const pipelineId = (
         document.getElementById('out-pipe-id-input') as HTMLInputElement
     ).value.trim();
@@ -282,30 +290,31 @@ export async function submitOutputForm(): Promise<void> {
     keyEl.classList.toggle('input-error', !key);
     if (!name || !key) return;
 
-    let result;
-    if (outId) {
-        result = await api.updateOutput(pipelineId, outId, { name, url, encoding });
-    } else {
-        result = await api.createOutput(pipelineId, { name, url, encoding });
-    }
-    if (result) {
-        outModal().close();
-        await refreshDashboard();
-    }
+    await withBusy(btn, async () => {
+        const result = outId
+            ? await api.updateOutput(pipelineId, outId, { name, url, encoding })
+            : await api.createOutput(pipelineId, { name, url, encoding });
+        if (result) {
+            outModal().close();
+            await refreshAfterMutation();
+        }
+    });
 }
 
 export async function confirmDeleteOutput(pipelineId: string, outId: string): Promise<void> {
     if (!confirm(`Delete output ${outId}?`)) return;
     const ok = await api.deleteOutput(pipelineId, outId);
-    if (ok) await refreshDashboard();
+    if (ok) await refreshAfterMutation();
 }
 
 export async function startOutput(pipelineId: string, outId: string): Promise<void> {
     await api.startOutput(pipelineId, outId);
-    await refreshDashboard();
+    // desiredState lives in config, so refetch it (not just health) to flip the
+    // Start/Stop label and let the pending-button logic settle correctly.
+    await refreshAfterMutation();
 }
 
 export async function stopOutput(pipelineId: string, outId: string): Promise<void> {
     await api.stopOutput(pipelineId, outId);
-    await refreshDashboard();
+    await refreshAfterMutation();
 }
