@@ -11,6 +11,12 @@ import { registerSettingsApi } from './api/settings.js';
 import { createPreviewService } from './services/preview.js';
 import { registerPreviewApi } from './api/preview.js';
 import { registerSrsHooks } from './api/srs-hooks.js';
+import {
+    registerAuthApi,
+    requireAuth,
+    initializePassword,
+    checkIsAuthenticated,
+} from './api/auth.js';
 import { writeSrsConf } from './utils/conf.js';
 
 const app = express();
@@ -19,11 +25,19 @@ const PORT = parseInt(process.env.PORT || '8080');
 app.use(express.json());
 
 const db = createDb();
+initializePassword(db);
+
 const outputService = createOutputService(db);
 const healthService = createHealthService(db, outputService);
 const previewService = createPreviewService(db);
 
+// Unauthenticated routes
 registerSrsHooks(app, db);
+registerAuthApi(app, db);
+
+// Auth middleware for all remaining /api/* routes
+app.use('/api', requireAuth);
+
 registerConfigApi(app, db);
 registerPipelineApi(app, db, outputService, previewService);
 registerOutputApi(app, db, outputService);
@@ -42,6 +56,26 @@ app.use(
 );
 
 const publicDir = path.join(__dirname, '..', 'public');
+
+const serveIndexOrRedirect = (req: express.Request, res: express.Response): void => {
+    if (checkIsAuthenticated(req)) {
+        res.sendFile(path.join(publicDir, 'index.html'));
+    } else {
+        res.redirect('/login');
+    }
+};
+
+app.get('/', serveIndexOrRedirect);
+app.get('/index.html', serveIndexOrRedirect);
+
+app.get('/login', (req, res) => {
+    if (checkIsAuthenticated(req)) {
+        res.redirect('/');
+    } else {
+        res.sendFile(path.join(publicDir, 'login.html'));
+    }
+});
+
 app.use('/', express.static(publicDir));
 
 async function main(): Promise<void> {

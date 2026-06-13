@@ -12,6 +12,12 @@ export function openSettings(): void {
     const passphrase = state.config.srtPassphrase ?? '';
     (document.getElementById('settings-server-name-input') as HTMLInputElement).value = current;
     (document.getElementById('srt-passphrase-input') as HTMLInputElement).value = passphrase;
+    (document.getElementById('current-password-input') as HTMLInputElement).value = '';
+    (document.getElementById('new-password-input') as HTMLInputElement).value = '';
+    (document.getElementById('confirm-password-input') as HTMLInputElement).value = '';
+    (document.getElementById('confirm-password-input') as HTMLInputElement).classList.remove(
+        'input-error',
+    );
     modal.showModal();
 }
 
@@ -31,16 +37,39 @@ export async function submitSettingsForm(btn?: HTMLButtonElement): Promise<void>
     const passphrase = getSrtPassphrase();
     if (!name || passphrase === undefined) return;
 
+    const currentPw = (document.getElementById('current-password-input') as HTMLInputElement).value;
+    const newPw = (document.getElementById('new-password-input') as HTMLInputElement).value;
+    const confirmPw = (document.getElementById('confirm-password-input') as HTMLInputElement).value;
+    const confirmEl = document.getElementById('confirm-password-input') as HTMLInputElement;
+    const changingPassword = currentPw || newPw || confirmPw;
+
+    if (changingPassword) {
+        if (!currentPw || !newPw || !confirmPw || newPw !== confirmPw) {
+            confirmEl.classList.add('input-error');
+            return;
+        }
+    }
+
     await withBusy(btn, async () => {
         const result = await api.updateSettings(name, passphrase);
-        if (result) {
-            const el = document.getElementById('server-name-display');
-            if (el) el.textContent = name;
-            document.title = name;
-            (document.getElementById('settings-modal') as HTMLDialogElement).close();
-            await refreshAfterMutation();
+        if (!result) return;
+
+        if (changingPassword) {
+            const pwResult = await api.changePassword(currentPw, newPw);
+            if (!pwResult) return;
         }
+
+        const el = document.getElementById('server-name-display');
+        if (el) el.textContent = name;
+        document.title = name;
+        (document.getElementById('settings-modal') as HTMLDialogElement).close();
+        await refreshAfterMutation();
     });
+}
+
+export async function logoutUser(): Promise<void> {
+    await api.logout();
+    window.location.href = '/login';
 }
 
 // ── Server name ───────────────────────────────────────

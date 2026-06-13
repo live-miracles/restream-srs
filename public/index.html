@@ -77,8 +77,33 @@
               placeholder="Blank disables SRT encryption" />
             <p class="fieldset-label text-xs opacity-50">Optional. Must be 10-79 characters when enabled.</p>
           </fieldset>
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend">Change Password</legend>
+            <input
+              type="password"
+              id="current-password-input"
+              class="input mb-2 w-full"
+              placeholder="Current password"
+              autocomplete="current-password" />
+            <input
+              type="password"
+              id="new-password-input"
+              class="input mb-2 w-full"
+              placeholder="New password"
+              autocomplete="new-password"
+              oninput="document.getElementById('confirm-password-input').classList.remove('input-error')" />
+            <input
+              type="password"
+              id="confirm-password-input"
+              class="input w-full"
+              placeholder="Confirm new password"
+              autocomplete="new-password"
+              oninput="this.classList.remove('input-error')" />
+            <p class="fieldset-label text-xs opacity-50">Leave all blank to keep current password.</p>
+          </fieldset>
         </div>
         <div class="modal-action">
+          <button type="button" class="btn btn-ghost text-error mr-auto" onclick="logoutBtn()">Logout</button>
           <form method="dialog">
             <button class="btn mx-2">Cancel</button>
             <button type="button" class="btn btn-accent" onclick="settingsFormBtn(this)">Save</button>

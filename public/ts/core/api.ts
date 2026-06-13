@@ -40,6 +40,10 @@ async function apiRequest<T>(
     if (isMutating(method)) setLoading(true);
     try {
         const res = await fetch(url, fetchOpts);
+        if (res.status === 401) {
+            window.location.href = '/login';
+            return null;
+        }
         const data = (await res.json()) as T & { error?: string };
         if (!res.ok) {
             showError((data as { error?: string })?.error || `HTTP ${res.status}`);
@@ -102,3 +106,11 @@ export const startPreview = (pipelineId: string) =>
 
 export const stopPreview = (pipelineId: string) =>
     apiRequest(`/api/pipelines/${pipelineId}/preview/stop`, { method: 'POST' });
+
+export const logout = () => apiRequest<{ ok: boolean }>('/api/auth/logout', { method: 'POST' });
+
+export const changePassword = (currentPassword: string, newPassword: string) =>
+    apiRequest<{ ok: boolean }>('/api/auth/change-password', {
+        method: 'POST',
+        body: { currentPassword, newPassword },
+    });

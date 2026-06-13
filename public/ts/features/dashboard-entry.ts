@@ -5,6 +5,7 @@ import {
     submitServerNameForm,
     openSettings,
     submitSettingsForm,
+    logoutUser,
     createPipeline,
     openEditPipeline,
     submitPipelineForm,
@@ -20,6 +21,7 @@ declare global {
         serverNameFormBtn: () => Promise<void>;
         openSettingsBtn: () => void;
         settingsFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
+        logoutBtn: () => Promise<void>;
         selectPipeline: (id: string | null) => void;
         addPipeBtn: (btn?: HTMLButtonElement) => Promise<void>;
         pipeFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
@@ -38,6 +40,7 @@ window.editServerNameBtn = () => openEditServerName();
 window.serverNameFormBtn = () => submitServerNameForm();
 window.openSettingsBtn = () => openSettings();
 window.settingsFormBtn = (btn) => submitSettingsForm(btn);
+window.logoutBtn = () => logoutUser();
 
 window.selectPipeline = (id) => {
     void import('./render.js').then(({ stopCurrentPreview }) => stopCurrentPreview());
