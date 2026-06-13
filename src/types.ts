@@ -26,6 +26,7 @@ export interface Db {
     setSetting(key: string, value: string): void;
 
     listStreamKeys(): StreamKey[];
+    regenerateStreamKeys(): StreamKey[];
 
     createPipeline(): Pipeline;
     getPipeline(id: number): Pipeline | undefined;

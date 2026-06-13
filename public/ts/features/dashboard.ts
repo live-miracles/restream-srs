@@ -48,7 +48,7 @@ async function fetchAndRender(): Promise<void> {
 
     if (configResult) {
         state.config = configResult;
-        if (!state.streamKeys.length && configResult.streamKeys?.length) {
+        if (configResult.streamKeys?.length) {
             state.streamKeys = configResult.streamKeys;
         }
         if (configResult.serverName) {

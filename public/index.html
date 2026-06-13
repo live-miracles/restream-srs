@@ -97,6 +97,21 @@
             <p class="fieldset-label text-xs opacity-50">Optional. Must be 10-79 characters when enabled.</p>
           </fieldset>
 
+          <!-- Regenerate Stream Keys -->
+          <div class="flex items-center justify-between gap-3">
+            <div>
+              <p class="text-sm font-medium">Stream Keys</p>
+              <p id="regen-stream-keys-hint" class="hidden text-xs opacity-50">Remove all pipelines before regenerating.</p>
+            </div>
+            <button
+              id="regen-stream-keys-btn"
+              type="button"
+              class="btn btn-sm btn-warning btn-outline shrink-0"
+              onclick="regenerateStreamKeysBtn(this)">
+              Regenerate All
+            </button>
+          </div>
+
           <!-- Change Password -->
           <div class="flex gap-3">
             <fieldset class="fieldset min-w-0 flex-1">

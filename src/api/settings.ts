@@ -53,6 +53,17 @@ export function registerSettingsApi(app: Express, db: Db): void {
         });
     });
 
+    app.post('/api/settings/regenerate-stream-keys', (req, res) => {
+        const pipelines = db.listPipelines();
+        if (pipelines.length > 0) {
+            return res
+                .status(409)
+                .json({ error: 'Cannot regenerate stream keys while pipelines exist' });
+        }
+        const streamKeys = db.regenerateStreamKeys();
+        return res.json({ streamKeys });
+    });
+
     app.post('/api/settings/server-name', (req, res) => {
         const name = (req.body?.name as string | undefined)?.trim();
         if (!name) return res.status(400).json({ error: 'name is required' });

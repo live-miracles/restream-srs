@@ -89,6 +89,28 @@ export function createDb(dbPath?: string): Db {
             ).map(rowToStreamKey);
         },
 
+        regenerateStreamKeys(): StreamKey[] {
+            const rows = sqlite
+                .prepare(`SELECT id, slot FROM stream_keys WHERE slot IS NOT NULL ORDER BY slot`)
+                .all() as { id: number; slot: number }[];
+            const doRegenerate = sqlite.transaction(() => {
+                for (const row of rows) {
+                    const newKey = `key${String(row.slot).padStart(2, '0')}_${crypto.randomBytes(16).toString('hex')}`;
+                    sqlite
+                        .prepare(`UPDATE stream_keys SET key = ? WHERE id = ?`)
+                        .run(newKey, row.id);
+                }
+            });
+            doRegenerate();
+            return (
+                sqlite
+                    .prepare(
+                        `SELECT id, slot, key FROM stream_keys WHERE slot IS NOT NULL ORDER BY slot`,
+                    )
+                    .all() as Record<string, unknown>[]
+            ).map(rowToStreamKey);
+        },
+
         createPipeline(): Pipeline {
             const id = nextPipelineId();
             const name = `Pipeline ${id}`;

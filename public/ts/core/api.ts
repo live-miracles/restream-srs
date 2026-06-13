@@ -119,3 +119,8 @@ export const changePassword = (currentPassword: string, newPassword: string) =>
         method: 'POST',
         body: { currentPassword, newPassword },
     });
+
+export const regenerateStreamKeys = () =>
+    apiRequest<{ streamKeys: unknown[] }>('/api/settings/regenerate-stream-keys', {
+        method: 'POST',
+    });

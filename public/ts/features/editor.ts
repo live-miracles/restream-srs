@@ -20,6 +20,11 @@ export function openSettings(): void {
     (document.getElementById('confirm-password-input') as HTMLInputElement).classList.remove(
         'input-error',
     );
+    const hasPipelines = (state.config.pipelines?.length ?? 0) > 0;
+    const regenBtn = document.getElementById('regen-stream-keys-btn') as HTMLButtonElement;
+    const regenHint = document.getElementById('regen-stream-keys-hint') as HTMLElement;
+    regenBtn.disabled = hasPipelines;
+    regenHint.classList.toggle('hidden', !hasPipelines);
     modal.showModal();
     void api.getVersion().then((v) => {
         if (!v) return;
@@ -83,6 +88,19 @@ export async function submitSettingsForm(btn?: HTMLButtonElement): Promise<void>
 export async function logoutUser(): Promise<void> {
     await api.logout();
     window.location.href = '/login';
+}
+
+export async function regenerateStreamKeysBtn(btn?: HTMLButtonElement): Promise<void> {
+    if (
+        !confirm(
+            'Regenerate all stream keys? All existing stream key values will be replaced with new ones.',
+        )
+    )
+        return;
+    await withBusy(btn, async () => {
+        const result = await api.regenerateStreamKeys();
+        if (result) await refreshAfterMutation();
+    });
 }
 
 // ── Server name ───────────────────────────────────────
