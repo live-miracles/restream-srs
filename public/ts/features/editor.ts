@@ -220,30 +220,21 @@ function isRestreamIdx(idx: number): boolean {
     return idx === RESTREAM_RTMP_IDX || idx === RESTREAM_SRT_IDX;
 }
 
-const RESTREAM_RTMP_PREFIX = 'rtmp://localhost:1935/live/';
-const RESTREAM_SRT_PREFIX = 'srt://localhost:10080?streamid=#!::r=live/';
-
 function restreamRtmpUrl(streamKey: string): string {
-    return `${RESTREAM_RTMP_PREFIX}${streamKey}`;
+    return `rtmp://localhost:1935/live/${streamKey}`;
 }
 
 function restreamSrtUrl(streamKey: string): string {
     const passphrase = state.config.srtPassphrase;
-    const url = `${RESTREAM_SRT_PREFIX}${streamKey},m=publish`;
+    const url = `srt://localhost:10080?streamid=#!::r=live/${streamKey},m=publish`;
     if (!passphrase) return url;
     return `${url}&passphrase=${encodeURIComponent(passphrase)}&pbkeylen=16`;
 }
 
 function detectServer(url: string): { idx: number; key: string } {
-    if (url.startsWith(RESTREAM_RTMP_PREFIX)) {
-        const sk = url.slice(RESTREAM_RTMP_PREFIX.length);
-        const p = (state.config.pipelines ?? []).find((p) => p.streamKey === sk);
-        if (p) return { idx: RESTREAM_RTMP_IDX, key: p.id };
-    }
-    if (url.startsWith(RESTREAM_SRT_PREFIX) && url.includes('m=publish')) {
-        const sk = url.slice(RESTREAM_SRT_PREFIX.length).split(',')[0];
-        const p = (state.config.pipelines ?? []).find((p) => p.streamKey === sk);
-        if (p) return { idx: RESTREAM_SRT_IDX, key: p.id };
+    for (const p of state.config.pipelines ?? []) {
+        if (url === restreamRtmpUrl(p.streamKey)) return { idx: RESTREAM_RTMP_IDX, key: p.id };
+        if (url === restreamSrtUrl(p.streamKey)) return { idx: RESTREAM_SRT_IDX, key: p.id };
     }
     for (let i = 0; i < SERVERS.length; i++) {
         const { prefix } = SERVERS[i];
@@ -255,17 +246,21 @@ function detectServer(url: string): { idx: number; key: string } {
 function restreamPipelineOpts(selectedId: string): string {
     const pipelines = state.config.pipelines ?? [];
     if (!pipelines.length) return '<option value="" disabled>No pipelines</option>';
-    return pipelines
-        .map(
-            (p) =>
-                `<option value="${escapeAttr(String(p.id))}"${String(p.id) === selectedId ? ' selected' : ''}>${escapeAttr(p.name)}</option>`,
-        )
-        .join('');
+    const header = `<option value="" disabled${selectedId ? '' : ' selected'}>Pipeline</option>`;
+    return (
+        header +
+        pipelines
+            .map(
+                (p) =>
+                    `<option value="${escapeAttr(String(p.id))}"${String(p.id) === selectedId ? ' selected' : ''}>${escapeAttr(p.name)}</option>`,
+            )
+            .join('')
+    );
 }
 
 function sinkKeyFieldHtml(idx: number, key: string): string {
     if (isRestreamIdx(idx)) {
-        return `<select class="select select-sm w-full js-sink-key">${restreamPipelineOpts(key)}</select>`;
+        return `<select class="select select-sm w-full js-sink-key" onchange="this.classList.remove('select-error')">${restreamPipelineOpts(key)}</select>`;
     }
     const s = SERVERS[idx];
     return `<input type="text" class="input input-sm w-full font-mono text-xs js-sink-key"
@@ -298,7 +293,8 @@ let currentSinkTracks: AudioTrackInfo[] = [];
 function audioOptionsHtml(tracks: AudioTrackInfo[], selected: string): string {
     const seen = new Set<string>(['copy']);
     const options = [
-        `<option value="copy"${selected === 'copy' ? ' selected' : ''}>Copy (default)</option>`,
+        '<option value="" disabled>Audio</option>',
+        `<option value="copy"${selected === 'copy' ? ' selected' : ''}>Copy</option>`,
     ];
     for (const t of tracks) {
         const val = String(t.index);
@@ -319,26 +315,24 @@ function audioOptionsHtml(tracks: AudioTrackInfo[], selected: string): string {
 
 function sinkRowHtml(tracks: AudioTrackInfo[], url = '', audioEncoding = 'copy'): string {
     const { idx, key } = url ? detectServer(url) : { idx: 0, key: '' };
-    const server = SERVERS[idx];
-    const serverOpts = SERVERS.map(
-        (s, i) => `<option value="${i}"${i === idx ? ' selected' : ''}>${s.label}</option>`,
-    ).join('');
+    const serverOpts =
+        '<option value="" disabled>Server</option>' +
+        SERVERS.map(
+            (s, i) => `<option value="${i}"${i === idx ? ' selected' : ''}>${s.label}</option>`,
+        ).join('');
     return `
-    <div class="js-sink-row flex items-end gap-2 rounded-box bg-base-200 p-2">
-      <fieldset class="fieldset">
-        <legend class="fieldset-legend">Server</legend>
-        <select class="select select-sm js-sink-server" onchange="outSinkServerChange(this)">${serverOpts}</select>
-      </fieldset>
-      <fieldset class="fieldset flex-1 js-sink-key-fieldset">
-        <legend class="fieldset-legend js-sink-key-label">${server.keyLabel}</legend>
-        ${sinkKeyFieldHtml(idx, key)}
-      </fieldset>
-      <fieldset class="fieldset w-36">
-        <legend class="fieldset-legend">Audio</legend>
-        <select class="select select-sm w-full js-sink-audio">${audioOptionsHtml(tracks, audioEncoding)}</select>
-      </fieldset>
-      <button type="button" class="btn btn-sm btn-ghost text-error js-sink-remove"
-              onclick="outRemoveSink(this)" title="Remove destination">✕</button>
+    <div class="js-sink-row flex items-center gap-2 rounded-box bg-base-200 p-2">
+      <select class="select select-sm w-36 shrink-0 js-sink-server" onchange="outSinkServerChange(this)">${serverOpts}</select>
+      <div class="flex-1 min-w-0 js-sink-key-fieldset">${sinkKeyFieldHtml(idx, key)}</div>
+      <select class="select select-sm w-36 js-sink-audio">${audioOptionsHtml(tracks, audioEncoding)}</select>
+      <button type="button" class="btn btn-xs btn-error btn-outline js-sink-remove"
+              onclick="outRemoveSink(this)" title="Remove destination">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+          <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+          <line x1="10" x2="10" y1="11" y2="17" /><line x1="14" x2="14" y1="11" y2="17" />
+        </svg>
+      </button>
     </div>`;
 }
 
@@ -380,10 +374,7 @@ export function onSinkServerChange(select: HTMLSelectElement): void {
     const row = select.closest('.js-sink-row');
     if (!row) return;
     const idx = parseInt(select.value);
-    const s = SERVERS[idx];
-    const label = row.querySelector('.js-sink-key-label') as HTMLElement | null;
     const fieldset = row.querySelector('.js-sink-key-fieldset') as HTMLElement | null;
-    if (label) label.textContent = s.keyLabel;
     if (!fieldset) return;
     const existing = fieldset.querySelector('.js-sink-key') as HTMLElement | null;
     const wasRestream = existing?.tagName === 'SELECT';
@@ -393,7 +384,7 @@ export function onSinkServerChange(select: HTMLSelectElement): void {
         if (el) el.outerHTML = sinkKeyFieldHtml(idx, '');
     } else if (!nowRestream) {
         const input = fieldset.querySelector('.js-sink-key') as HTMLInputElement | null;
-        if (input) input.placeholder = s.placeholder;
+        if (input) input.placeholder = SERVERS[idx].placeholder;
     }
 }
 
@@ -476,6 +467,7 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
         let url: string;
         if (isRestreamIdx(serverIdx)) {
             const pipeline = (state.config.pipelines ?? []).find((p) => String(p.id) === key);
+            keyEl.classList.toggle('select-error', !pipeline);
             if (!pipeline) {
                 sinksValid = false;
                 continue;
