@@ -502,19 +502,26 @@ export function attachHls(pipelineId: string, hlsUrl: string): void {
     document.getElementById('preview-stop-btn')?.classList.remove('hidden');
 
     if (typeof Hls !== 'undefined' && Hls.isSupported()) {
-        const hls = new Hls({ liveSyncDurationCount: 3 }) as {
+        const hls = new Hls({
+            liveSyncDurationCount: 5,
+            fragLoadingMaxRetry: 10,
+            fragLoadingRetryDelay: 500,
+            manifestLoadingMaxRetry: 6,
+            manifestLoadingRetryDelay: 500,
+        }) as {
             destroy(): void;
             loadSource(u: string): void;
             attachMedia(v: HTMLVideoElement): void;
-            on(e: string, cb: () => void): void;
-            Events: { MANIFEST_PARSED: string };
+            on(e: string, cb: (...args: unknown[]) => void): void;
+            Events: { MANIFEST_PARSED: string; ERROR: string };
         };
         hls.loadSource(hlsUrl);
         hls.attachMedia(video);
-        (hls as unknown as { on(e: string, cb: () => void): void }).on(
-            Hls.Events.MANIFEST_PARSED as string,
-            () => void video.play(),
-        );
+        hls.on(Hls.Events.MANIFEST_PARSED as string, () => void video.play());
+        hls.on(Hls.Events.ERROR as string, (...args: unknown[]) => {
+            const data = args[1] as { fatal?: boolean };
+            if (data?.fatal) setTimeout(() => stopCurrentPreview(), 0);
+        });
         hlsInstance = hls;
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = hlsUrl;

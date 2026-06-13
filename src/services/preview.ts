@@ -12,8 +12,22 @@ function resolveBaseDir(): string {
     return path.join(path.dirname(dbPath), 'hls');
 }
 
+async function waitForPlaylist(m3u8Path: string, timeoutMs: number): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        try {
+            const content = fs.readFileSync(m3u8Path, 'utf8');
+            if (content.includes('.ts')) return;
+        } catch {
+            /* not yet */
+        }
+        await new Promise((r) => setTimeout(r, 200));
+    }
+    throw new Error('Preview timed out — no active input stream on this pipeline');
+}
+
 export interface PreviewService {
-    start(pipelineId: number): { hlsUrl: string };
+    start(pipelineId: number): Promise<{ hlsUrl: string }>;
     stop(pipelineId: number): void;
     shutdown(): void;
     baseDir: string;
@@ -23,7 +37,15 @@ export function createPreviewService(db: Db): PreviewService {
     const baseDir = resolveBaseDir();
     const procs = new Map<number, ChildProcess>();
 
-    function start(pipelineId: number): { hlsUrl: string } {
+    function doStop(pipelineId: number): void {
+        const proc = procs.get(pipelineId);
+        if (!proc) return;
+        procs.delete(pipelineId);
+        proc.kill('SIGTERM');
+        console.log(`[preview] ${pipelineId} stopping`);
+    }
+
+    async function start(pipelineId: number): Promise<{ hlsUrl: string }> {
         if (procs.has(pipelineId)) return { hlsUrl: `/hls/${pipelineId}/index.m3u8` };
 
         const pipeline = db.getPipeline(pipelineId);
@@ -31,6 +53,8 @@ export function createPreviewService(db: Db): PreviewService {
 
         const outDir = path.join(baseDir, String(pipelineId));
         fs.mkdirSync(outDir, { recursive: true });
+
+        const m3u8Path = path.join(outDir, 'index.m3u8');
 
         const proc = spawn(
             FFMPEG_CMD,
@@ -44,10 +68,10 @@ export function createPreviewService(db: Db): PreviewService {
                 '-hls_time',
                 '2',
                 '-hls_list_size',
-                '5',
+                '10',
                 '-hls_flags',
                 'delete_segments',
-                path.join(outDir, 'index.m3u8'),
+                m3u8Path,
             ],
             { stdio: 'ignore', env: process.env },
         );
@@ -61,15 +85,14 @@ export function createPreviewService(db: Db): PreviewService {
             console.log(`[preview] ${pipelineId} exited`);
         });
 
-        return { hlsUrl: `/hls/${pipelineId}/index.m3u8` };
-    }
+        try {
+            await waitForPlaylist(m3u8Path, 10_000);
+        } catch (err) {
+            doStop(pipelineId);
+            throw err;
+        }
 
-    function stop(pipelineId: number): void {
-        const proc = procs.get(pipelineId);
-        if (!proc) return;
-        procs.delete(pipelineId);
-        proc.kill('SIGTERM');
-        console.log(`[preview] ${pipelineId} stopping`);
+        return { hlsUrl: `/hls/${pipelineId}/index.m3u8` };
     }
 
     function shutdown(): void {
@@ -83,5 +106,5 @@ export function createPreviewService(db: Db): PreviewService {
         procs.clear();
     }
 
-    return { start, stop, shutdown, baseDir };
+    return { start, stop: doStop, shutdown, baseDir };
 }
