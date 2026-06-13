@@ -61,11 +61,8 @@ export const getSystemMetrics = () => apiRequest<SystemMetrics>('/metrics/system
 export const updateServerName = (name: string) =>
     apiRequest('/api/settings/server-name', { method: 'POST', body: { name } });
 
-export const updateSettings = (
-    name: string,
-    latency: number | null,
-    srtPassphrase: string | null,
-) => apiRequest('/api/settings', { method: 'POST', body: { name, latency, srtPassphrase } });
+export const updateSettings = (name: string, srtPassphrase: string | null) =>
+    apiRequest('/api/settings', { method: 'POST', body: { name, srtPassphrase } });
 
 export const createPipeline = () => apiRequest('/api/pipelines', { method: 'POST' });
 
@@ -97,12 +94,6 @@ export const startOutput = (pipelineId: string, outId: string) =>
 
 export const stopOutput = (pipelineId: string, outId: string) =>
     apiRequest(`/api/pipelines/${pipelineId}/outputs/${outId}/stop`, { method: 'POST' });
-
-export const updateSrtLatency = (latency: number | null) =>
-    apiRequest('/api/settings/srt-latency', { method: 'POST', body: { latency } });
-
-export const dismissSrtLatencyPending = () =>
-    apiRequest('/api/settings/srt-latency/dismiss', { method: 'POST' });
 
 export const startPreview = (pipelineId: string) =>
     apiRequest<{ hlsUrl: string }>(`/api/pipelines/${pipelineId}/preview/start`, {

@@ -9,36 +9,10 @@ import type { StreamKey } from '../types.js';
 export function openSettings(): void {
     const modal = document.getElementById('settings-modal') as HTMLDialogElement;
     const current = state.config.serverName ?? 'Restream SRS';
-    const latency = state.config.srtLatency ?? null;
     const passphrase = state.config.srtPassphrase ?? '';
     (document.getElementById('settings-server-name-input') as HTMLInputElement).value = current;
     (document.getElementById('srt-passphrase-input') as HTMLInputElement).value = passphrase;
-    const modeSelect = document.getElementById('srt-latency-mode') as HTMLSelectElement;
-    const input = document.getElementById('srt-latency-input') as HTMLInputElement;
-    modeSelect.value = latency != null ? 'custom' : 'default';
-    input.value = latency != null ? String(latency) : '500';
-    toggleSrtLatencyInput();
     modal.showModal();
-}
-
-export const openEditSrtLatency = openSettings;
-
-export function toggleSrtLatencyInput(): void {
-    const mode = (document.getElementById('srt-latency-mode') as HTMLSelectElement).value;
-    const field = document.getElementById('srt-latency-field') as HTMLElement;
-    field.classList.toggle('hidden', mode !== 'custom');
-}
-
-function getSettingsLatency(): number | null | undefined {
-    const mode = (document.getElementById('srt-latency-mode') as HTMLSelectElement).value;
-    if (mode === 'custom') {
-        const val = parseInt(
-            (document.getElementById('srt-latency-input') as HTMLInputElement).value,
-        );
-        if (isNaN(val) || val < 20 || val > 60000) return undefined;
-        return val;
-    }
-    return null;
 }
 
 function getSrtPassphrase(): string | null | undefined {
@@ -54,12 +28,11 @@ export async function submitSettingsForm(btn?: HTMLButtonElement): Promise<void>
     const name = (
         document.getElementById('settings-server-name-input') as HTMLInputElement
     ).value.trim();
-    const latency = getSettingsLatency();
     const passphrase = getSrtPassphrase();
-    if (!name || latency === undefined || passphrase === undefined) return;
+    if (!name || passphrase === undefined) return;
 
     await withBusy(btn, async () => {
-        const result = await api.updateSettings(name, latency, passphrase);
+        const result = await api.updateSettings(name, passphrase);
         if (result) {
             const el = document.getElementById('server-name-display');
             if (el) el.textContent = name;
@@ -68,13 +41,6 @@ export async function submitSettingsForm(btn?: HTMLButtonElement): Promise<void>
             await refreshAfterMutation();
         }
     });
-}
-
-export const submitSrtLatencyForm = submitSettingsForm;
-
-export async function dismissSrtPending(): Promise<void> {
-    await api.dismissSrtLatencyPending();
-    await refreshAfterMutation();
 }
 
 // ── Server name ───────────────────────────────────────

@@ -67,7 +67,7 @@ Open the dashboard: `http://SERVER_IP:8080`
 
 ### SRS config reload
 
-The app writes SRS settings to `/etc/restream-srs/srs.conf`. SRS only reads this file at startup, so changes such as SRT latency or passphrase require:
+The app writes SRS settings to `/etc/restream-srs/srs.conf`. SRS only reads this file at startup, so changes such as the SRT passphrase require:
 
 ```bash
 sudo systemctl restart srs.service
@@ -79,7 +79,7 @@ The Node app does not need to restart for SRT config reloads.
 
 ## Dashboard
 
-- **Settings** — editable via the gear button next to the title in the navbar; includes server name, SRT latency, and optional SRT passphrase
+- **Settings** — editable via the gear button next to the title in the navbar; includes server name and optional SRT passphrase
 - **Pipelines** — created with one click; auto-named `Pipeline N` and assigned the next available stream key
 - **Stream keys** — shown masked (`key01_as...ks`) in the pipeline info panel; copy button copies the full URL
 - **Outputs** — per-pipeline list; supports YouTube RTMP, Facebook RTMP, Custom RTMP, Custom SRT; encoding choices include `source`, `720p`, `1080p`, `vertical_rotate`
@@ -141,9 +141,8 @@ ffmpeg -re -i video.mp4 \
 | DELETE | `/api/pipelines/:id/outputs/:outId` | Delete output |
 | POST | `/api/pipelines/:id/outputs/:outId/start` | Start output |
 | POST | `/api/pipelines/:id/outputs/:outId/stop` | Stop output |
-| POST | `/api/settings` | Set server display name, SRT latency, and SRT passphrase `{ name, latency, srtPassphrase }` |
+| POST | `/api/settings` | Set server display name and SRT passphrase `{ name, srtPassphrase }` |
 | POST | `/api/settings/server-name` | Set server display name `{ name }` |
-| POST | `/api/settings/srt-latency` | Set SRT latency `{ latency }` |
 
 ---
 
@@ -172,7 +171,7 @@ npm run srs           # runs ./objs/srs -c srs.conf in the foreground
 npm run dev           # tsx watch + tsc watch + tailwind watch
 ```
 
-If the app rewrites `srs.conf` after a settings change (SRT latency / passphrase), restart SRS:
+If the app rewrites `srs.conf` after a passphrase change, restart SRS:
 ```bash
 Ctrl-C  # in terminal 1
 npm run srs

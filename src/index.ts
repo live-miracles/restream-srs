@@ -45,11 +45,9 @@ const publicDir = path.join(__dirname, '..', 'public');
 app.use('/', express.static(publicDir));
 
 async function main(): Promise<void> {
-    const srtLatencyRaw = db.getSetting('srtLatency');
-    const srtLatency = srtLatencyRaw ? parseInt(srtLatencyRaw) : null;
     const srtPassphrase = db.getSetting('srtPassphrase') || null;
     try {
-        writeSrsConf(srtLatency, srtPassphrase);
+        writeSrsConf(srtPassphrase);
         console.log('[conf] srs.conf written');
     } catch (e) {
         console.warn('[conf] could not write srs.conf:', e);

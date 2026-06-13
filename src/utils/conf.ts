@@ -7,8 +7,7 @@ function quoteSrsString(value: string): string {
     return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
-export function writeSrsConf(latencyMs: number | null, passphrase?: string | null): void {
-    const latencyLine = latencyMs != null ? `\n    latency         ${latencyMs};` : '';
+export function writeSrsConf(passphrase?: string | null): void {
     const passphraseLine = passphrase
         ? `\n    passphrase      ${quoteSrsString(passphrase)};\n    pbkeylen        16;`
         : '';
@@ -30,7 +29,7 @@ http_server {
 
 srt_server {
     enabled         on;
-    listen          10080;${latencyLine}${passphraseLine}
+    listen          10080;${passphraseLine}
 }
 
 vhost __defaultVhost__ {

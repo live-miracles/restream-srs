@@ -6,6 +6,7 @@ import {
     formatBytesCompact,
     getUrlParam,
     maskStreamKey,
+    LOW_BITRATE_KBPS,
 } from '../core/utils.js';
 import { state } from '../core/state.js';
 import type { InputHealth, PipelineView, OutputView } from '../types.js';
@@ -28,7 +29,7 @@ function outStatus(o: OutputView, inputLive: boolean): OutStatus {
     if (o.status === 'failed') return 'error';
     if (o.status === 'running') {
         if (!inputLive) return 'error';
-        if (o.bitrateKbps !== null && o.bitrateKbps >= 1000) return 'good';
+        if (o.bitrateKbps !== null && o.bitrateKbps >= LOW_BITRATE_KBPS) return 'good';
         return 'warn';
     }
     return 'off';
@@ -42,7 +43,10 @@ function renderPipelineList(): void {
 
     const inputsOn = state.pipelines.filter((p) => p.input.live).length;
     const inputsWarn = state.pipelines.filter(
-        (p) => p.input.live && p.input.recvBitrateKbps !== null && p.input.recvBitrateKbps < 1000,
+        (p) =>
+            p.input.live &&
+            p.input.recvBitrateKbps !== null &&
+            p.input.recvBitrateKbps < LOW_BITRATE_KBPS,
     ).length;
     const totalOutputs = state.pipelines.reduce((s, p) => s + p.outs.length, 0);
     const outputsOn = state.pipelines.reduce(
@@ -212,7 +216,8 @@ function renderOverview(): void {
     } else {
         for (const p of state.pipelines) {
             const inp = p.input;
-            const isWarn = inp.live && inp.recvBitrateKbps !== null && inp.recvBitrateKbps < 1000;
+            const isWarn =
+                inp.live && inp.recvBitrateKbps !== null && inp.recvBitrateKbps < LOW_BITRATE_KBPS;
             const badge = !inp.live
                 ? `<span class="badge badge-sm badge-neutral">Offline</span>`
                 : isWarn

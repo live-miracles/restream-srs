@@ -75,9 +75,7 @@ export interface ConfigData {
     encodings: string[];
     streamKeys: StreamKey[];
     serverName: string;
-    srtLatency: number | null;
     srtPassphrase: string | null;
-    srtLatencyPending: boolean;
 }
 
 export interface SystemMetrics {

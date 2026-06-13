@@ -13,18 +13,17 @@ const { writeSrsConf } = require('../src/utils/conf');
 
 describe('SRS config generation', () => {
     test('does not enable SRT encryption without a passphrase', () => {
-        writeSrsConf(null);
+        writeSrsConf();
 
         const conf = fs.readFileSync(process.env.SRS_CONF_PATH, 'utf8');
         assert.doesNotMatch(conf, /passphrase\s+/);
         assert.doesNotMatch(conf, /pbkeylen\s+/);
     });
 
-    test('writes configured SRT latency and passphrase', () => {
-        writeSrsConf(750, 'secret-value');
+    test('writes configured SRT passphrase', () => {
+        writeSrsConf('secret-value');
 
         const conf = fs.readFileSync(process.env.SRS_CONF_PATH, 'utf8');
-        assert.match(conf, /latency\s+750;/);
         assert.match(conf, /passphrase\s+"secret-value";/);
         assert.match(conf, /pbkeylen\s+16;/);
     });

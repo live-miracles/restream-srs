@@ -14,9 +14,11 @@ export function setUrlParam(key: string, value: string | null): void {
     window.history.replaceState({}, '', url);
 }
 
+export const LOW_BITRATE_KBPS = 200;
+
 export function statusColor(live: boolean, bitrateKbps?: number | null): string {
     if (!live) return '#6b7280';
-    if (bitrateKbps != null && bitrateKbps < 1000) return '#eab308';
+    if (bitrateKbps != null && bitrateKbps < LOW_BITRATE_KBPS) return '#eab308';
     return '#22c55e';
 }
 

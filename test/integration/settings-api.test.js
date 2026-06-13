@@ -103,90 +103,51 @@ function createHarness() {
 }
 
 describe('Settings API integration', () => {
-    test('legacy SRT latency endpoint is registered and persists latency settings', async () => {
-        const harness = createHarness();
-        const res = await harness.request('POST', '/api/settings/srt-latency', {
-            latency: 750,
-        });
-
-        assert.equal(res.status, 200);
-        assert.deepEqual(res.body, { srtLatency: 750, pending: true });
-        assert.equal(harness.db.getSetting('srtLatency'), '750');
-        assert.equal(harness.db.getSetting('srtLatencyPending'), 'true');
-        assert.match(fs.readFileSync(process.env.SRS_CONF_PATH, 'utf8'), /latency\s+750;/);
-    });
-
-    test('combined settings endpoint updates name and SRT latency in one request', async () => {
+    test('combined settings endpoint updates name', async () => {
         const harness = createHarness();
         const res = await harness.request('POST', '/api/settings', {
             name: 'Control Room',
-            latency: 1200,
         });
 
         assert.equal(res.status, 200);
         assert.deepEqual(res.body, {
             serverName: 'Control Room',
-            srtLatency: 1200,
             srtPassphrase: null,
-            pending: true,
+            pending: false,
         });
         assert.equal(harness.db.getSetting('serverName'), 'Control Room');
-        assert.equal(harness.db.getSetting('srtLatency'), '1200');
-        assert.equal(harness.db.getSetting('srtLatencyPending'), 'true');
-        assert.match(fs.readFileSync(process.env.SRS_CONF_PATH, 'utf8'), /latency\s+1200;/);
     });
 
-    test('combined settings endpoint rejects invalid latency', async () => {
-        const harness = createHarness();
-        const res = await harness.request('POST', '/api/settings', {
-            name: 'Control Room',
-            latency: 10,
-        });
-
-        assert.equal(res.status, 400);
-        assert.match(res.body.error, /between 20 and 60000/);
-        assert.equal(harness.db.getSetting('serverName'), null);
-        assert.equal(harness.db.getSetting('srtLatency'), null);
-    });
-
-    test('combined settings endpoint does not mark latency pending when only name changes', async () => {
+    test('combined settings endpoint does not mark pending when only name changes', async () => {
         const harness = createHarness();
         harness.db.setSetting('serverName', 'Old Name');
-        harness.db.setSetting('srtLatency', '500');
         harness.db.setSetting('srtPassphrase', 'secret-value');
-        harness.db.setSetting('srtLatencyPending', 'false');
 
         const res = await harness.request('POST', '/api/settings', {
             name: 'New Name',
-            latency: 500,
             srtPassphrase: 'secret-value',
         });
 
         assert.equal(res.status, 200);
         assert.deepEqual(res.body, {
             serverName: 'New Name',
-            srtLatency: 500,
             srtPassphrase: 'secret-value',
             pending: false,
         });
         assert.equal(harness.db.getSetting('serverName'), 'New Name');
-        assert.equal(harness.db.getSetting('srtLatency'), '500');
         assert.equal(harness.db.getSetting('srtPassphrase'), 'secret-value');
-        assert.equal(harness.db.getSetting('srtLatencyPending'), 'false');
     });
 
     test('combined settings endpoint writes SRT passphrase settings', async () => {
         const harness = createHarness();
         const res = await harness.request('POST', '/api/settings', {
             name: 'Control Room',
-            latency: null,
             srtPassphrase: 'secret-value',
         });
 
         assert.equal(res.status, 200);
         assert.deepEqual(res.body, {
             serverName: 'Control Room',
-            srtLatency: null,
             srtPassphrase: 'secret-value',
             pending: true,
         });
@@ -200,7 +161,6 @@ describe('Settings API integration', () => {
         const harness = createHarness();
         const res = await harness.request('POST', '/api/settings', {
             name: 'Control Room',
-            latency: null,
             srtPassphrase: 'short',
         });
 
