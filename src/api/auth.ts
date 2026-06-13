@@ -47,8 +47,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
 
 export function initializePassword(db: Db): void {
     if (db.getSetting('dashboardPasswordHash')) return;
-    const password = process.env.DASHBOARD_PASSWORD ?? 'admin';
-    db.setSetting('dashboardPasswordHash', hashPassword(password));
+    db.setSetting('dashboardPasswordHash', hashPassword('admin'));
 }
 
 export function registerAuthApi(app: Express, db: Db): void {

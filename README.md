@@ -40,11 +40,6 @@ The install script downloads SRS `6.0-r0` by default. To install from an existin
 SRS_BINARY_PATH=/path/to/srs sudo bash /opt/restream-srs/scripts/server-install.sh
 ```
 
-Set the public host shown in dashboard publish URLs during install:
-```bash
-PUBLIC_HOST=stream.example.com sudo bash /opt/restream-srs/scripts/server-install.sh
-```
-
 **Update an installed server:**
 ```bash
 sudo bash /opt/restream-srs/scripts/server-update.sh
@@ -55,7 +50,7 @@ sudo bash /opt/restream-srs/scripts/server-update.sh
 sudo bash /opt/restream-srs/scripts/server-down.sh
 ```
 
-Open the dashboard: `http://SERVER_IP:8080`
+Open the dashboard: `http://SERVER_IP:8080` — default password is `admin`, change it in Settings after first login.
 
 ### Firewall ports needed
 
@@ -77,9 +72,22 @@ The Node app does not need to restart for SRT config reloads.
 
 ---
 
+## Authentication
+
+The dashboard is protected by a password. Default password on first run is `admin`. Change it in **Settings → Change Password** after logging in. Logout is also available from Settings.
+
+To reset a forgotten password, delete the stored hash and restart:
+```bash
+node -e "const db=require('better-sqlite3')('/var/lib/restream-srs/db.sqlite'); db.prepare(\"DELETE FROM settings WHERE key='dashboardPasswordHash'\").run()"
+sudo systemctl restart restream-srs.service
+```
+The server will reinitialise with `admin` on next start.
+
+---
+
 ## Dashboard
 
-- **Settings** — editable via the gear button next to the title in the navbar; includes server name and optional SRT passphrase
+- **Settings** — editable via the gear button next to the title in the navbar; includes server name, public host, SRT passphrase, password change, and logout
 - **Pipelines** — created with one click; auto-named `Pipeline N` and assigned the next available stream key
 - **Stream keys** — shown masked (`key01_as...ks`) in the pipeline info panel; copy button copies the full URL
 - **Outputs** — per-pipeline list; supports YouTube RTMP, Facebook RTMP, Custom RTMP, Custom SRT; encoding choices include `source`, `720p`, `1080p`, `vertical_rotate`
@@ -88,7 +96,7 @@ The Node app does not need to restart for SRT config reloads.
 
 ## Publishing to a pipeline
 
-The dashboard shows publish URLs for each pipeline. The stream key is pre-assigned and shown in the pipeline info panel.
+The dashboard shows publish URLs for each pipeline. The stream key is pre-assigned and shown in the pipeline info panel. The host in the URLs reflects the **Public Host** set in Settings (defaults to `localhost` — set it to your server IP or domain after install).
 
 **RTMP:**
 ```
@@ -141,8 +149,11 @@ ffmpeg -re -i video.mp4 \
 | DELETE | `/api/pipelines/:id/outputs/:outId` | Delete output |
 | POST | `/api/pipelines/:id/outputs/:outId/start` | Start output |
 | POST | `/api/pipelines/:id/outputs/:outId/stop` | Stop output |
-| POST | `/api/settings` | Set server display name and SRT passphrase `{ name, srtPassphrase }` |
+| POST | `/api/settings` | Update settings `{ name, srtPassphrase, publicHost }` |
 | POST | `/api/settings/server-name` | Set server display name `{ name }` |
+| POST | `/api/auth/login` | Login `{ password }` — sets session cookie |
+| POST | `/api/auth/logout` | Logout — clears session cookie |
+| POST | `/api/auth/change-password` | Change password `{ currentPassword, newPassword }` |
 
 ---
 
@@ -186,7 +197,6 @@ npm run srs
 | `SRS_API_URL` | `http://localhost:1985` | SRS HTTP API URL |
 | `SRS_RTMP_HOST` | `localhost` | SRS RTMP host (for FFmpeg to pull from) |
 | `SRS_RTMP_PORT` | `1935` | SRS RTMP port |
-| `PUBLIC_HOST` | `localhost` | Host shown in publish URL hints in the dashboard |
 | `DB_PATH` | `./data.db` | SQLite database path |
 | `SRS_CONF_PATH` | `./srs.conf` | SRS config path written by the app |
 | `PORT` | `8080` | App HTTP port |

@@ -9,7 +9,6 @@
 #
 # Optional:
 #   REPO_URL=https://github.com/your-fork/restream-srs sudo bash scripts/server-install.sh
-#   PUBLIC_HOST=stream.example.com sudo bash scripts/server-install.sh
 #   SRS_BINARY_PATH=/path/to/srs sudo bash scripts/server-install.sh
 set -euo pipefail
 
@@ -163,7 +162,6 @@ Group=$SERVICE_USER
 WorkingDirectory=$APP_DIR
 Environment=NODE_ENV=production
 Environment=PORT=8080
-Environment=PUBLIC_HOST=${PUBLIC_HOST:-}
 Environment=DB_PATH=$DATA_DIR/db.sqlite
 Environment=SRS_CONF_PATH=$CONF_DIR/srs.conf
 Environment=SRS_API_URL=http://127.0.0.1:1985
@@ -193,14 +191,9 @@ echo
 echo "=============================="
 echo " Setup complete"
 echo "=============================="
-if [[ -z "${PUBLIC_HOST:-}" ]]; then
-    echo "WARNING: PUBLIC_HOST was not set — the dashboard will show 'localhost'"
-    echo "         publish URLs, which streamers can't use remotely."
-    echo "         Re-run with PUBLIC_HOST=your.domain.or.ip, or set it in"
-    echo "         /etc/systemd/system/restream-srs.service and restart."
-    echo
-fi
 echo "Dashboard: http://<server-ip>:8080/"
+echo "  Default password: admin"
+echo "  Set your public host in Settings → Public Host"
 echo "Config:    $CONF_DIR/srs.conf"
 echo "Data:      $DATA_DIR/db.sqlite"
 echo ""

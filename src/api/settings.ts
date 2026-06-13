@@ -22,6 +22,7 @@ export function registerSettingsApi(app: Express, db: Db): void {
         const passphrase = hasPassphrase
             ? normalizeSrtPassphrase(req.body?.srtPassphrase)
             : currentSrtPassphrase(db);
+        const publicHost = (req.body?.publicHost as string | undefined)?.trim() ?? null;
 
         if (!name) return res.status(400).json({ error: 'name is required' });
         if (passphrase === undefined) {
@@ -31,6 +32,7 @@ export function registerSettingsApi(app: Express, db: Db): void {
         }
 
         db.setSetting('serverName', name);
+        if (publicHost !== null) db.setSetting('publicHost', publicHost);
         const previousPassphrase = currentSrtPassphrase(db);
         const srtChanged = previousPassphrase !== passphrase;
 
@@ -46,6 +48,7 @@ export function registerSettingsApi(app: Express, db: Db): void {
         return res.json({
             serverName: name,
             srtPassphrase: passphrase,
+            publicHost: publicHost ?? db.getSetting('publicHost') ?? 'localhost',
             pending: srtChanged,
         });
     });

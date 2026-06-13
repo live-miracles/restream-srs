@@ -3,15 +3,14 @@ import { ENCODINGS } from '../utils/ffmpeg.js';
 import { rtmpPublishUrl, srtPublishUrl } from '../utils/srs.js';
 import type { Db } from '../types.js';
 
-const HOST = process.env.PUBLIC_HOST || 'localhost';
-
 export function registerConfigApi(app: Express, db: Db): void {
     app.get('/config', (_req, res) => {
         const srtPassphrase = db.getSetting('srtPassphrase') || null;
+        const host = db.getSetting('publicHost') || 'localhost';
         const pipelines = db.listPipelines().map((p) => ({
             ...p,
-            rtmpPublishUrl: rtmpPublishUrl(p.streamKey, HOST),
-            srtPublishUrl: srtPublishUrl(p.streamKey, HOST, srtPassphrase),
+            rtmpPublishUrl: rtmpPublishUrl(p.streamKey, host),
+            srtPublishUrl: srtPublishUrl(p.streamKey, host, srtPassphrase),
         }));
         const outputs = db.listOutputs();
         const encodings = Object.keys(ENCODINGS);
@@ -24,6 +23,7 @@ export function registerConfigApi(app: Express, db: Db): void {
             streamKeys,
             serverName,
             srtPassphrase,
+            publicHost: host,
         });
     });
 }

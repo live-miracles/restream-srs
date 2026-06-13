@@ -11,6 +11,8 @@ export function openSettings(): void {
     const current = state.config.serverName ?? 'Restream SRS';
     const passphrase = state.config.srtPassphrase ?? '';
     (document.getElementById('settings-server-name-input') as HTMLInputElement).value = current;
+    (document.getElementById('settings-public-host-input') as HTMLInputElement).value =
+        state.config.publicHost ?? '';
     (document.getElementById('srt-passphrase-input') as HTMLInputElement).value = passphrase;
     (document.getElementById('current-password-input') as HTMLInputElement).value = '';
     (document.getElementById('new-password-input') as HTMLInputElement).value = '';
@@ -34,6 +36,9 @@ export async function submitSettingsForm(btn?: HTMLButtonElement): Promise<void>
     const name = (
         document.getElementById('settings-server-name-input') as HTMLInputElement
     ).value.trim();
+    const publicHost = (
+        document.getElementById('settings-public-host-input') as HTMLInputElement
+    ).value.trim();
     const passphrase = getSrtPassphrase();
     if (!name || passphrase === undefined) return;
 
@@ -51,7 +56,7 @@ export async function submitSettingsForm(btn?: HTMLButtonElement): Promise<void>
     }
 
     await withBusy(btn, async () => {
-        const result = await api.updateSettings(name, passphrase);
+        const result = await api.updateSettings(name, passphrase, publicHost);
         if (!result) return;
 
         if (changingPassword) {

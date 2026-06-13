@@ -76,6 +76,7 @@ export interface ConfigData {
     streamKeys: StreamKey[];
     serverName: string;
     srtPassphrase: string | null;
+    publicHost: string;
 }
 
 export interface SystemMetrics {

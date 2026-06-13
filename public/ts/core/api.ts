@@ -65,8 +65,8 @@ export const getSystemMetrics = () => apiRequest<SystemMetrics>('/metrics/system
 export const updateServerName = (name: string) =>
     apiRequest('/api/settings/server-name', { method: 'POST', body: { name } });
 
-export const updateSettings = (name: string, srtPassphrase: string | null) =>
-    apiRequest('/api/settings', { method: 'POST', body: { name, srtPassphrase } });
+export const updateSettings = (name: string, srtPassphrase: string | null, publicHost: string) =>
+    apiRequest('/api/settings', { method: 'POST', body: { name, srtPassphrase, publicHost } });
 
 export const createPipeline = () => apiRequest('/api/pipelines', { method: 'POST' });
 
