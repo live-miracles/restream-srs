@@ -17,7 +17,6 @@ import {
     initializePassword,
     checkIsAuthenticated,
 } from './api/auth.js';
-import { writeSrsConf } from './utils/conf.js';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '8080');
@@ -79,14 +78,9 @@ app.get('/login', (req, res) => {
 app.use('/', express.static(publicDir));
 
 async function main(): Promise<void> {
-    const srtPassphrase = db.getSetting('srtPassphrase') || null;
-    try {
-        writeSrsConf(srtPassphrase);
-        console.log('[conf] srs.conf written');
-    } catch (e) {
-        console.warn('[conf] could not write srs.conf:', e);
-    }
-
+    // srs.conf is owned by the install script (initial copy) and rewritten by
+    // the settings API whenever the SRT passphrase changes — SRS reads it at
+    // its own startup, so the app does not touch it here.
     const allOutputs = db.listOutputs();
     for (const output of allOutputs) {
         if (output.desiredState === 'running') {

@@ -14,9 +14,10 @@ if [[ "$(id -u)" -ne 0 ]]; then
 fi
 
 echo "=== Stopping services ==="
-systemctl stop restream-srs.service
+# Tolerate a missing/never-installed unit so the script doesn't abort under set -e.
+systemctl stop restream-srs.service || true
 echo "  restream-srs.service stopped"
-systemctl stop srs.service
+systemctl stop srs.service || true
 echo "  srs.service stopped"
 
 echo

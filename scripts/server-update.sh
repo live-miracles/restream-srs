@@ -17,7 +17,11 @@ SERVICE_USER=restream-srs
 
 echo "=== Pull latest code ==="
 cd "$APP_DIR"
-git pull
+# Run git as the repo owner (avoids git's "dubious ownership" abort when root
+# operates on a tree owned by $SERVICE_USER) and reset hard so the deploy is
+# deterministic regardless of any local drift on the box.
+sudo -u "$SERVICE_USER" git -C "$APP_DIR" fetch origin
+sudo -u "$SERVICE_USER" git -C "$APP_DIR" reset --hard '@{u}'
 
 echo
 echo "=== Rebuild ==="
@@ -37,10 +41,9 @@ chown "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR" "$CONF_DIR" "$DATA_DIR/db.sqlite
 
 echo
 echo "=== Restart services ==="
-# The app writes the latest generated srs.conf on startup; restart SRS after it.
-systemctl restart restream-srs.service
-sleep 1
-systemctl restart srs.service
+# srs.conf only changes when the SRT passphrase changes, so there is no
+# start-order dependency between SRS and the app.
+systemctl restart srs.service restream-srs.service
 
 echo
 echo "=== Status ==="

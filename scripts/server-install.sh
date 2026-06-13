@@ -18,6 +18,11 @@ if [[ "$(id -u)" -ne 0 ]]; then
     exit 1
 fi
 
+if [[ "$(uname -m)" != "x86_64" ]]; then
+    echo "ERROR: this installer only supports x86_64 (got $(uname -m)); the FFmpeg/SRS builds it downloads are x86_64-only." >&2
+    exit 1
+fi
+
 REPO_URL="${REPO_URL:-https://github.com/live-miracles/restream-srs}"
 APP_DIR=/opt/restream-srs
 DATA_DIR=/var/lib/restream-srs
@@ -75,9 +80,10 @@ else
     echo "Downloading $SRS_ZIP..."
     curl -fsSL "$SRS_URL" -o "$WORK/$SRS_ZIP"
     unzip -q "$WORK/$SRS_ZIP" -d "$WORK/srs"
-    SRS_BIN="$(
-        find "$WORK/srs" \( -type f -path '*/objs/srs' -o -type f -name srs \) | head -1
-    )"
+    # The zip root contains an init wrapper script also named 'srs'; the real
+    # ELF binary lives deeper at usr/local/srs/objs/srs. Match it precisely so
+    # we never install the wrapper by mistake.
+    SRS_BIN="$(find "$WORK/srs" -type f -path '*/usr/local/srs/objs/srs' | head -1)"
     if [[ -z "$SRS_BIN" ]]; then
         echo "ERROR: could not find SRS binary in $SRS_ZIP" >&2
         exit 1
@@ -101,6 +107,7 @@ if [[ ! -d "$APP_DIR/.git" ]]; then
     git clone "$REPO_URL" "$APP_DIR"
 else
     echo "Repository already present at $APP_DIR, skipping clone."
+    echo "(To pull and deploy newer code, use scripts/server-update.sh instead.)"
 fi
 cd "$APP_DIR"
 npm ci
@@ -178,15 +185,21 @@ EOF
 
 systemctl daemon-reload
 systemctl enable srs.service restream-srs.service
-# Start the app first so it writes the generated SRS config, then start SRS.
-systemctl restart restream-srs.service
-sleep 1
-systemctl restart srs.service
+# srs.conf was provisioned above (step 7) and is rewritten only when the SRT
+# passphrase changes, so SRS and the app have no start-order dependency.
+systemctl restart srs.service restream-srs.service
 
 echo
 echo "=============================="
 echo " Setup complete"
 echo "=============================="
+if [[ -z "${PUBLIC_HOST:-}" ]]; then
+    echo "WARNING: PUBLIC_HOST was not set — the dashboard will show 'localhost'"
+    echo "         publish URLs, which streamers can't use remotely."
+    echo "         Re-run with PUBLIC_HOST=your.domain.or.ip, or set it in"
+    echo "         /etc/systemd/system/restream-srs.service and restart."
+    echo
+fi
 echo "Dashboard: http://<server-ip>:8080/"
 echo "Config:    $CONF_DIR/srs.conf"
 echo "Data:      $DATA_DIR/db.sqlite"

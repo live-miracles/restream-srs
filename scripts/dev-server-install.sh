@@ -16,7 +16,7 @@ SRS_BINARY_PATH="${SRS_BINARY_PATH:-}"
 SRS_OUT="$REPO_DIR/objs/srs"
 
 SRS_ZIP="SRS-CentOS7-x86_64-${SRS_VERSION}.zip"
-SRS_URL="https://github.com/ossrs/srs/releases/download/v${SRS_VERSION}/${SRS_ZIP}"
+SRS_URL="${SRS_URL:-https://github.com/ossrs/srs/releases/download/v${SRS_VERSION}/${SRS_ZIP}}"
 
 mkdir -p "$REPO_DIR/objs"
 
