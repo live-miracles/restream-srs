@@ -59,18 +59,32 @@
 
     <!-- Settings modal -->
     <dialog id="settings-modal" class="modal">
-      <div class="modal-box w-full max-w-md">
-        <div class="mx-auto mt-2 w-full max-w-sm space-y-3 px-4">
+      <div class="modal-box w-full max-w-xl">
+        <div class="mt-2 space-y-3 px-4">
           <h2 class="text-xl font-bold">Settings</h2>
-          <fieldset class="fieldset">
-            <legend class="fieldset-legend">Server Name</legend>
-            <input type="text" id="settings-server-name-input" class="input w-full" placeholder="Restream SRS" />
-          </fieldset>
-          <fieldset class="fieldset">
-            <legend class="fieldset-legend">Public Host</legend>
-            <input type="text" id="settings-public-host-input" class="input w-full font-mono text-sm" placeholder="localhost" />
-            <p class="fieldset-label text-xs opacity-50">IP or domain used in RTMP/SRT publish URLs.</p>
-          </fieldset>
+
+          <!-- Version info -->
+          <div
+            id="settings-version"
+            class="bg-base-300 grid grid-cols-[5rem_1fr] gap-x-3 gap-y-0.5 rounded-lg px-3 py-2 font-mono text-xs opacity-70">
+            <span class="opacity-60">Commit</span><span id="v-commit">—</span> <span class="opacity-60">SRS</span><span id="v-srs">—</span>
+            <span class="opacity-60">FFmpeg</span><span id="v-ffmpeg">—</span> <span class="opacity-60">OS</span><span id="v-os">—</span>
+            <span class="opacity-60">Kernel</span><span id="v-kernel">—</span>
+          </div>
+
+          <!-- Server Name + Public Host -->
+          <div class="flex gap-3">
+            <fieldset class="fieldset min-w-0 flex-1">
+              <legend class="fieldset-legend">Server Name</legend>
+              <input type="text" id="settings-server-name-input" class="input w-full" placeholder="Restream SRS" />
+            </fieldset>
+            <fieldset class="fieldset min-w-0 flex-1">
+              <legend class="fieldset-legend">Public Host</legend>
+              <input type="text" id="settings-public-host-input" class="input w-full font-mono text-sm" placeholder="localhost" />
+            </fieldset>
+          </div>
+
+          <!-- SRT Passphrase -->
           <fieldset class="fieldset">
             <legend class="fieldset-legend">SRT Passphrase</legend>
             <input
@@ -82,30 +96,35 @@
               placeholder="Blank disables SRT encryption" />
             <p class="fieldset-label text-xs opacity-50">Optional. Must be 10-79 characters when enabled.</p>
           </fieldset>
-          <fieldset class="fieldset">
-            <legend class="fieldset-legend">Change Password</legend>
-            <input
-              type="password"
-              id="current-password-input"
-              class="input mb-2 w-full"
-              placeholder="Current password"
-              autocomplete="current-password" />
-            <input
-              type="password"
-              id="new-password-input"
-              class="input mb-2 w-full"
-              placeholder="New password"
-              autocomplete="new-password"
-              oninput="document.getElementById('confirm-password-input').classList.remove('input-error')" />
-            <input
-              type="password"
-              id="confirm-password-input"
-              class="input w-full"
-              placeholder="Confirm new password"
-              autocomplete="new-password"
-              oninput="this.classList.remove('input-error')" />
-            <p class="fieldset-label text-xs opacity-50">Leave all blank to keep current password.</p>
-          </fieldset>
+
+          <!-- Change Password -->
+          <div class="flex gap-3">
+            <fieldset class="fieldset min-w-0 flex-1">
+              <legend class="fieldset-legend">Current Password</legend>
+              <input type="password" id="current-password-input" class="input w-full" placeholder="Current" autocomplete="current-password" />
+            </fieldset>
+            <fieldset class="fieldset min-w-0 flex-1">
+              <legend class="fieldset-legend">New Password</legend>
+              <input
+                type="password"
+                id="new-password-input"
+                class="input w-full"
+                placeholder="New"
+                autocomplete="new-password"
+                oninput="document.getElementById('confirm-password-input').classList.remove('input-error')" />
+            </fieldset>
+            <fieldset class="fieldset min-w-0 flex-1">
+              <legend class="fieldset-legend">Confirm</legend>
+              <input
+                type="password"
+                id="confirm-password-input"
+                class="input w-full"
+                placeholder="Confirm"
+                autocomplete="new-password"
+                oninput="this.classList.remove('input-error')" />
+            </fieldset>
+          </div>
+          <p class="-mt-2 text-xs opacity-50">Leave password fields blank to keep current password.</p>
         </div>
         <div class="modal-action">
           <button type="button" class="btn btn-ghost text-error mr-auto" onclick="logoutBtn()">Logout</button>

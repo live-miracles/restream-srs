@@ -109,6 +109,11 @@ export const stopPreview = (pipelineId: string) =>
 
 export const logout = () => apiRequest<{ ok: boolean }>('/api/auth/logout', { method: 'POST' });
 
+export const getVersion = () =>
+    apiRequest<{ commit: string; srs: string; ffmpeg: string; os: string; kernel: string }>(
+        '/api/version',
+    );
+
 export const changePassword = (currentPassword: string, newPassword: string) =>
     apiRequest<{ ok: boolean }>('/api/auth/change-password', {
         method: 'POST',

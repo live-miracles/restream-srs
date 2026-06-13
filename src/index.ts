@@ -17,6 +17,7 @@ import {
     initializePassword,
     checkIsAuthenticated,
 } from './api/auth.js';
+import { registerVersionApi } from './api/version.js';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '8080');
@@ -42,6 +43,7 @@ registerPipelineApi(app, db, outputService, previewService);
 registerOutputApi(app, db, outputService);
 registerPreviewApi(app, previewService);
 registerSettingsApi(app, db);
+registerVersionApi(app);
 registerMetricsApi(app);
 healthService.registerRoutes(app);
 
