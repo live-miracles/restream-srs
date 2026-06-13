@@ -18,6 +18,16 @@ export interface SrsStreamAudio {
     profile: string;
 }
 
+export interface AudioTrackInfo {
+    index: number;
+    codec: string;
+    sampleRate: number;
+    channels: number;
+    profile: string;
+    language: string | null;
+    title: string | null;
+}
+
 export interface SrsStream {
     id: string;
     name: string;
@@ -64,6 +74,10 @@ export async function fetchSrsStreams(): Promise<SrsStream[]> {
 
 export function rtmpPullUrl(streamKey: string): string {
     return `rtmp://${SRS_RTMP_HOST}:${SRS_RTMP_PORT}/live/${streamKey}`;
+}
+
+export function srtPullUrl(streamKey: string): string {
+    return `srt://${SRS_RTMP_HOST}:10080?streamid=#!::r=live/${streamKey},m=request`;
 }
 
 export function rtmpPublishUrl(streamKey: string, host: string): string {

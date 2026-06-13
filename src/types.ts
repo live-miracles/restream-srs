@@ -18,7 +18,8 @@ export interface Output {
     name: string;
     url: string;
     desiredState: 'running' | 'stopped';
-    encoding: string;
+    videoEncoding: string;
+    audioEncoding: string;
 }
 
 export interface Db {
@@ -38,14 +39,15 @@ export interface Db {
         pipelineId: number;
         name: string;
         url: string;
-        encoding?: string;
+        videoEncoding?: string;
+        audioEncoding?: string;
     }): Output;
     getOutput(id: string): Output | undefined;
     listOutputs(): Output[];
     listOutputsForPipeline(pipelineId: number): Output[];
     updateOutput(
         id: string,
-        params: { name: string; url: string; encoding: string },
+        params: { name: string; url: string; videoEncoding: string; audioEncoding: string },
     ): Output | null;
     setOutputDesiredState(id: string, desiredState: 'running' | 'stopped'): Output | null;
     deleteOutput(id: string): boolean;

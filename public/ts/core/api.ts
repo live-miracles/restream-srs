@@ -81,13 +81,13 @@ export const deletePipeline = (id: string) =>
 
 export const createOutput = (
     pipelineId: string,
-    data: { name: string; url: string; encoding: string },
+    data: { name: string; url: string; videoEncoding: string; audioEncoding: string },
 ) => apiRequest(`/api/pipelines/${pipelineId}/outputs`, { method: 'POST', body: data });
 
 export const updateOutput = (
     pipelineId: string,
     outId: string,
-    data: { name: string; url: string; encoding: string },
+    data: { name: string; url: string; videoEncoding: string; audioEncoding: string },
 ) => apiRequest(`/api/pipelines/${pipelineId}/outputs/${outId}`, { method: 'POST', body: data });
 
 export const deleteOutput = (pipelineId: string, outId: string) =>

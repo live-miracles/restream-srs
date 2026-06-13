@@ -236,11 +236,43 @@ function outModal(): HTMLDialogElement {
     return document.getElementById('edit-out-modal') as HTMLDialogElement;
 }
 
-function outEncodingOptions(selected: string): string {
+function outVideoEncodingOptions(selected: string): string {
     const encodings = state.config.encodings ?? ['source', '720p', '1080p'];
     return encodings
         .map((e) => `<option value="${e}" ${e === selected ? 'selected' : ''}>${e}</option>`)
         .join('');
+}
+
+function populateAudioEncodingSelect(pipelineId: string, currentAudioEncoding: string): void {
+    const pipeline = state.pipelines.find((p) => p.id === pipelineId);
+    const tracks = pipeline?.input.audioTracks ?? [];
+    const select = document.getElementById('out-audio-encoding-input') as HTMLSelectElement;
+    const container = document.getElementById('out-audio-encoding-container') as HTMLElement;
+    if (!select || !container) return;
+
+    const options = [
+        `<option value="copy"${currentAudioEncoding === 'copy' ? ' selected' : ''}>Copy (default)</option>`,
+    ];
+
+    if (tracks.length > 1) {
+        for (const t of tracks) {
+            const parts: string[] = [`Track ${t.index + 1}`];
+            if (t.language) parts.push(`(${t.language})`);
+            if (t.title) parts.push(`— ${t.title}`);
+            parts.push(`· ${t.codec} ${t.channels}ch`);
+            const val = String(t.index);
+            options.push(
+                `<option value="${val}"${currentAudioEncoding === val ? ' selected' : ''}>${parts.join(' ')}</option>`,
+            );
+        }
+        container.classList.remove('hidden');
+    } else if (currentAudioEncoding !== 'copy') {
+        container.classList.remove('hidden');
+    } else {
+        container.classList.add('hidden');
+    }
+
+    select.innerHTML = options.join('');
 }
 
 function clearOutErrors(): void {
@@ -261,8 +293,9 @@ export function openAddOutput(pipelineId: string): void {
     (document.getElementById('out-key-input') as HTMLInputElement).value = '';
     clearOutErrors();
     applyServerSelection(0);
-    const encSelect = document.getElementById('out-encoding-input') as HTMLSelectElement;
-    encSelect.innerHTML = outEncodingOptions('source');
+    (document.getElementById('out-video-encoding-input') as HTMLSelectElement).innerHTML =
+        outVideoEncodingOptions('source');
+    populateAudioEncodingSelect(pipelineId, 'copy');
     (document.getElementById('out-modal-title') as HTMLElement).textContent = 'Add Output';
     (document.getElementById('out-save-btn') as HTMLButtonElement).disabled = false;
     (document.getElementById('out-running-hint') as HTMLElement).classList.add('hidden');
@@ -283,8 +316,9 @@ export function openEditOutput(pipelineId: string, outId: string): void {
     (document.getElementById('out-key-input') as HTMLInputElement).value = key;
     clearOutErrors();
     applyServerSelection(idx);
-    const encSelect = document.getElementById('out-encoding-input') as HTMLSelectElement;
-    encSelect.innerHTML = outEncodingOptions(output.encoding);
+    (document.getElementById('out-video-encoding-input') as HTMLSelectElement).innerHTML =
+        outVideoEncodingOptions(output.videoEncoding);
+    populateAudioEncodingSelect(pipelineId, output.audioEncoding);
     (document.getElementById('out-modal-title') as HTMLElement).textContent = 'Edit Output';
 
     const pipeline = state.pipelines.find((p) => p.id === pipelineId);
@@ -308,7 +342,12 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
     );
     const key = (document.getElementById('out-key-input') as HTMLInputElement).value.trim();
     const url = SERVERS[serverIdx].prefix + key;
-    const encoding = (document.getElementById('out-encoding-input') as HTMLSelectElement).value;
+    const videoEncoding = (
+        document.getElementById('out-video-encoding-input') as HTMLSelectElement
+    ).value;
+    const audioEncoding = (
+        document.getElementById('out-audio-encoding-input') as HTMLSelectElement
+    ).value;
 
     const nameEl = document.getElementById('out-name-input') as HTMLInputElement;
     const keyEl = document.getElementById('out-key-input') as HTMLInputElement;
@@ -318,8 +357,8 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
 
     await withBusy(btn, async () => {
         const result = outId
-            ? await api.updateOutput(pipelineId, outId, { name, url, encoding })
-            : await api.createOutput(pipelineId, { name, url, encoding });
+            ? await api.updateOutput(pipelineId, outId, { name, url, videoEncoding, audioEncoding })
+            : await api.createOutput(pipelineId, { name, url, videoEncoding, audioEncoding });
         if (result) {
             outModal().close();
             await refreshAfterMutation();

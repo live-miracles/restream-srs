@@ -212,11 +212,18 @@
           </fieldset>
 
           <fieldset class="fieldset">
-            <legend class="fieldset-legend">Encoding</legend>
-            <select class="select" id="out-encoding-input">
+            <legend class="fieldset-legend">Video Encoding</legend>
+            <select class="select" id="out-video-encoding-input">
               <option value="source">source (copy)</option>
               <option value="720p">720p</option>
               <option value="1080p">1080p</option>
+            </select>
+          </fieldset>
+
+          <fieldset class="fieldset" id="out-audio-encoding-container">
+            <legend class="fieldset-legend">Audio Encoding</legend>
+            <select class="select w-full" id="out-audio-encoding-input">
+              <option value="copy">Copy (default)</option>
             </select>
           </fieldset>
         </div>

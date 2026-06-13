@@ -114,24 +114,34 @@ ffmpeg test commands:
 
 RTMP:
 ```bash
-ffmpeg -re -i video.mp4 \
+ffmpeg -re -stream_loop -1 -i video.mp4 \
   -c:v libx264 -preset veryfast -b:v 2500k -c:a aac -b:a 128k \
   -f flv rtmp://localhost:1935/live/<stream-key>
 ```
 
 SRT:
 ```bash
-ffmpeg -re -i video.mp4 \
+ffmpeg -re -stream_loop -1 -i video.mp4 \
   -c:v libx264 -preset veryfast -b:v 2500k -c:a aac -b:a 128k \
   -f mpegts 'srt://localhost:10080?streamid=#!::r=live/<stream-key>,m=publish'
 ```
 
 SRT with passphrase:
 ```bash
-ffmpeg -re -i video.mp4 \
+ffmpeg -re -stream_loop -1 -i video.mp4 \
   -c:v libx264 -preset veryfast -b:v 2500k -c:a aac -b:a 128k \
   -f mpegts 'srt://localhost:10080?streamid=#!::r=live/<stream-key>,m=publish&passphrase=<srt-passphrase>&pbkeylen=16'
 ```
+
+SRT with multiple audio tracks (use `-map 0` to include all streams from the source):
+```bash
+ffmpeg -re -stream_loop -1 -i multitrack.mkv \
+  -map 0 \
+  -c:v libx264 -preset veryfast -b:v 2500k -c:a aac -b:a 128k \
+  -f mpegts 'srt://localhost:10080?streamid=#!::r=live/<stream-key>,m=publish'
+```
+
+> **Note:** SRS internally converts SRT/MPEG-TS to RTMP, which is a single-audio protocol. The dashboard will only detect one audio track from the live stream regardless of how many tracks are in the source file. Multi-track audio selection in outputs is intended for encoders that send a multi-track RTMP extension.
 
 ---
 

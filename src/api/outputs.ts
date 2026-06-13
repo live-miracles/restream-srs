@@ -1,5 +1,5 @@
 import type { Express } from 'express';
-import { validateOutputUrl, ENCODINGS } from '../utils/ffmpeg.js';
+import { validateOutputUrl, validateAudioEncoding, ENCODINGS } from '../utils/ffmpeg.js';
 import type { Db } from '../types.js';
 import type { OutputService } from '../services/outputs.js';
 
@@ -12,17 +12,20 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
 
         const name = (req.body?.name as string | undefined)?.trim();
         const url = (req.body?.url as string | undefined)?.trim();
-        const encoding = (req.body?.encoding as string | undefined)?.trim() || 'source';
+        const videoEncoding = (req.body?.videoEncoding as string | undefined)?.trim() || 'source';
+        const audioEncoding = validateAudioEncoding(req.body?.audioEncoding);
 
         if (!name) return res.status(400).json({ error: 'name is required' });
         if (!url || !validateOutputUrl(url))
             return res
                 .status(400)
                 .json({ error: 'valid url is required (rtmp://, rtmps://, srt://)' });
-        if (!ENCODINGS[encoding])
-            return res.status(400).json({ error: `unknown encoding: ${encoding}` });
+        if (!ENCODINGS[videoEncoding])
+            return res.status(400).json({ error: `unknown videoEncoding: ${videoEncoding}` });
+        if (audioEncoding === null)
+            return res.status(400).json({ error: 'invalid audioEncoding value' });
 
-        const output = db.createOutput({ pipelineId, name, url, encoding });
+        const output = db.createOutput({ pipelineId, name, url, videoEncoding, audioEncoding });
         return res.status(201).json(output);
     });
 
@@ -35,14 +38,20 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
 
         const name = (req.body?.name as string | undefined)?.trim() ?? output.name;
         const url = (req.body?.url as string | undefined)?.trim() ?? output.url;
-        const encoding = (req.body?.encoding as string | undefined)?.trim() ?? output.encoding;
+        const videoEncoding =
+            (req.body?.videoEncoding as string | undefined)?.trim() ?? output.videoEncoding;
+        const audioEncoding = validateAudioEncoding(
+            req.body?.audioEncoding ?? output.audioEncoding,
+        );
 
         if (!name) return res.status(400).json({ error: 'name is required' });
         if (!validateOutputUrl(url)) return res.status(400).json({ error: 'valid url required' });
-        if (!ENCODINGS[encoding])
-            return res.status(400).json({ error: `unknown encoding: ${encoding}` });
+        if (!ENCODINGS[videoEncoding])
+            return res.status(400).json({ error: `unknown videoEncoding: ${videoEncoding}` });
+        if (audioEncoding === null)
+            return res.status(400).json({ error: 'invalid audioEncoding value' });
 
-        const updated = db.updateOutput(outId, { name, url, encoding });
+        const updated = db.updateOutput(outId, { name, url, videoEncoding, audioEncoding });
         return res.json(updated);
     });
 

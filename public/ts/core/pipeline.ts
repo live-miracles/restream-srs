@@ -9,6 +9,7 @@ const EMPTY_INPUT: InputHealth = {
     uptimeMs: null,
     video: null,
     audio: null,
+    audioTracks: [],
 };
 
 export function parsePipelines(

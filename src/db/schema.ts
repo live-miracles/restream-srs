@@ -11,14 +11,6 @@ export function setupDatabaseSchema(db: Database.Database): void {
         )`,
     ).run();
 
-    // Migration: add slot column if the table existed without it
-    const skCols = (db.prepare(`PRAGMA table_info(stream_keys)`).all() as { name: string }[]).map(
-        (c) => c.name,
-    );
-    if (!skCols.includes('slot')) {
-        db.prepare(`ALTER TABLE stream_keys ADD COLUMN slot INTEGER`).run();
-    }
-
     db.prepare(
         `CREATE TABLE IF NOT EXISTS pipelines (
             id            INTEGER PRIMARY KEY,
@@ -27,44 +19,16 @@ export function setupDatabaseSchema(db: Database.Database): void {
         )`,
     ).run();
 
-    // Migration: add stream_key_id if the table existed with the old schema
-    const pipelineCols = (
-        db.prepare(`PRAGMA table_info(pipelines)`).all() as { name: string }[]
-    ).map((c) => c.name);
-    if (!pipelineCols.includes('stream_key_id')) {
-        db.prepare(
-            `ALTER TABLE pipelines ADD COLUMN stream_key_id INTEGER REFERENCES stream_keys(id)`,
-        ).run();
-    }
-
-    // Migration: move old stream_key text values into stream_keys table
-    if (pipelineCols.includes('stream_key')) {
-        const toMigrate = db
-            .prepare(
-                `SELECT id, stream_key FROM pipelines WHERE stream_key != '' AND stream_key_id IS NULL`,
-            )
-            .all() as { id: number; stream_key: string }[];
-        for (const row of toMigrate) {
-            db.prepare(`INSERT OR IGNORE INTO stream_keys (key) VALUES (?)`).run(row.stream_key);
-            const keyRow = db
-                .prepare(`SELECT id FROM stream_keys WHERE key = ?`)
-                .get(row.stream_key) as { id: number };
-            db.prepare(`UPDATE pipelines SET stream_key_id = ? WHERE id = ?`).run(
-                keyRow.id,
-                row.id,
-            );
-        }
-    }
-
     db.prepare(
         `CREATE TABLE IF NOT EXISTS outputs (
-            id            TEXT PRIMARY KEY,
-            pipeline_id   INTEGER NOT NULL,
-            seq           INTEGER NOT NULL,
-            name          TEXT NOT NULL,
-            url           TEXT NOT NULL,
-            desired_state TEXT NOT NULL DEFAULT 'stopped',
-            encoding      TEXT NOT NULL DEFAULT 'source',
+            id              TEXT PRIMARY KEY,
+            pipeline_id     INTEGER NOT NULL,
+            seq             INTEGER NOT NULL,
+            name            TEXT NOT NULL,
+            url             TEXT NOT NULL,
+            desired_state   TEXT NOT NULL DEFAULT 'stopped',
+            encoding        TEXT NOT NULL DEFAULT 'source',
+            audio_encoding  TEXT NOT NULL DEFAULT 'copy',
             FOREIGN KEY(pipeline_id) REFERENCES pipelines(id) ON DELETE CASCADE
         )`,
     ).run();
@@ -77,4 +41,14 @@ export function setupDatabaseSchema(db: Database.Database): void {
             value TEXT NOT NULL
         )`,
     ).run();
+
+    // Add audio_encoding to outputs if upgrading from an older schema
+    const outCols = (db.prepare(`PRAGMA table_info(outputs)`).all() as { name: string }[]).map(
+        (c) => c.name,
+    );
+    if (!outCols.includes('audio_encoding')) {
+        db.prepare(
+            `ALTER TABLE outputs ADD COLUMN audio_encoding TEXT NOT NULL DEFAULT 'copy'`,
+        ).run();
+    }
 }

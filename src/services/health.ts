@@ -3,9 +3,11 @@ import type { Express } from 'express';
 import {
     fetchSrsStreams,
     rtmpPullUrl,
+    srtPullUrl,
     type SrsStream,
     type SrsStreamVideo,
     type SrsStreamAudio,
+    type AudioTrackInfo,
 } from '../utils/srs.js';
 import type { Db } from '../types.js';
 import type { OutputService } from './outputs.js';
@@ -22,6 +24,7 @@ export interface InputHealth {
     uptimeMs: number | null;
     video: SrsStreamVideo | null;
     audio: SrsStreamAudio | null;
+    audioTracks: AudioTrackInfo[];
 }
 
 interface PipelineHealth {
@@ -47,6 +50,7 @@ export interface HealthSnapshot {
 interface ProbeResult {
     video: SrsStreamVideo | null;
     audio: SrsStreamAudio | null;
+    audioTracks: AudioTrackInfo[];
 }
 
 function parseFrameRate(str: unknown): number | null {
@@ -60,8 +64,7 @@ function parseFrameRate(str: unknown): number | null {
     return Number.isFinite(fps) && fps > 0 ? Number(fps.toFixed(3)) : null;
 }
 
-function runFfprobe(streamKey: string): Promise<ProbeResult | null> {
-    const url = rtmpPullUrl(streamKey);
+function runFfprobe(url: string): Promise<ProbeResult | null> {
     return new Promise((resolve) => {
         execFile(
             FFPROBE_CMD,
@@ -76,7 +79,20 @@ function runFfprobe(streamKey: string): Promise<ProbeResult | null> {
                     const data = JSON.parse(stdout) as { streams?: Record<string, unknown>[] };
                     const streams = data.streams || [];
                     const vs = streams.find((s) => s.codec_type === 'video') ?? null;
-                    const as_ = streams.find((s) => s.codec_type === 'audio') ?? null;
+                    const audioStreams = streams.filter((s) => s.codec_type === 'audio');
+                    const as_ = audioStreams[0] ?? null;
+                    const audioTracks: AudioTrackInfo[] = audioStreams.map((s, idx) => {
+                        const tags = (s.tags ?? {}) as Record<string, string>;
+                        return {
+                            index: idx,
+                            codec: (s.codec_name as string) || '',
+                            sampleRate: s.sample_rate ? Number(s.sample_rate) : 0,
+                            channels: (s.channels as number) || 0,
+                            profile: (s.profile as string) || '',
+                            language: tags.language ?? null,
+                            title: tags.title ?? null,
+                        };
+                    });
                     resolve({
                         video: vs
                             ? {
@@ -96,6 +112,7 @@ function runFfprobe(streamKey: string): Promise<ProbeResult | null> {
                                   profile: (as_.profile as string) || '',
                               }
                             : null,
+                        audioTracks,
                     });
                 } catch {
                     resolve(null);
@@ -124,20 +141,21 @@ export function createHealthService(db: Db, outputService: OutputService) {
         ffprobeResults.delete(pipelineId);
     }
 
-    function scheduleFfprobe(pipelineId: number, streamKey: string, attempt = 0): void {
+    function scheduleFfprobe(pipelineId: number, streamKey: string, isSrt: boolean, attempt = 0): void {
         if (attempt >= FFPROBE_DELAYS_MS.length) return;
+        const url = isSrt ? srtPullUrl(streamKey) : rtmpPullUrl(streamKey);
         const entry: { timer: NodeJS.Timeout | null; attempt: number } = { timer: null, attempt };
         ffprobeRetries.set(pipelineId, entry);
         entry.timer = setTimeout(async () => {
             entry.timer = null;
             if (!ffprobeRetries.has(pipelineId)) return;
-            const result = await runFfprobe(streamKey);
+            const result = await runFfprobe(url);
             if (!ffprobeRetries.has(pipelineId)) return;
             if (result) {
                 ffprobeResults.set(pipelineId, result);
                 ffprobeRetries.delete(pipelineId);
             } else if (attempt + 1 < FFPROBE_DELAYS_MS.length) {
-                scheduleFfprobe(pipelineId, streamKey, attempt + 1);
+                scheduleFfprobe(pipelineId, streamKey, isSrt, attempt + 1);
             } else {
                 ffprobeRetries.delete(pipelineId);
                 console.warn(`[ffprobe] exhausted all attempts for pipeline ${pipelineId}`);
@@ -182,7 +200,8 @@ export function createHealthService(db: Db, outputService: OutputService) {
             if (!wasLive && nowLive) {
                 inputLiveStartMs.set(pipeline.id, Date.now());
                 outputService.restartPipelineOutputs(pipeline.id);
-                scheduleFfprobe(pipeline.id, pipeline.streamKey);
+                const isSrt = !!s?.tcUrl?.startsWith('srt://');
+                scheduleFfprobe(pipeline.id, pipeline.streamKey, isSrt);
             }
 
             if (wasLive && !nowLive) {
@@ -220,6 +239,7 @@ export function createHealthService(db: Db, outputService: OutputService) {
                         : null,
                     video: probe?.video ?? (s?.video ? { ...s.video, fps: null } : null),
                     audio: probe?.audio ?? s?.audio ?? null,
+                    audioTracks: probe?.audioTracks ?? [],
                 },
                 outputs: outputsHealth,
             };

@@ -29,7 +29,8 @@ function rowToOutput(row: Record<string, unknown>): Output {
         name: row.name as string,
         url: row.url as string,
         desiredState: row.desired_state as 'running' | 'stopped',
-        encoding: row.encoding as string,
+        videoEncoding: (row.encoding as string) || 'source',
+        audioEncoding: (row.audio_encoding as string) || 'copy',
     };
 }
 
@@ -160,7 +161,13 @@ export function createDb(dbPath?: string): Db {
             return result.changes > 0;
         },
 
-        createOutput({ pipelineId, name, url, encoding = 'source' }): Output {
+        createOutput({
+            pipelineId,
+            name,
+            url,
+            videoEncoding = 'source',
+            audioEncoding = 'copy',
+        }): Output {
             const seqRow = sqlite
                 .prepare(
                     'SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM outputs WHERE pipeline_id = ?',
@@ -170,9 +177,9 @@ export function createDb(dbPath?: string): Db {
             const id = `${pipelineId}-${seq}`;
             sqlite
                 .prepare(
-                    'INSERT INTO outputs (id, pipeline_id, seq, name, url, desired_state, encoding) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    'INSERT INTO outputs (id, pipeline_id, seq, name, url, desired_state, encoding, audio_encoding) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                 )
-                .run(id, pipelineId, seq, name, url, 'stopped', encoding);
+                .run(id, pipelineId, seq, name, url, 'stopped', videoEncoding, audioEncoding);
             return rowToOutput(stmtGetOutput.get(id) as Record<string, unknown>);
         },
 
@@ -198,10 +205,12 @@ export function createDb(dbPath?: string): Db {
             ).map(rowToOutput);
         },
 
-        updateOutput(id: string, { name, url, encoding }): Output | null {
+        updateOutput(id: string, { name, url, videoEncoding, audioEncoding }): Output | null {
             sqlite
-                .prepare('UPDATE outputs SET name = ?, url = ?, encoding = ? WHERE id = ?')
-                .run(name, url, encoding, id);
+                .prepare(
+                    'UPDATE outputs SET name = ?, url = ?, encoding = ?, audio_encoding = ? WHERE id = ?',
+                )
+                .run(name, url, videoEncoding, audioEncoding, id);
             const row = stmtGetOutput.get(id) as Record<string, unknown> | undefined;
             return row ? rowToOutput(row) : null;
         },

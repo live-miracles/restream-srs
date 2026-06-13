@@ -20,7 +20,8 @@ export interface Output {
     name: string;
     url: string;
     desiredState: 'running' | 'stopped';
-    encoding: string;
+    videoEncoding: string;
+    audioEncoding: string;
 }
 
 export interface VideoInfo {
@@ -37,6 +38,16 @@ export interface AudioInfo {
     sample_rate: number;
     channel: number;
     profile: string;
+}
+
+export interface AudioTrackInfo {
+    index: number;
+    codec: string;
+    sampleRate: number;
+    channels: number;
+    profile: string;
+    language: string | null;
+    title: string | null;
 }
 
 export interface OutputStatus {
@@ -56,6 +67,7 @@ export interface InputHealth {
     uptimeMs: number | null;
     video: VideoInfo | null;
     audio: AudioInfo | null;
+    audioTracks: AudioTrackInfo[];
 }
 
 export interface PipelineHealth {

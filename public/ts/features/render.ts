@@ -173,8 +173,29 @@ function renderInputStats(input: InputHealth): string {
                   : ''
         }
         ${
-            a
+            input.audioTracks.length > 0
                 ? `
+        <h3 class="mt-3 text-sm font-semibold opacity-60">Audio <span class="font-normal">(${input.audioTracks.length} track${input.audioTracks.length > 1 ? 's' : ''})</span></h3>
+        <table class="table table-xs mt-1">
+            <thead><tr><th>#</th><th>Codec</th><th>Ch</th><th>Sample Rate</th><th>Profile</th>${input.audioTracks.some((t) => t.language || t.title) ? '<th>Label</th>' : ''}</tr></thead>
+            <tbody>
+                ${input.audioTracks
+                    .map((t) => {
+                        const label = [t.language, t.title].filter(Boolean).join(' — ');
+                        return `<tr>
+                        <td class="font-mono">${t.index + 1}</td>
+                        <td>${t.codec || '—'}</td>
+                        <td>${t.channels || '—'}</td>
+                        <td>${t.sampleRate ? `${(t.sampleRate / 1000).toFixed(1)} kHz` : '—'}</td>
+                        <td>${t.profile || '—'}</td>
+                        ${input.audioTracks.some((x) => x.language || x.title) ? `<td class="opacity-60">${label || ''}</td>` : ''}
+                    </tr>`;
+                    })
+                    .join('')}
+            </tbody>
+        </table>`
+                : a
+                  ? `
         <h3 class="mt-3 text-sm font-semibold opacity-60">Audio</h3>
         <div class="stats shadow mt-1 flex-wrap">
             ${stat('Codec', a.codec)}
@@ -182,7 +203,7 @@ function renderInputStats(input: InputHealth): string {
             ${stat('Channels', a.channel)}
             ${stat('Profile', a.profile || null)}
         </div>`
-                : ''
+                  : ''
         }
     `;
 }
@@ -223,19 +244,35 @@ function renderOverview(): void {
                 : isWarn
                   ? `<span class="badge badge-sm badge-warning">Low Bitrate</span>`
                   : `<span class="badge badge-sm badge-success">Live</span>`;
-            inputRows += `<tr class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(false, isWarn)}>
-                <td class="font-semibold">${p.name}</td>
-                <td>${badge}</td>
-                ${td(inp.live ? formatUptime(inp.uptimeMs) : null)}
-                ${td(inp.live ? formatBitrate(inp.recvBitrateKbps) : null)}
-                ${td(inp.live ? (inp.isSrt ? 'SRT' : 'RTMP') : null)}
-                ${td(inp.video?.codec)}
-                ${td(inp.video ? `${inp.video.width}×${inp.video.height}` : null)}
-                ${td(inp.video?.fps)}
-                ${td(inp.audio?.codec)}
-                ${td(inp.audio?.channel)}
-                ${td(fmtHz(inp.audio?.sample_rate))}
-            </tr>`;
+            const audioTracks = inp.audioTracks.length > 0 ? inp.audioTracks : null;
+            const rowspan = audioTracks && audioTracks.length > 1 ? ` rowspan="${audioTracks.length}"` : '';
+            const rowAttr = `class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(false, isWarn)}`;
+            const sharedCells = `
+                <td class="font-semibold"${rowspan}>${p.name}</td>
+                <td${rowspan}>${badge}</td>
+                <td class="font-mono text-xs"${rowspan}>${inp.live ? formatUptime(inp.uptimeMs) : '—'}</td>
+                <td class="font-mono text-xs"${rowspan}>${inp.live ? formatBitrate(inp.recvBitrateKbps) : '—'}</td>
+                <td class="font-mono text-xs"${rowspan}>${inp.live ? (inp.isSrt ? 'SRT' : 'RTMP') : '—'}</td>
+                <td class="font-mono text-xs"${rowspan}>${inp.video?.codec ?? '—'}</td>
+                <td class="font-mono text-xs"${rowspan}>${inp.video ? `${inp.video.width}×${inp.video.height}` : '—'}</td>
+                <td class="font-mono text-xs"${rowspan}>${inp.video?.fps ?? '—'}</td>`;
+            if (audioTracks && audioTracks.length > 1) {
+                inputRows += audioTracks.map((t, i) => {
+                    const label = t.title || t.language ? ` <span class="opacity-40 text-xs">${[t.language, t.title].filter(Boolean).join(' ')}</span>` : '';
+                    return `<tr ${rowAttr}>${i === 0 ? sharedCells : ''}
+                        <td class="font-mono text-xs">${t.codec || '—'}${label}</td>
+                        <td class="font-mono text-xs">${t.channels || '—'}</td>
+                        <td class="font-mono text-xs">${t.sampleRate ? fmtHz(t.sampleRate) : '—'}</td>
+                    </tr>`;
+                }).join('');
+            } else {
+                const t = audioTracks?.[0] ?? null;
+                inputRows += `<tr ${rowAttr}>${sharedCells}
+                    ${td(t ? t.codec : inp.audio?.codec)}
+                    ${td(t ? t.channels : inp.audio?.channel)}
+                    ${td(t ? fmtHz(t.sampleRate) : fmtHz(inp.audio?.sample_rate))}
+                </tr>`;
+            }
         }
     }
 
@@ -262,12 +299,12 @@ function renderOverview(): void {
                               : `<span class="badge badge-sm badge-error">Failed</span>`;
 
                 const isOn = o.status === 'running';
-                const src = isOn && o.encoding === 'source' ? p.input : null;
+                const src = isOn && o.videoEncoding === 'source' ? p.input : null;
                 outputRows += `<tr class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(st === 'error', st === 'warn')}>
                     <td><span class="opacity-40 text-xs">${p.name} ·</span> ${o.name}</td>
                     <td>${badge}${o.retries > 0 ? ` <span class="font-mono text-xs opacity-60">↺${o.retries}</span>` : ''}</td>
                     ${td(formatBitrate(o.bitrateKbps))}
-                    ${td(isOn ? o.encoding : null)}
+                    ${td(isOn ? o.videoEncoding : null)}
                     ${td(src?.video?.codec)}
                     ${td(src?.video ? `${src.video.width}×${src.video.height}` : null)}
                     ${td(src?.video?.fps)}
@@ -381,7 +418,14 @@ function renderOutputCard(o: OutputView, inputLive: boolean): string {
                 ? 'status-error'
                 : 'status-neutral';
     const uptimeMs = st === 'good' && o.startedAtMs !== null ? Date.now() - o.startedAtMs : null;
-    const badges = [`<span class="badge badge-sm whitespace-nowrap">${o.encoding}</span>`];
+    const badges = [`<span class="badge badge-sm whitespace-nowrap">${o.videoEncoding}</span>`];
+    if (o.audioEncoding !== 'copy') {
+        const trackLabel = o.audioEncoding
+            .split(',')
+            .map((t) => `A${parseInt(t) + 1}`)
+            .join('+');
+        badges.push(`<span class="badge badge-sm badge-info whitespace-nowrap">${trackLabel}</span>`);
+    }
     if (uptimeMs !== null) {
         badges.push(
             `<span class="font-mono text-xs opacity-60 whitespace-nowrap">${formatUptime(uptimeMs)}</span>`,

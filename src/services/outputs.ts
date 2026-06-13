@@ -141,7 +141,7 @@ export function createOutputService(db: Db): OutputService {
         const pipeline = db.getPipeline(output.pipelineId);
         if (!pipeline) throw new Error('Pipeline not found');
         const inputUrl = rtmpPullUrl(pipeline.streamKey);
-        const args = buildFfmpegArgs(inputUrl, output.url, output.encoding);
+        const args = buildFfmpegArgs(inputUrl, output.url, output.videoEncoding, output.audioEncoding);
 
         const child: ChildProcess = spawn(FFMPEG_CMD, args, {
             stdio: ['ignore', 'pipe', 'ignore'],
