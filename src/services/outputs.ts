@@ -24,6 +24,7 @@ export interface OutputService {
     stopAndWait(outputId: string): Promise<void>;
     restartPipelineOutputs(pipelineId: number): void;
     clearRetryState(outputId: string): void;
+    shutdown(): void;
 }
 
 export function createOutputService(db: Db): OutputService {
@@ -241,5 +242,20 @@ export function createOutputService(db: Db): OutputService {
         },
 
         clearRetryState: clearRetry,
+
+        shutdown(): void {
+            for (const r of retryState.values()) {
+                if (r.timer) clearTimeout(r.timer);
+            }
+            for (const [outputId, proc] of processes) {
+                stopRequested.add(outputId);
+                try {
+                    proc.kill('SIGKILL');
+                } catch {
+                    /* already gone */
+                }
+            }
+            processes.clear();
+        },
     };
 }

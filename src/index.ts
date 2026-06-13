@@ -25,7 +25,7 @@ const previewService = createPreviewService(db);
 
 registerSrsHooks(app, db);
 registerConfigApi(app, db);
-registerPipelineApi(app, db, outputService);
+registerPipelineApi(app, db, outputService, previewService);
 registerOutputApi(app, db, outputService);
 registerPreviewApi(app, previewService);
 registerSettingsApi(app, db);
@@ -68,6 +68,19 @@ async function main(): Promise<void> {
         console.log(`[server] listening on http://0.0.0.0:${PORT}`);
     });
 }
+
+let shuttingDown = false;
+function shutdown(signal: string): void {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[server] ${signal} received, killing ffmpeg jobs`);
+    outputService.shutdown();
+    previewService.shutdown();
+    process.exit(0);
+}
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 main().catch((err) => {
     console.error('Fatal startup error:', err);

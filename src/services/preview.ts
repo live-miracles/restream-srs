@@ -15,6 +15,7 @@ function resolveBaseDir(): string {
 export interface PreviewService {
     start(pipelineId: number): { hlsUrl: string };
     stop(pipelineId: number): void;
+    shutdown(): void;
     baseDir: string;
 }
 
@@ -71,5 +72,16 @@ export function createPreviewService(db: Db): PreviewService {
         console.log(`[preview] ${pipelineId} stopping`);
     }
 
-    return { start, stop, baseDir };
+    function shutdown(): void {
+        for (const proc of procs.values()) {
+            try {
+                proc.kill('SIGKILL');
+            } catch {
+                /* already gone */
+            }
+        }
+        procs.clear();
+    }
+
+    return { start, stop, shutdown, baseDir };
 }
