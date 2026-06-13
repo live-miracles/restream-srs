@@ -1,6 +1,7 @@
 const SRS_API_URL = process.env.SRS_API_URL || 'http://localhost:1985';
 const SRS_RTMP_HOST = process.env.SRS_RTMP_HOST || 'localhost';
 const SRS_RTMP_PORT = parseInt(process.env.SRS_RTMP_PORT || '1935');
+const SRS_SRT_PORT = parseInt(process.env.SRS_SRT_PORT || '10080');
 
 export interface SrsStreamVideo {
     codec: string;
@@ -77,7 +78,7 @@ export function rtmpPullUrl(streamKey: string): string {
 }
 
 export function srtPullUrl(streamKey: string): string {
-    return `srt://${SRS_RTMP_HOST}:10080?streamid=#!::r=live/${streamKey},m=request`;
+    return `srt://${SRS_RTMP_HOST}:${SRS_SRT_PORT}?streamid=#!::r=live/${streamKey},m=request`;
 }
 
 export function rtmpPublishUrl(streamKey: string, host: string): string {

@@ -11,3 +11,5 @@ data.db
 *.mp4
 objs/
 hls/
+*.wav
+*.mkv

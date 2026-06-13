@@ -102,21 +102,48 @@ describe('Output CRUD', () => {
         const o = db.createOutput({
             pipelineId: p.id,
             name: 'YouTube',
-            url: 'rtmp://a.rtmp.youtube.com/live2/key',
+            sinks: [{ url: 'rtmp://a.rtmp.youtube.com/live2/key' }],
         });
         const got = db.getOutput(o.id);
         assert.equal(got?.name, 'YouTube');
-        assert.equal(got?.url, 'rtmp://a.rtmp.youtube.com/live2/key');
+        assert.equal(got?.sinks.length, 1);
+        assert.equal(got?.sinks[0].url, 'rtmp://a.rtmp.youtube.com/live2/key');
+        assert.equal(got?.sinks[0].audioEncoding, 'copy');
         assert.equal(got?.desiredState, 'stopped');
-        assert.equal(got?.encoding, 'source');
+        assert.equal(got?.videoEncoding, 'copy');
+        assert.equal(got?.pullMethod, 'rtmp');
+    });
+
+    test('createOutput persists multiple sinks with per-sink audio encoding', () => {
+        const db = makeDb();
+        const p = db.createPipeline();
+        const o = db.createOutput({
+            pipelineId: p.id,
+            name: 'Split',
+            pullMethod: 'srt',
+            sinks: [
+                { url: 'rtmp://en', audioEncoding: '0' },
+                { url: 'rtmp://fr', audioEncoding: '1' },
+            ],
+        });
+        const got = db.getOutput(o.id);
+        assert.equal(got?.pullMethod, 'srt');
+        assert.equal(got?.sinks.length, 2);
+        assert.deepEqual(
+            got?.sinks.map((s) => [s.url, s.audioEncoding]),
+            [
+                ['rtmp://en', '0'],
+                ['rtmp://fr', '1'],
+            ],
+        );
     });
 
     test('listOutputsForPipeline scopes to the right pipeline', () => {
         const db = makeDb();
         const p1 = db.createPipeline();
         const p2 = db.createPipeline();
-        db.createOutput({ pipelineId: p1.id, name: 'A', url: 'rtmp://a' });
-        db.createOutput({ pipelineId: p2.id, name: 'B', url: 'rtmp://b' });
+        db.createOutput({ pipelineId: p1.id, name: 'A', sinks: [{ url: 'rtmp://a' }] });
+        db.createOutput({ pipelineId: p2.id, name: 'B', sinks: [{ url: 'rtmp://b' }] });
         const outs = db.listOutputsForPipeline(p1.id);
         assert.equal(outs.length, 1);
         assert.equal(outs[0].name, 'A');
@@ -125,8 +152,8 @@ describe('Output CRUD', () => {
     test('multiple outputs on same pipeline get sequential seq numbers', () => {
         const db = makeDb();
         const p = db.createPipeline();
-        const o1 = db.createOutput({ pipelineId: p.id, name: 'A', url: 'rtmp://a' });
-        const o2 = db.createOutput({ pipelineId: p.id, name: 'B', url: 'rtmp://b' });
+        const o1 = db.createOutput({ pipelineId: p.id, name: 'A', sinks: [{ url: 'rtmp://a' }] });
+        const o2 = db.createOutput({ pipelineId: p.id, name: 'B', sinks: [{ url: 'rtmp://b' }] });
         assert.equal(o1.seq, 1);
         assert.equal(o2.seq, 2);
     });
@@ -134,26 +161,55 @@ describe('Output CRUD', () => {
     test('setOutputDesiredState persists the change', () => {
         const db = makeDb();
         const p = db.createPipeline();
-        const o = db.createOutput({ pipelineId: p.id, name: 'X', url: 'rtmp://x' });
+        const o = db.createOutput({ pipelineId: p.id, name: 'X', sinks: [{ url: 'rtmp://x' }] });
         db.setOutputDesiredState(o.id, 'running');
         assert.equal(db.getOutput(o.id)?.desiredState, 'running');
     });
 
-    test('updateOutput persists name, url, encoding changes', () => {
+    test('updateOutput persists name, encoding, pullMethod, and sink changes', () => {
         const db = makeDb();
         const p = db.createPipeline();
-        const o = db.createOutput({ pipelineId: p.id, name: 'Old', url: 'rtmp://old' });
-        db.updateOutput(o.id, { name: 'New', url: 'rtmp://new', encoding: '720p' });
+        const o = db.createOutput({
+            pipelineId: p.id,
+            name: 'Old',
+            sinks: [{ url: 'rtmp://old' }],
+        });
+        db.updateOutput(o.id, {
+            name: 'New',
+            videoEncoding: '720p',
+            pullMethod: 'srt',
+            sinks: [{ url: 'rtmp://new', audioEncoding: '2' }],
+        });
         const got = db.getOutput(o.id);
         assert.equal(got?.name, 'New');
-        assert.equal(got?.url, 'rtmp://new');
-        assert.equal(got?.encoding, '720p');
+        assert.equal(got?.videoEncoding, '720p');
+        assert.equal(got?.pullMethod, 'srt');
+        assert.equal(got?.sinks.length, 1);
+        assert.equal(got?.sinks[0].url, 'rtmp://new');
+        assert.equal(got?.sinks[0].audioEncoding, '2');
+    });
+
+    test('updateOutput replaces sinks rather than appending', () => {
+        const db = makeDb();
+        const p = db.createPipeline();
+        const o = db.createOutput({
+            pipelineId: p.id,
+            name: 'X',
+            sinks: [{ url: 'rtmp://a' }, { url: 'rtmp://b' }],
+        });
+        db.updateOutput(o.id, {
+            name: 'X',
+            videoEncoding: 'copy',
+            pullMethod: 'rtmp',
+            sinks: [{ url: 'rtmp://only' }],
+        });
+        assert.equal(db.getOutput(o.id)?.sinks.length, 1);
     });
 
     test('deleteOutput removes the output', () => {
         const db = makeDb();
         const p = db.createPipeline();
-        const o = db.createOutput({ pipelineId: p.id, name: 'X', url: 'rtmp://x' });
+        const o = db.createOutput({ pipelineId: p.id, name: 'X', sinks: [{ url: 'rtmp://x' }] });
         assert.ok(db.deleteOutput(o.id));
         assert.equal(db.getOutput(o.id), undefined);
     });
@@ -161,7 +217,7 @@ describe('Output CRUD', () => {
     test('deleting a pipeline cascades to its outputs', () => {
         const db = makeDb();
         const p = db.createPipeline();
-        const o = db.createOutput({ pipelineId: p.id, name: 'X', url: 'rtmp://x' });
+        const o = db.createOutput({ pipelineId: p.id, name: 'X', sinks: [{ url: 'rtmp://x' }] });
         db.deletePipeline(p.id);
         assert.equal(db.getOutput(o.id), undefined);
     });

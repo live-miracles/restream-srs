@@ -1,5 +1,5 @@
 export const ENCODINGS: Record<string, string[]> = {
-    source: ['-c', 'copy'],
+    copy: ['-c', 'copy'],
     '720p': [
         '-vf',
         'scale=1280:720',
@@ -49,17 +49,28 @@ function buildAudioMapArgs(audioTrack: string): string[] {
     return args;
 }
 
+export interface SinkSpec {
+    url: string;
+    audioEncoding: string;
+}
+
+// Build a single ffmpeg command that pulls the input once and fans it out to
+// every sink. The shared video encoding is applied per sink; each sink picks its
+// own audio track(s) via -map. SRT sinks use mpegts, everything else uses flv.
 export function buildFfmpegArgs(
     inputUrl: string,
-    outputUrl: string,
-    videoEncoding = 'source',
-    audioEncoding = 'copy',
+    sinks: SinkSpec[],
+    videoEncoding = 'copy',
 ): string[] {
-    const mapArgs = buildAudioMapArgs(audioEncoding);
-    const encArgs = ENCODINGS[videoEncoding] ?? ENCODINGS.source;
-    const isSrt = outputUrl.startsWith('srt://');
-    const outputArgs = isSrt ? ['-f', 'mpegts', outputUrl] : ['-f', 'flv', outputUrl];
-    return ['-i', inputUrl, ...mapArgs, ...encArgs, '-progress', 'pipe:1', ...outputArgs];
+    const encArgs = ENCODINGS[videoEncoding] ?? ENCODINGS.copy;
+    const args: string[] = ['-i', inputUrl, '-progress', 'pipe:1'];
+    for (const sink of sinks) {
+        const mapArgs = buildAudioMapArgs(sink.audioEncoding);
+        const isSrt = sink.url.startsWith('srt://');
+        const fmt = isSrt ? ['-f', 'mpegts'] : ['-f', 'flv'];
+        args.push(...mapArgs, ...encArgs, ...fmt, sink.url);
+    }
+    return args;
 }
 
 export function validateOutputUrl(url: string): boolean {

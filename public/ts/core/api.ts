@@ -1,4 +1,4 @@
-import type { ConfigData, HealthData, SystemMetrics } from '../types.js';
+import type { ConfigData, HealthData, OutputPayload, SystemMetrics } from '../types.js';
 
 let loadingCount = 0;
 
@@ -79,16 +79,11 @@ export const updatePipeline = (id: string, name: string, streamKeyId?: number) =
 export const deletePipeline = (id: string) =>
     apiRequest(`/api/pipelines/${id}`, { method: 'DELETE' });
 
-export const createOutput = (
-    pipelineId: string,
-    data: { name: string; url: string; videoEncoding: string; audioEncoding: string },
-) => apiRequest(`/api/pipelines/${pipelineId}/outputs`, { method: 'POST', body: data });
+export const createOutput = (pipelineId: string, data: OutputPayload) =>
+    apiRequest(`/api/pipelines/${pipelineId}/outputs`, { method: 'POST', body: data });
 
-export const updateOutput = (
-    pipelineId: string,
-    outId: string,
-    data: { name: string; url: string; videoEncoding: string; audioEncoding: string },
-) => apiRequest(`/api/pipelines/${pipelineId}/outputs/${outId}`, { method: 'POST', body: data });
+export const updateOutput = (pipelineId: string, outId: string, data: OutputPayload) =>
+    apiRequest(`/api/pipelines/${pipelineId}/outputs/${outId}`, { method: 'POST', body: data });
 
 export const deleteOutput = (pipelineId: string, outId: string) =>
     apiRequest(`/api/pipelines/${pipelineId}/outputs/${outId}`, { method: 'DELETE' });
@@ -99,9 +94,10 @@ export const startOutput = (pipelineId: string, outId: string) =>
 export const stopOutput = (pipelineId: string, outId: string) =>
     apiRequest(`/api/pipelines/${pipelineId}/outputs/${outId}/stop`, { method: 'POST' });
 
-export const startPreview = (pipelineId: string) =>
+export const startPreview = (pipelineId: string, audioTrack?: number | null) =>
     apiRequest<{ hlsUrl: string }>(`/api/pipelines/${pipelineId}/preview/start`, {
         method: 'POST',
+        body: { audioTrack: audioTrack ?? null },
     });
 
 export const stopPreview = (pipelineId: string) =>

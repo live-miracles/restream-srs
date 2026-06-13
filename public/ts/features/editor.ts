@@ -2,7 +2,7 @@ import * as api from '../core/api.js';
 import { state } from '../core/state.js';
 import { setUrlParam, maskStreamKey, withBusy } from '../core/utils.js';
 import { refreshAfterMutation } from './dashboard.js';
-import type { StreamKey } from '../types.js';
+import type { StreamKey, AudioTrackInfo, PullMethod } from '../types.js';
 
 // ── Settings ──────────────────────────────────────────
 
@@ -219,65 +219,123 @@ function detectServer(url: string): { idx: number; key: string } {
     return { idx: url.startsWith('srt://') ? 3 : 2, key: url };
 }
 
-function applyServerSelection(idx: number): void {
-    const s = SERVERS[idx];
-    const legend = document.getElementById('out-key-label');
-    const input = document.getElementById('out-key-input') as HTMLInputElement;
-    if (legend) legend.textContent = s.keyLabel;
-    if (input) input.placeholder = s.placeholder;
-}
-
-export function onOutServerChange(): void {
-    const select = document.getElementById('out-server-select') as HTMLSelectElement;
-    applyServerSelection(parseInt(select.value));
-}
-
 function outModal(): HTMLDialogElement {
     return document.getElementById('edit-out-modal') as HTMLDialogElement;
 }
 
 function outVideoEncodingOptions(selected: string): string {
-    const encodings = state.config.encodings ?? ['source', '720p', '1080p'];
+    const encodings = state.config.encodings ?? ['copy', '720p', '1080p'];
     return encodings
         .map((e) => `<option value="${e}" ${e === selected ? 'selected' : ''}>${e}</option>`)
         .join('');
 }
 
-function populateAudioEncodingSelect(pipelineId: string, currentAudioEncoding: string): void {
-    const pipeline = state.pipelines.find((p) => p.id === pipelineId);
-    const tracks = pipeline?.input.audioTracks ?? [];
-    const select = document.getElementById('out-audio-encoding-input') as HTMLSelectElement;
-    const container = document.getElementById('out-audio-encoding-container') as HTMLElement;
-    if (!select || !container) return;
-
-    const options = [
-        `<option value="copy"${currentAudioEncoding === 'copy' ? ' selected' : ''}>Copy (default)</option>`,
-    ];
-
-    if (tracks.length > 1) {
-        for (const t of tracks) {
-            const parts: string[] = [`Track ${t.index + 1}`];
-            if (t.language) parts.push(`(${t.language})`);
-            if (t.title) parts.push(`— ${t.title}`);
-            parts.push(`· ${t.codec} ${t.channels}ch`);
-            const val = String(t.index);
-            options.push(
-                `<option value="${val}"${currentAudioEncoding === val ? ' selected' : ''}>${parts.join(' ')}</option>`,
-            );
-        }
-        container.classList.remove('hidden');
-    } else if (currentAudioEncoding !== 'copy') {
-        container.classList.remove('hidden');
-    } else {
-        container.classList.add('hidden');
-    }
-
-    select.innerHTML = options.join('');
+function escapeAttr(value: string): string {
+    return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }
 
-function clearOutErrors(): void {
-    (document.getElementById('out-name-input') as HTMLInputElement).classList.remove('input-error');
-    (document.getElementById('out-key-input') as HTMLInputElement).classList.remove('input-error');
+// Tracks for the pipeline whose output modal is currently open. Captured when the
+// modal opens so the global add-sink handler can build new rows with the same list.
+let currentSinkTracks: AudioTrackInfo[] = [];
+
+// Build the audio-track <option>s for one sink. Always preserves the currently
+// selected track even when the input is offline / unprobed (so editing a saved
+// output doesn't silently reset its track to copy).
+function audioOptionsHtml(tracks: AudioTrackInfo[], selected: string): string {
+    const seen = new Set<string>(['copy']);
+    const options = [
+        `<option value="copy"${selected === 'copy' ? ' selected' : ''}>Copy (default)</option>`,
+    ];
+    for (const t of tracks) {
+        const val = String(t.index);
+        seen.add(val);
+        const parts = [`Track ${t.index + 1}`];
+        if (t.language) parts.push(`(${t.language})`);
+        if (t.title) parts.push(`— ${t.title}`);
+        parts.push(`· ${t.codec} ${t.channels}ch`);
+        options.push(
+            `<option value="${val}"${selected === val ? ' selected' : ''}>${parts.join(' ')}</option>`,
+        );
+    }
+    if (selected !== 'copy' && !seen.has(selected)) {
+        options.push(`<option value="${selected}" selected>Track ${Number(selected) + 1}</option>`);
+    }
+    return options.join('');
+}
+
+function sinkRowHtml(tracks: AudioTrackInfo[], url = '', audioEncoding = 'copy'): string {
+    const { idx, key } = url ? detectServer(url) : { idx: 0, key: '' };
+    const server = SERVERS[idx];
+    const serverOpts = SERVERS.map(
+        (s, i) => `<option value="${i}"${i === idx ? ' selected' : ''}>${s.label}</option>`,
+    ).join('');
+    return `
+    <div class="js-sink-row flex items-end gap-2 rounded-box bg-base-200 p-2">
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Server</legend>
+        <select class="select select-sm js-sink-server" onchange="outSinkServerChange(this)">${serverOpts}</select>
+      </fieldset>
+      <fieldset class="fieldset flex-1">
+        <legend class="fieldset-legend js-sink-key-label">${server.keyLabel}</legend>
+        <input type="text" class="input input-sm w-full font-mono text-xs js-sink-key"
+               placeholder="${server.placeholder}" value="${escapeAttr(key)}"
+               oninput="this.classList.remove('input-error')" />
+      </fieldset>
+      <fieldset class="fieldset w-36">
+        <legend class="fieldset-legend">Audio</legend>
+        <select class="select select-sm w-full js-sink-audio">${audioOptionsHtml(tracks, audioEncoding)}</select>
+      </fieldset>
+      <button type="button" class="btn btn-sm btn-ghost text-error js-sink-remove"
+              onclick="outRemoveSink(this)" title="Remove destination">✕</button>
+    </div>`;
+}
+
+function updateSinkRemoveButtons(): void {
+    const rows = document.querySelectorAll('#out-sinks-container .js-sink-row');
+    rows.forEach((row) => {
+        const btn = row.querySelector('.js-sink-remove') as HTMLButtonElement | null;
+        if (btn) btn.disabled = rows.length <= 1;
+    });
+}
+
+function populateSinks(
+    tracks: AudioTrackInfo[],
+    sinks: { url: string; audioEncoding: string }[],
+): void {
+    currentSinkTracks = tracks;
+    const container = document.getElementById('out-sinks-container');
+    if (!container) return;
+    const rows = sinks.length ? sinks : [{ url: '', audioEncoding: 'copy' }];
+    container.innerHTML = rows.map((s) => sinkRowHtml(tracks, s.url, s.audioEncoding)).join('');
+    updateSinkRemoveButtons();
+}
+
+export function addSinkRow(): void {
+    const container = document.getElementById('out-sinks-container');
+    if (!container) return;
+    container.insertAdjacentHTML('beforeend', sinkRowHtml(currentSinkTracks));
+    updateSinkRemoveButtons();
+}
+
+export function removeSinkRow(btn: HTMLElement): void {
+    const rows = document.querySelectorAll('#out-sinks-container .js-sink-row');
+    if (rows.length <= 1) return;
+    btn.closest('.js-sink-row')?.remove();
+    updateSinkRemoveButtons();
+}
+
+export function onSinkServerChange(select: HTMLSelectElement): void {
+    const row = select.closest('.js-sink-row');
+    if (!row) return;
+    const s = SERVERS[parseInt(select.value)];
+    const label = row.querySelector('.js-sink-key-label') as HTMLElement | null;
+    const input = row.querySelector('.js-sink-key') as HTMLInputElement | null;
+    if (label) label.textContent = s.keyLabel;
+    if (input) input.placeholder = s.placeholder;
+}
+
+function pipelineTracks(pipelineId: string): AudioTrackInfo[] {
+    return state.pipelines.find((p) => p.id === pipelineId)?.input.audioTracks ?? [];
 }
 
 export function openAddOutput(pipelineId: string): void {
@@ -287,15 +345,13 @@ export function openAddOutput(pipelineId: string): void {
     ).length;
     (document.getElementById('out-pipe-id-input') as HTMLInputElement).value = pipelineId;
     (document.getElementById('out-id-input') as HTMLInputElement).value = '';
-    (document.getElementById('out-name-input') as HTMLInputElement).value =
-        `Output ${existingCount + 1}`;
-    (document.getElementById('out-server-select') as HTMLSelectElement).value = '0';
-    (document.getElementById('out-key-input') as HTMLInputElement).value = '';
-    clearOutErrors();
-    applyServerSelection(0);
+    const nameEl = document.getElementById('out-name-input') as HTMLInputElement;
+    nameEl.value = `Output ${existingCount + 1}`;
+    nameEl.classList.remove('input-error');
+    (document.getElementById('out-pull-method-input') as HTMLSelectElement).value = 'rtmp';
     (document.getElementById('out-video-encoding-input') as HTMLSelectElement).innerHTML =
-        outVideoEncodingOptions('source');
-    populateAudioEncodingSelect(pipelineId, 'copy');
+        outVideoEncodingOptions('copy');
+    populateSinks(pipelineTracks(pipelineId), []);
     (document.getElementById('out-modal-title') as HTMLElement).textContent = 'Add Output';
     (document.getElementById('out-save-btn') as HTMLButtonElement).disabled = false;
     (document.getElementById('out-running-hint') as HTMLElement).classList.add('hidden');
@@ -307,18 +363,17 @@ export function openEditOutput(pipelineId: string, outId: string): void {
         (o) => o.id === outId && String(o.pipelineId) === pipelineId,
     );
     if (!output) return;
-    const { idx, key } = detectServer(output.url);
     const modal = outModal();
     (document.getElementById('out-pipe-id-input') as HTMLInputElement).value = pipelineId;
     (document.getElementById('out-id-input') as HTMLInputElement).value = outId;
-    (document.getElementById('out-name-input') as HTMLInputElement).value = output.name;
-    (document.getElementById('out-server-select') as HTMLSelectElement).value = String(idx);
-    (document.getElementById('out-key-input') as HTMLInputElement).value = key;
-    clearOutErrors();
-    applyServerSelection(idx);
+    const nameEl = document.getElementById('out-name-input') as HTMLInputElement;
+    nameEl.value = output.name;
+    nameEl.classList.remove('input-error');
+    (document.getElementById('out-pull-method-input') as HTMLSelectElement).value =
+        output.pullMethod;
     (document.getElementById('out-video-encoding-input') as HTMLSelectElement).innerHTML =
         outVideoEncodingOptions(output.videoEncoding);
-    populateAudioEncodingSelect(pipelineId, output.audioEncoding);
+    populateSinks(pipelineTracks(pipelineId), output.sinks);
     (document.getElementById('out-modal-title') as HTMLElement).textContent = 'Edit Output';
 
     const pipeline = state.pipelines.find((p) => p.id === pipelineId);
@@ -336,29 +391,40 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
         document.getElementById('out-pipe-id-input') as HTMLInputElement
     ).value.trim();
     const outId = (document.getElementById('out-id-input') as HTMLInputElement).value.trim();
-    const name = (document.getElementById('out-name-input') as HTMLInputElement).value.trim();
-    const serverIdx = parseInt(
-        (document.getElementById('out-server-select') as HTMLSelectElement).value,
-    );
-    const key = (document.getElementById('out-key-input') as HTMLInputElement).value.trim();
-    const url = SERVERS[serverIdx].prefix + key;
-    const videoEncoding = (
-        document.getElementById('out-video-encoding-input') as HTMLSelectElement
-    ).value;
-    const audioEncoding = (
-        document.getElementById('out-audio-encoding-input') as HTMLSelectElement
-    ).value;
-
     const nameEl = document.getElementById('out-name-input') as HTMLInputElement;
-    const keyEl = document.getElementById('out-key-input') as HTMLInputElement;
+    const name = nameEl.value.trim();
     nameEl.classList.toggle('input-error', !name);
-    keyEl.classList.toggle('input-error', !key);
-    if (!name || !key) return;
+
+    const videoEncoding = (document.getElementById('out-video-encoding-input') as HTMLSelectElement)
+        .value;
+    const pullMethod = (document.getElementById('out-pull-method-input') as HTMLSelectElement)
+        .value as PullMethod;
+
+    const rows = Array.from(document.querySelectorAll('#out-sinks-container .js-sink-row'));
+    const sinks: { url: string; audioEncoding: string }[] = [];
+    let sinksValid = true;
+    for (const row of rows) {
+        const serverIdx = parseInt(
+            (row.querySelector('.js-sink-server') as HTMLSelectElement).value,
+        );
+        const keyEl = row.querySelector('.js-sink-key') as HTMLInputElement;
+        const key = keyEl.value.trim();
+        const audioEncoding = (row.querySelector('.js-sink-audio') as HTMLSelectElement).value;
+        keyEl.classList.toggle('input-error', !key);
+        if (!key) {
+            sinksValid = false;
+            continue;
+        }
+        sinks.push({ url: SERVERS[serverIdx].prefix + key, audioEncoding });
+    }
+
+    if (!name || !sinksValid || sinks.length === 0) return;
 
     await withBusy(btn, async () => {
+        const payload = { name, videoEncoding, pullMethod, sinks };
         const result = outId
-            ? await api.updateOutput(pipelineId, outId, { name, url, videoEncoding, audioEncoding })
-            : await api.createOutput(pipelineId, { name, url, videoEncoding, audioEncoding });
+            ? await api.updateOutput(pipelineId, outId, payload)
+            : await api.createOutput(pipelineId, payload);
         if (result) {
             outModal().close();
             await refreshAfterMutation();

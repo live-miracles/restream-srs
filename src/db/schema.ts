@@ -19,21 +19,39 @@ export function setupDatabaseSchema(db: Database.Database): void {
         )`,
     ).run();
 
+    // One output = one ffmpeg process that pulls the input once and fans out to
+    // one or more sinks (output_sinks). pull_method selects how that single input
+    // is pulled from SRS (rtmp collapses to one audio track; srt preserves all).
     db.prepare(
         `CREATE TABLE IF NOT EXISTS outputs (
             id              TEXT PRIMARY KEY,
             pipeline_id     INTEGER NOT NULL,
             seq             INTEGER NOT NULL,
             name            TEXT NOT NULL,
-            url             TEXT NOT NULL,
             desired_state   TEXT NOT NULL DEFAULT 'stopped',
-            encoding        TEXT NOT NULL DEFAULT 'source',
-            audio_encoding  TEXT NOT NULL DEFAULT 'copy',
+            encoding        TEXT NOT NULL DEFAULT 'copy',
+            pull_method     TEXT NOT NULL DEFAULT 'rtmp',
             FOREIGN KEY(pipeline_id) REFERENCES pipelines(id) ON DELETE CASCADE
         )`,
     ).run();
 
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_outputs_pipeline ON outputs(pipeline_id)`).run();
+
+    // Each sink is a single destination URL with its own audio track selection.
+    db.prepare(
+        `CREATE TABLE IF NOT EXISTS output_sinks (
+            id              TEXT PRIMARY KEY,
+            output_id       TEXT NOT NULL,
+            seq             INTEGER NOT NULL,
+            url             TEXT NOT NULL,
+            audio_encoding  TEXT NOT NULL DEFAULT 'copy',
+            FOREIGN KEY(output_id) REFERENCES outputs(id) ON DELETE CASCADE
+        )`,
+    ).run();
+
+    db.prepare(
+        `CREATE INDEX IF NOT EXISTS idx_output_sinks_output ON output_sinks(output_id)`,
+    ).run();
 
     db.prepare(
         `CREATE TABLE IF NOT EXISTS settings (
@@ -41,14 +59,4 @@ export function setupDatabaseSchema(db: Database.Database): void {
             value TEXT NOT NULL
         )`,
     ).run();
-
-    // Add audio_encoding to outputs if upgrading from an older schema
-    const outCols = (db.prepare(`PRAGMA table_info(outputs)`).all() as { name: string }[]).map(
-        (c) => c.name,
-    );
-    if (!outCols.includes('audio_encoding')) {
-        db.prepare(
-            `ALTER TABLE outputs ADD COLUMN audio_encoding TEXT NOT NULL DEFAULT 'copy'`,
-        ).run();
-    }
 }

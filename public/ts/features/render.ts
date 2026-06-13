@@ -245,7 +245,8 @@ function renderOverview(): void {
                   ? `<span class="badge badge-sm badge-warning">Low Bitrate</span>`
                   : `<span class="badge badge-sm badge-success">Live</span>`;
             const audioTracks = inp.audioTracks.length > 0 ? inp.audioTracks : null;
-            const rowspan = audioTracks && audioTracks.length > 1 ? ` rowspan="${audioTracks.length}"` : '';
+            const rowspan =
+                audioTracks && audioTracks.length > 1 ? ` rowspan="${audioTracks.length}"` : '';
             const rowAttr = `class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(false, isWarn)}`;
             const sharedCells = `
                 <td class="font-semibold"${rowspan}>${p.name}</td>
@@ -257,14 +258,19 @@ function renderOverview(): void {
                 <td class="font-mono text-xs"${rowspan}>${inp.video ? `${inp.video.width}×${inp.video.height}` : '—'}</td>
                 <td class="font-mono text-xs"${rowspan}>${inp.video?.fps ?? '—'}</td>`;
             if (audioTracks && audioTracks.length > 1) {
-                inputRows += audioTracks.map((t, i) => {
-                    const label = t.title || t.language ? ` <span class="opacity-40 text-xs">${[t.language, t.title].filter(Boolean).join(' ')}</span>` : '';
-                    return `<tr ${rowAttr}>${i === 0 ? sharedCells : ''}
+                inputRows += audioTracks
+                    .map((t, i) => {
+                        const label =
+                            t.title || t.language
+                                ? ` <span class="opacity-40 text-xs">${[t.language, t.title].filter(Boolean).join(' ')}</span>`
+                                : '';
+                        return `<tr ${rowAttr}>${i === 0 ? sharedCells : ''}
                         <td class="font-mono text-xs">${t.codec || '—'}${label}</td>
                         <td class="font-mono text-xs">${t.channels || '—'}</td>
                         <td class="font-mono text-xs">${t.sampleRate ? fmtHz(t.sampleRate) : '—'}</td>
                     </tr>`;
-                }).join('');
+                    })
+                    .join('');
             } else {
                 const t = audioTracks?.[0] ?? null;
                 inputRows += `<tr ${rowAttr}>${sharedCells}
@@ -299,7 +305,7 @@ function renderOverview(): void {
                               : `<span class="badge badge-sm badge-error">Failed</span>`;
 
                 const isOn = o.status === 'running';
-                const src = isOn && o.videoEncoding === 'source' ? p.input : null;
+                const src = isOn && o.videoEncoding === 'copy' ? p.input : null;
                 outputRows += `<tr class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(st === 'error', st === 'warn')}>
                     <td><span class="opacity-40 text-xs">${p.name} ·</span> ${o.name}</td>
                     <td>${badge}${o.retries > 0 ? ` <span class="font-mono text-xs opacity-60">↺${o.retries}</span>` : ''}</td>
@@ -418,14 +424,10 @@ function renderOutputCard(o: OutputView, inputLive: boolean): string {
                 ? 'status-error'
                 : 'status-neutral';
     const uptimeMs = st === 'good' && o.startedAtMs !== null ? Date.now() - o.startedAtMs : null;
-    const badges = [`<span class="badge badge-sm whitespace-nowrap">${o.videoEncoding}</span>`];
-    if (o.audioEncoding !== 'copy') {
-        const trackLabel = o.audioEncoding
-            .split(',')
-            .map((t) => `A${parseInt(t) + 1}`)
-            .join('+');
-        badges.push(`<span class="badge badge-sm badge-info whitespace-nowrap">${trackLabel}</span>`);
-    }
+    const badges = [
+        `<span class="badge badge-sm whitespace-nowrap">${o.videoEncoding}</span>`,
+        `<span class="badge badge-sm badge-ghost whitespace-nowrap" title="Input pull method">${o.pullMethod.toUpperCase()}</span>`,
+    ];
     if (uptimeMs !== null) {
         badges.push(
             `<span class="font-mono text-xs opacity-60 whitespace-nowrap">${formatUptime(uptimeMs)}</span>`,
@@ -441,21 +443,36 @@ function renderOutputCard(o: OutputView, inputLive: boolean): string {
             `<span class="badge badge-sm whitespace-nowrap">${formatBitrate(o.bitrateKbps)}</span>`,
         );
     }
+    const sinksHtml = o.sinks
+        .map((s) => {
+            const trackBadge =
+                s.audioEncoding !== 'copy'
+                    ? ` <span class="badge badge-xs badge-info whitespace-nowrap">${s.audioEncoding
+                          .split(',')
+                          .map((t) => `A${parseInt(t) + 1}`)
+                          .join('+')}</span>`
+                    : '';
+            return `<div class="flex items-center gap-1 min-w-0">
+                <code class="text-xs font-normal opacity-60 truncate min-w-0" title="${s.url}">${s.url}</code>${trackBadge}
+            </div>`;
+        })
+        .join('');
     const isPending = pendingOutputs.has(o.id);
     return `
     <div class="bg-base-100 px-3 py-2 shadow rounded-box w-full flex gap-2 items-start">
-        <div class="min-w-0 flex-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-            <div class="flex items-center gap-2 shrink-0 font-semibold">
-                <div aria-label="status" class="status status-lg ${statusClass} mx-1"></div>
-                <button class="btn btn-xs ${isStopped ? 'btn-accent' : 'btn-accent btn-outline'}"
-                    data-action="${isStopped ? 'start' : 'stop'}" data-out-id="${o.id}"${isPending ? ' disabled' : ''}>
-                    ${isStopped ? 'Start' : 'Stop'}
-                </button>
-                <span>${o.name}</span>
+        <div class="min-w-0 flex-1 space-y-1">
+            <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <div class="flex items-center gap-2 shrink-0 font-semibold">
+                    <div aria-label="status" class="status status-lg ${statusClass} mx-1"></div>
+                    <button class="btn btn-xs ${isStopped ? 'btn-accent' : 'btn-accent btn-outline'}"
+                        data-action="${isStopped ? 'start' : 'stop'}" data-out-id="${o.id}"${isPending ? ' disabled' : ''}>
+                        ${isStopped ? 'Start' : 'Stop'}
+                    </button>
+                    <span>${o.name}</span>
+                </div>
+                ${badges.join('')}
             </div>
-            <code class="text-sm font-normal opacity-60 truncate shrink min-w-0"
-                  style="max-width:min(28rem,40%)" title="${o.url}">${o.url}</code>
-            ${badges.join('')}
+            <div class="space-y-0.5 pl-2">${sinksHtml}</div>
         </div>
         <div class="flex items-center gap-1 shrink-0">
             <button class="btn btn-xs btn-ghost" data-action="edit" data-out-id="${o.id}">${ICON_PENCIL}</button>
@@ -573,6 +590,51 @@ export function attachHls(pipelineId: string, hlsUrl: string): void {
     }
 }
 
+export function selectedPreviewTrack(): number | null {
+    const sel = document.getElementById('preview-audio-select') as HTMLSelectElement | null;
+    if (!sel || sel.value === '') return null;
+    const n = parseInt(sel.value);
+    return Number.isNaN(n) ? null : n;
+}
+
+// Restart the running preview with the newly selected audio track. No-op while
+// the preview is stopped — the choice is applied when the user hits Play.
+export function previewTrackChange(): void {
+    const pid = previewPipelineId;
+    if (!pid) return;
+    const track = selectedPreviewTrack();
+    void (async () => {
+        const { stopPreview, startPreview } = await import('../core/api.js');
+        teardownHls();
+        await stopPreview(pid);
+        const result = await startPreview(pid, track);
+        if (result?.hlsUrl) attachHls(pid, result.hlsUrl);
+    })();
+}
+
+function populatePreviewTrackSelect(pipeline: PipelineView): void {
+    const sel = document.getElementById('preview-audio-select') as HTMLSelectElement | null;
+    if (!sel) return;
+    const tracks = pipeline.input.audioTracks;
+    if (tracks.length <= 1) {
+        sel.classList.add('hidden');
+        sel.innerHTML = '';
+        return;
+    }
+    const prev = sel.value;
+    const opts = ['<option value="">Audio: default</option>'];
+    for (const t of tracks) {
+        const label = [t.language, t.title].filter(Boolean).join(' ');
+        opts.push(
+            `<option value="${t.index}">Track ${t.index + 1}${label ? ` (${label})` : ''}</option>`,
+        );
+    }
+    sel.innerHTML = opts.join('');
+    // Preserve the user's selection across re-renders.
+    if (prev && tracks.some((t) => String(t.index) === prev)) sel.value = prev;
+    sel.classList.remove('hidden');
+}
+
 function renderPreview(pipeline: PipelineView): void {
     const section = document.getElementById('preview-section');
     if (!section) return;
@@ -586,6 +648,8 @@ function renderPreview(pipeline: PipelineView): void {
     section.classList.remove('hidden');
 
     if (previewPipelineId && previewPipelineId !== pipeline.id) stopCurrentPreview();
+
+    populatePreviewTrackSelect(pipeline);
 
     const isActive = previewPipelineId === pipeline.id;
     document.getElementById('preview-play-btn')?.classList.toggle('hidden', isActive);

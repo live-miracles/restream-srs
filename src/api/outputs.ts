@@ -1,7 +1,36 @@
 import type { Express } from 'express';
 import { validateOutputUrl, validateAudioEncoding, ENCODINGS } from '../utils/ffmpeg.js';
-import type { Db } from '../types.js';
+import type { Db, PullMethod, SinkInput } from '../types.js';
 import type { OutputService } from '../services/outputs.js';
+
+function parsePullMethod(value: unknown): PullMethod {
+    return value === 'srt' ? 'srt' : 'rtmp';
+}
+
+// Validate the sinks array from the request body. Each sink needs a valid URL
+// and audio track selection; multiple tracks are only valid for SRT sinks since
+// FLV/RTMP carries a single audio stream.
+function parseSinks(raw: unknown): { sinks: SinkInput[] } | { error: string } {
+    if (!Array.isArray(raw) || raw.length === 0) {
+        return { error: 'at least one sink is required' };
+    }
+    const sinks: SinkInput[] = [];
+    for (const item of raw) {
+        const url = (item?.url as string | undefined)?.trim();
+        if (!url || !validateOutputUrl(url)) {
+            return { error: 'each sink needs a valid url (rtmp://, rtmps://, srt://)' };
+        }
+        const audioEncoding = validateAudioEncoding(item?.audioEncoding);
+        if (audioEncoding === null) {
+            return { error: `invalid audioEncoding for sink ${url}` };
+        }
+        if (!url.startsWith('srt://') && audioEncoding.includes(',')) {
+            return { error: 'multiple audio tracks require an SRT sink' };
+        }
+        sinks.push({ url, audioEncoding });
+    }
+    return { sinks };
+}
 
 export function registerOutputApi(app: Express, db: Db, outputService: OutputService): void {
     app.post('/api/pipelines/:pipelineId/outputs', (req, res) => {
@@ -11,21 +40,22 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
             return res.status(404).json({ error: 'Pipeline not found' });
 
         const name = (req.body?.name as string | undefined)?.trim();
-        const url = (req.body?.url as string | undefined)?.trim();
-        const videoEncoding = (req.body?.videoEncoding as string | undefined)?.trim() || 'source';
-        const audioEncoding = validateAudioEncoding(req.body?.audioEncoding);
+        const videoEncoding = (req.body?.videoEncoding as string | undefined)?.trim() || 'copy';
+        const pullMethod = parsePullMethod(req.body?.pullMethod);
+        const parsed = parseSinks(req.body?.sinks);
 
         if (!name) return res.status(400).json({ error: 'name is required' });
-        if (!url || !validateOutputUrl(url))
-            return res
-                .status(400)
-                .json({ error: 'valid url is required (rtmp://, rtmps://, srt://)' });
         if (!ENCODINGS[videoEncoding])
             return res.status(400).json({ error: `unknown videoEncoding: ${videoEncoding}` });
-        if (audioEncoding === null)
-            return res.status(400).json({ error: 'invalid audioEncoding value' });
+        if ('error' in parsed) return res.status(400).json({ error: parsed.error });
 
-        const output = db.createOutput({ pipelineId, name, url, videoEncoding, audioEncoding });
+        const output = db.createOutput({
+            pipelineId,
+            name,
+            videoEncoding,
+            pullMethod,
+            sinks: parsed.sinks,
+        });
         return res.status(201).json(output);
     });
 
@@ -37,21 +67,22 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
         }
 
         const name = (req.body?.name as string | undefined)?.trim() ?? output.name;
-        const url = (req.body?.url as string | undefined)?.trim() ?? output.url;
         const videoEncoding =
             (req.body?.videoEncoding as string | undefined)?.trim() ?? output.videoEncoding;
-        const audioEncoding = validateAudioEncoding(
-            req.body?.audioEncoding ?? output.audioEncoding,
-        );
+        const pullMethod = parsePullMethod(req.body?.pullMethod ?? output.pullMethod);
+        const parsed = parseSinks(req.body?.sinks);
 
         if (!name) return res.status(400).json({ error: 'name is required' });
-        if (!validateOutputUrl(url)) return res.status(400).json({ error: 'valid url required' });
         if (!ENCODINGS[videoEncoding])
             return res.status(400).json({ error: `unknown videoEncoding: ${videoEncoding}` });
-        if (audioEncoding === null)
-            return res.status(400).json({ error: 'invalid audioEncoding value' });
+        if ('error' in parsed) return res.status(400).json({ error: parsed.error });
 
-        const updated = db.updateOutput(outId, { name, url, videoEncoding, audioEncoding });
+        const updated = db.updateOutput(outId, {
+            name,
+            videoEncoding,
+            pullMethod,
+            sinks: parsed.sinks,
+        });
         return res.json(updated);
     });
 

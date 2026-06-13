@@ -13,15 +13,35 @@ export interface Pipeline {
     srtPublishUrl: string;
 }
 
+export type PullMethod = 'rtmp' | 'srt';
+
+export interface OutputSink {
+    seq: number;
+    url: string;
+    audioEncoding: string;
+}
+
 export interface Output {
     id: string;
     pipelineId: string;
     seq: number;
     name: string;
-    url: string;
     desiredState: 'running' | 'stopped';
     videoEncoding: string;
+    pullMethod: PullMethod;
+    sinks: OutputSink[];
+}
+
+export interface SinkPayload {
+    url: string;
     audioEncoding: string;
+}
+
+export interface OutputPayload {
+    name: string;
+    videoEncoding: string;
+    pullMethod: PullMethod;
+    sinks: SinkPayload[];
 }
 
 export interface VideoInfo {

@@ -141,7 +141,12 @@ export function createHealthService(db: Db, outputService: OutputService) {
         ffprobeResults.delete(pipelineId);
     }
 
-    function scheduleFfprobe(pipelineId: number, streamKey: string, isSrt: boolean, attempt = 0): void {
+    function scheduleFfprobe(
+        pipelineId: number,
+        streamKey: string,
+        isSrt: boolean,
+        attempt = 0,
+    ): void {
         if (attempt >= FFPROBE_DELAYS_MS.length) return;
         const url = isSrt ? srtPullUrl(streamKey) : rtmpPullUrl(streamKey);
         const entry: { timer: NodeJS.Timeout | null; attempt: number } = { timer: null, attempt };

@@ -1,8 +1,12 @@
 import { spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
 import { buildFfmpegArgs, validateOutputUrl } from '../utils/ffmpeg.js';
-import { rtmpPullUrl } from '../utils/srs.js';
+import { rtmpPullUrl, srtPullUrl } from '../utils/srs.js';
 import type { Db, Output } from '../types.js';
+
+function hasValidSinks(output: Output): boolean {
+    return output.sinks.length > 0 && output.sinks.every((s) => validateOutputUrl(s.url));
+}
 
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000];
 const MAX_RETRIES = 100;
@@ -136,12 +140,17 @@ export function createOutputService(db: Db): OutputService {
     }
 
     async function startJob(output: Output): Promise<void> {
-        if (!validateOutputUrl(output.url)) throw new Error('Invalid output URL');
+        if (!hasValidSinks(output)) throw new Error('Invalid output URL');
 
         const pipeline = db.getPipeline(output.pipelineId);
         if (!pipeline) throw new Error('Pipeline not found');
-        const inputUrl = rtmpPullUrl(pipeline.streamKey);
-        const args = buildFfmpegArgs(inputUrl, output.url, output.videoEncoding, output.audioEncoding);
+        // Pull the input over the configured protocol. SRT preserves every audio
+        // track from a multitrack source; RTMP/FLV collapses to a single track.
+        const inputUrl =
+            output.pullMethod === 'srt'
+                ? srtPullUrl(pipeline.streamKey)
+                : rtmpPullUrl(pipeline.streamKey);
+        const args = buildFfmpegArgs(inputUrl, output.sinks, output.videoEncoding);
 
         const child: ChildProcess = spawn(FFMPEG_CMD, args, {
             stdio: ['ignore', 'pipe', 'ignore'],
@@ -192,7 +201,7 @@ export function createOutputService(db: Db): OutputService {
             if (statuses.get(outputId)?.status === 'running') return;
             const output = db.getOutput(outputId);
             if (!output) throw new Error('Output not found');
-            if (!validateOutputUrl(output.url)) throw new Error('Invalid output URL');
+            if (!hasValidSinks(output)) throw new Error('Invalid output URL');
             exhausted.delete(outputId);
             clearRetry(outputId);
             getRetry(outputId).failures = 0;

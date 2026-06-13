@@ -2,7 +2,15 @@ import BetterSqlite3 from 'better-sqlite3';
 import crypto from 'crypto';
 import path from 'path';
 import { setupDatabaseSchema } from './schema.js';
-import type { Pipeline, Output, StreamKey, Db } from '../types.js';
+import type {
+    Pipeline,
+    Output,
+    OutputSink,
+    PullMethod,
+    SinkInput,
+    StreamKey,
+    Db,
+} from '../types.js';
 
 const PIPELINE_SELECT = `
     SELECT p.id, p.name, p.stream_key_id, COALESCE(sk.key, '') as stream_key
@@ -18,19 +26,6 @@ function rowToPipeline(row: Record<string, unknown>): Pipeline {
         name: row.name as string,
         streamKey: row.stream_key as string,
         streamKeyId: row.stream_key_id as number,
-    };
-}
-
-function rowToOutput(row: Record<string, unknown>): Output {
-    return {
-        id: row.id as string,
-        pipelineId: row.pipeline_id as number,
-        seq: row.seq as number,
-        name: row.name as string,
-        url: row.url as string,
-        desiredState: row.desired_state as 'running' | 'stopped',
-        videoEncoding: (row.encoding as string) || 'source',
-        audioEncoding: (row.audio_encoding as string) || 'copy',
     };
 }
 
@@ -54,6 +49,48 @@ export function createDb(dbPath?: string): Db {
 
     const stmtGetPipeline = sqlite.prepare(`${PIPELINE_SELECT} WHERE p.id = ?`);
     const stmtGetOutput = sqlite.prepare('SELECT * FROM outputs WHERE id = ?');
+    const stmtListSinks = sqlite.prepare(
+        'SELECT seq, url, audio_encoding FROM output_sinks WHERE output_id = ? ORDER BY seq',
+    );
+    const stmtDeleteSinks = sqlite.prepare('DELETE FROM output_sinks WHERE output_id = ?');
+    const stmtInsertSink = sqlite.prepare(
+        'INSERT INTO output_sinks (id, output_id, seq, url, audio_encoding) VALUES (?, ?, ?, ?, ?)',
+    );
+
+    function sinksFor(outputId: string): OutputSink[] {
+        return (stmtListSinks.all(outputId) as Record<string, unknown>[]).map((r) => ({
+            seq: r.seq as number,
+            url: r.url as string,
+            audioEncoding: (r.audio_encoding as string) || 'copy',
+        }));
+    }
+
+    function insertSinks(outputId: string, sinks: SinkInput[]): void {
+        sinks.forEach((s, i) => {
+            const seq = i + 1;
+            stmtInsertSink.run(
+                `${outputId}:${seq}`,
+                outputId,
+                seq,
+                s.url,
+                s.audioEncoding ?? 'copy',
+            );
+        });
+    }
+
+    function rowToOutput(row: Record<string, unknown>): Output {
+        const id = row.id as string;
+        return {
+            id,
+            pipelineId: row.pipeline_id as number,
+            seq: row.seq as number,
+            name: row.name as string,
+            desiredState: row.desired_state as 'running' | 'stopped',
+            videoEncoding: (row.encoding as string) || 'copy',
+            pullMethod: (row.pull_method as PullMethod) || 'rtmp',
+            sinks: sinksFor(id),
+        };
+    }
 
     function nextPipelineId(): number {
         const ids = new Set(
@@ -164,9 +201,9 @@ export function createDb(dbPath?: string): Db {
         createOutput({
             pipelineId,
             name,
-            url,
-            videoEncoding = 'source',
-            audioEncoding = 'copy',
+            videoEncoding = 'copy',
+            pullMethod = 'rtmp',
+            sinks,
         }): Output {
             const seqRow = sqlite
                 .prepare(
@@ -175,11 +212,15 @@ export function createDb(dbPath?: string): Db {
                 .get(pipelineId) as { next_seq: number };
             const seq = seqRow.next_seq;
             const id = `${pipelineId}-${seq}`;
-            sqlite
-                .prepare(
-                    'INSERT INTO outputs (id, pipeline_id, seq, name, url, desired_state, encoding, audio_encoding) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                )
-                .run(id, pipelineId, seq, name, url, 'stopped', videoEncoding, audioEncoding);
+            const create = sqlite.transaction(() => {
+                sqlite
+                    .prepare(
+                        'INSERT INTO outputs (id, pipeline_id, seq, name, desired_state, encoding, pull_method) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    )
+                    .run(id, pipelineId, seq, name, 'stopped', videoEncoding, pullMethod);
+                insertSinks(id, sinks);
+            });
+            create();
             return rowToOutput(stmtGetOutput.get(id) as Record<string, unknown>);
         },
 
@@ -205,12 +246,17 @@ export function createDb(dbPath?: string): Db {
             ).map(rowToOutput);
         },
 
-        updateOutput(id: string, { name, url, videoEncoding, audioEncoding }): Output | null {
-            sqlite
-                .prepare(
-                    'UPDATE outputs SET name = ?, url = ?, encoding = ?, audio_encoding = ? WHERE id = ?',
-                )
-                .run(name, url, videoEncoding, audioEncoding, id);
+        updateOutput(id: string, { name, videoEncoding, pullMethod, sinks }): Output | null {
+            const update = sqlite.transaction(() => {
+                sqlite
+                    .prepare(
+                        'UPDATE outputs SET name = ?, encoding = ?, pull_method = ? WHERE id = ?',
+                    )
+                    .run(name, videoEncoding, pullMethod, id);
+                stmtDeleteSinks.run(id);
+                insertSinks(id, sinks);
+            });
+            update();
             const row = stmtGetOutput.get(id) as Record<string, unknown> | undefined;
             return row ? rowToOutput(row) : null;
         },

@@ -11,15 +11,28 @@ export interface Pipeline {
     streamKeyId: number;
 }
 
+export type PullMethod = 'rtmp' | 'srt';
+
+export interface OutputSink {
+    seq: number;
+    url: string;
+    audioEncoding: string;
+}
+
+export interface SinkInput {
+    url: string;
+    audioEncoding?: string;
+}
+
 export interface Output {
     id: string;
     pipelineId: number;
     seq: number;
     name: string;
-    url: string;
     desiredState: 'running' | 'stopped';
     videoEncoding: string;
-    audioEncoding: string;
+    pullMethod: PullMethod;
+    sinks: OutputSink[];
 }
 
 export interface Db {
@@ -38,16 +51,21 @@ export interface Db {
     createOutput(params: {
         pipelineId: number;
         name: string;
-        url: string;
         videoEncoding?: string;
-        audioEncoding?: string;
+        pullMethod?: PullMethod;
+        sinks: SinkInput[];
     }): Output;
     getOutput(id: string): Output | undefined;
     listOutputs(): Output[];
     listOutputsForPipeline(pipelineId: number): Output[];
     updateOutput(
         id: string,
-        params: { name: string; url: string; videoEncoding: string; audioEncoding: string },
+        params: {
+            name: string;
+            videoEncoding: string;
+            pullMethod: PullMethod;
+            sinks: SinkInput[];
+        },
     ): Output | null;
     setOutputDesiredState(id: string, desiredState: 'running' | 'stopped'): Output | null;
     deleteOutput(id: string): boolean;

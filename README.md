@@ -122,23 +122,40 @@ ffmpeg -re -stream_loop -1 -i video.mp4 \
 SRT:
 ```bash
 ffmpeg -re -stream_loop -1 -i video.mp4 \
-  -c:v libx264 -preset veryfast -b:v 2500k -c:a aac -b:a 128k \
+  -c:v libx264 -preset veryfast -b:v 2500k -x264-params "repeat-headers=1" \
+  -c:a aac -b:a 128k \
   -f mpegts 'srt://localhost:10080?streamid=#!::r=live/<stream-key>,m=publish'
 ```
 
 SRT with passphrase:
 ```bash
 ffmpeg -re -stream_loop -1 -i video.mp4 \
-  -c:v libx264 -preset veryfast -b:v 2500k -c:a aac -b:a 128k \
+  -c:v libx264 -preset veryfast -b:v 2500k -x264-params "repeat-headers=1" \
+  -c:a aac -b:a 128k \
   -f mpegts 'srt://localhost:10080?streamid=#!::r=live/<stream-key>,m=publish&passphrase=<srt-passphrase>&pbkeylen=16'
 ```
 
-SRT with multiple audio tracks (use `-map 0` to include all streams from the source):
+SRT with multiple audio tracks (use `-map 0` to include all streams from the source).
+`-force_key_frames`/`-tune zerolatency` keep a self-contained keyframe every 2s so
+late-joining SRT readers (VLC, ffplay, the dashboard preview) can sync quickly — without
+it they stall waiting for the source's sparse keyframes.
+`-x264-params "repeat-headers=1"` embeds SPS/PPS in every IDR frame so players that
+join mid-stream (or reconnect) can decode immediately without missing the parameter sets
+sent at stream start:
 ```bash
 ffmpeg -re -stream_loop -1 -i multitrack.mkv \
   -map 0 \
-  -c:v libx264 -preset veryfast -b:v 2500k -c:a aac -b:a 128k \
+  -c:v libx264 -preset veryfast -tune zerolatency -b:v 2500k \
+  -x264-params "repeat-headers=1" \
+  -force_key_frames 'expr:gte(t,n_forced*2)' -g 60 -keyint_min 60 -sc_threshold 0 \
+  -c:a aac -b:a 128k \
   -f mpegts 'srt://localhost:10080?streamid=#!::r=live/<stream-key>,m=publish'
+```
+
+To pull the stream back for inspection (e.g. VLC, ffplay), encode the `#` in the
+streamid as `%23` — VLC otherwise treats it as a URL fragment:
+```
+srt://localhost:10080?streamid=%23!::r=live/<stream-key>,m=request
 ```
 
 > **Note:** SRS internally converts SRT/MPEG-TS to RTMP, which is a single-audio protocol. The dashboard will only detect one audio track from the live stream regardless of how many tracks are in the source file. Multi-track audio selection in outputs is intended for encoders that send a multi-track RTMP extension.

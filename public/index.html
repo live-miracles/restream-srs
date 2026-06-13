@@ -179,7 +179,7 @@
 
     <!-- Output modal -->
     <dialog id="edit-out-modal" class="modal">
-      <div class="modal-box max-w-lg">
+      <div class="modal-box max-w-2xl">
         <input type="hidden" id="out-pipe-id-input" />
         <input type="hidden" id="out-id-input" />
         <div class="mx-auto mt-2 space-y-3 px-4">
@@ -190,42 +190,28 @@
               <legend class="fieldset-legend">Output Name</legend>
               <input type="text" id="out-name-input" class="input w-40" placeholder="YouTube" oninput="this.classList.remove('input-error')" />
             </fieldset>
+            <fieldset class="fieldset">
+              <legend class="fieldset-legend">Pull Method</legend>
+              <select class="select" id="out-pull-method-input">
+                <option value="rtmp">RTMP (single track)</option>
+                <option value="srt">SRT (multitrack)</option>
+              </select>
+            </fieldset>
             <fieldset class="fieldset flex-1">
-              <legend class="fieldset-legend">Server</legend>
-              <select class="select w-full" id="out-server-select" onchange="outServerChange()">
-                <option value="0">YouTube RTMP</option>
-                <option value="1">Facebook RTMP</option>
-                <option value="2">Custom RTMP</option>
-                <option value="3">Custom SRT</option>
+              <legend class="fieldset-legend">Video Encoding</legend>
+              <select class="select w-full" id="out-video-encoding-input">
+                <option value="copy">copy</option>
+                <option value="720p">720p</option>
+                <option value="1080p">1080p</option>
               </select>
             </fieldset>
           </div>
 
-          <fieldset class="fieldset">
-            <legend class="fieldset-legend" id="out-key-label">Stream Key</legend>
-            <input
-              type="text"
-              id="out-key-input"
-              class="input w-full font-mono text-sm"
-              placeholder="xxxx-xxxx-xxxx-xxxx"
-              oninput="this.classList.remove('input-error')" />
-          </fieldset>
-
-          <fieldset class="fieldset">
-            <legend class="fieldset-legend">Video Encoding</legend>
-            <select class="select" id="out-video-encoding-input">
-              <option value="source">source (copy)</option>
-              <option value="720p">720p</option>
-              <option value="1080p">1080p</option>
-            </select>
-          </fieldset>
-
-          <fieldset class="fieldset" id="out-audio-encoding-container">
-            <legend class="fieldset-legend">Audio Encoding</legend>
-            <select class="select w-full" id="out-audio-encoding-input">
-              <option value="copy">Copy (default)</option>
-            </select>
-          </fieldset>
+          <div class="flex items-center justify-between pt-1">
+            <span class="fieldset-legend">Destinations</span>
+            <button type="button" class="btn btn-xs btn-ghost" onclick="outAddSink()">+ Add destination</button>
+          </div>
+          <div id="out-sinks-container" class="space-y-3"></div>
         </div>
         <div class="modal-action flex-col items-end gap-2">
           <p id="out-running-hint" class="text-warning hidden text-xs">Stop the output before editing.</p>
@@ -321,7 +307,8 @@
           <div class="border-base-content/10 bg-base-100/50 rounded-xl border p-3">
             <div class="mb-2 flex items-center justify-between">
               <span class="text-xs font-semibold opacity-60">PREVIEW</span>
-              <div class="flex gap-2">
+              <div class="flex items-center gap-2">
+                <select id="preview-audio-select" class="select select-xs hidden max-w-44" onchange="previewTrackChange()"></select>
                 <button id="preview-play-btn" class="btn btn-xs btn-accent btn-outline" onclick="previewPlayBtn()">
                   <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none">
                     <polygon points="5 3 19 12 5 21 5 3" />

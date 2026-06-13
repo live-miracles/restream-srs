@@ -13,7 +13,9 @@ import {
     confirmDeletePipeline,
     openAddOutput,
     submitOutputForm,
-    onOutServerChange,
+    addSinkRow,
+    removeSinkRow,
+    onSinkServerChange,
 } from './editor.js';
 
 declare global {
@@ -31,10 +33,13 @@ declare global {
         deletePipeBtn: (btn?: HTMLButtonElement) => Promise<void>;
         addOutBtn: () => void;
         outFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
-        outServerChange: () => void;
+        outAddSink: () => void;
+        outRemoveSink: (btn: HTMLElement) => void;
+        outSinkServerChange: (select: HTMLSelectElement) => void;
         copyText: (text: string) => Promise<void>;
         previewPlayBtn: () => Promise<void>;
         previewStopBtn: () => void;
+        previewTrackChange: () => void;
     }
 }
 
@@ -72,21 +77,27 @@ window.addOutBtn = () => {
 };
 
 window.outFormBtn = (btn) => submitOutputForm(btn);
-window.outServerChange = () => onOutServerChange();
+window.outAddSink = () => addSinkRow();
+window.outRemoveSink = (btn) => removeSinkRow(btn);
+window.outSinkServerChange = (select) => onSinkServerChange(select);
 
 window.copyText = copyText;
 
 window.previewPlayBtn = async () => {
     const id = getUrlParam('p');
     if (!id) return;
-    const [{ startPreview }, { attachHls }] = await Promise.all([
+    const [{ startPreview }, { attachHls, selectedPreviewTrack }] = await Promise.all([
         import('../core/api.js'),
         import('./render.js'),
     ]);
-    const result = await startPreview(id);
+    const result = await startPreview(id, selectedPreviewTrack());
     if (result?.hlsUrl) attachHls(id, result.hlsUrl);
 };
 
 window.previewStopBtn = () => {
     void import('./render.js').then(({ stopCurrentPreview }) => stopCurrentPreview());
+};
+
+window.previewTrackChange = () => {
+    void import('./render.js').then(({ previewTrackChange }) => previewTrackChange());
 };

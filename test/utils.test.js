@@ -6,9 +6,16 @@ const assert = require('node:assert/strict');
 // Clear SRS env vars so module constants use their defaults
 delete process.env.SRS_RTMP_HOST;
 delete process.env.SRS_RTMP_PORT;
+delete process.env.SRS_SRT_PORT;
 
-const { buildFfmpegArgs, validateOutputUrl } = require('../src/utils/ffmpeg');
-const { rtmpPullUrl, rtmpPublishUrl, srtPublishUrl } = require('../src/utils/srs');
+const {
+    buildFfmpegArgs,
+    validateOutputUrl,
+    validateAudioEncoding,
+} = require('../src/utils/ffmpeg');
+const { rtmpPullUrl, srtPullUrl, rtmpPublishUrl, srtPublishUrl } = require('../src/utils/srs');
+
+const sink = (url, audioEncoding = 'copy') => ({ url, audioEncoding });
 
 // ── validateOutputUrl ─────────────────────────────────
 
@@ -27,43 +34,89 @@ describe('validateOutputUrl', () => {
 
 describe('buildFfmpegArgs', () => {
     test('includes input URL after -i', () => {
-        const args = buildFfmpegArgs('rtmp://in', 'rtmp://out');
+        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')]);
         assert.equal(args[args.indexOf('-i') + 1], 'rtmp://in');
     });
 
-    test('source encoding uses -c copy', () => {
-        const args = buildFfmpegArgs('rtmp://in', 'rtmp://out', 'source');
+    test('copy encoding uses -c copy', () => {
+        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')], 'copy');
         assert.equal(args[args.indexOf('-c') + 1], 'copy');
     });
 
-    test('unknown encoding falls back to source (copy)', () => {
-        const args = buildFfmpegArgs('rtmp://in', 'rtmp://out', 'bogus');
+    test('unknown encoding falls back to copy', () => {
+        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')], 'bogus');
         assert.ok(args.includes('copy'));
     });
 
-    test('RTMP output uses -f flv', () => {
-        const args = buildFfmpegArgs('rtmp://in', 'rtmp://out');
+    test('RTMP sink uses -f flv', () => {
+        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')]);
         assert.equal(args[args.lastIndexOf('-f') + 1], 'flv');
     });
 
-    test('SRT output uses -f mpegts', () => {
-        const args = buildFfmpegArgs('rtmp://in', 'srt://host:10080');
+    test('SRT sink uses -f mpegts', () => {
+        const args = buildFfmpegArgs('rtmp://in', [sink('srt://host:10080')]);
         assert.equal(args[args.lastIndexOf('-f') + 1], 'mpegts');
     });
 
     test('720p encoding includes 1280:720 scale', () => {
-        const args = buildFfmpegArgs('rtmp://in', 'rtmp://out', '720p');
+        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')], '720p');
         assert.ok(args.some((a) => String(a).includes('1280:720')));
     });
 
     test('1080p encoding includes 1920:1080 scale', () => {
-        const args = buildFfmpegArgs('rtmp://in', 'rtmp://out', '1080p');
+        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')], '1080p');
         assert.ok(args.some((a) => String(a).includes('1920:1080')));
     });
 
     test('always includes -progress pipe:1 for bitrate monitoring', () => {
-        const args = buildFfmpegArgs('rtmp://in', 'rtmp://out');
+        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')]);
         assert.equal(args[args.indexOf('-progress') + 1], 'pipe:1');
+    });
+
+    test('copy audio adds no -map (ffmpeg default selection)', () => {
+        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out', 'copy')]);
+        assert.ok(!args.includes('-map'));
+    });
+
+    test('selecting a track maps video + that audio stream', () => {
+        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out', '1')]);
+        const maps = args.filter((a, i) => args[i - 1] === '-map');
+        assert.deepEqual(maps, ['0:v:0', '0:a:1']);
+    });
+
+    test('fans out to multiple sinks in one command', () => {
+        const args = buildFfmpegArgs('rtmp://in', [
+            sink('rtmp://en', '0'),
+            sink('srt://fr:10080', '1'),
+        ]);
+        assert.equal(args.indexOf('-i'), 0);
+        assert.ok(args.includes('rtmp://en'));
+        assert.ok(args.includes('srt://fr:10080'));
+        // one flv output and one mpegts output
+        assert.equal(args.filter((a) => a === 'flv').length, 1);
+        assert.equal(args.filter((a) => a === 'mpegts').length, 1);
+        assert.deepEqual(
+            args.filter((a, i) => args[i - 1] === '-map'),
+            ['0:v:0', '0:a:0', '0:v:0', '0:a:1'],
+        );
+    });
+});
+
+// ── validateAudioEncoding ─────────────────────────────
+
+describe('validateAudioEncoding', () => {
+    test('defaults empty/copy to copy', () => {
+        assert.equal(validateAudioEncoding(undefined), 'copy');
+        assert.equal(validateAudioEncoding(''), 'copy');
+        assert.equal(validateAudioEncoding('copy'), 'copy');
+    });
+    test('accepts single and comma track lists', () => {
+        assert.equal(validateAudioEncoding('0'), '0');
+        assert.equal(validateAudioEncoding('0, 1 ,2'), '0,1,2');
+    });
+    test('rejects non-numeric values', () => {
+        assert.equal(validateAudioEncoding('a'), null);
+        assert.equal(validateAudioEncoding('0,x'), null);
     });
 });
 
@@ -72,6 +125,13 @@ describe('buildFfmpegArgs', () => {
 describe('URL builders', () => {
     test('rtmpPullUrl uses default host and port', () => {
         assert.equal(rtmpPullUrl('mykey'), 'rtmp://localhost:1935/live/mykey');
+    });
+
+    test('srtPullUrl uses default host and SRT port', () => {
+        assert.equal(
+            srtPullUrl('mykey'),
+            'srt://localhost:10080?streamid=#!::r=live/mykey,m=request',
+        );
     });
 
     test('rtmpPublishUrl', () => {
