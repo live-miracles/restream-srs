@@ -209,14 +209,68 @@ const SERVERS = [
         keyLabel: 'SRT URL',
         placeholder: 'srt://host:port?streamid=...',
     },
+    { label: 'Restream RTMP', prefix: '', keyLabel: 'Pipeline', placeholder: '' },
+    { label: 'Restream SRT', prefix: '', keyLabel: 'Pipeline', placeholder: '' },
 ] as const;
 
+const RESTREAM_RTMP_IDX = 4;
+const RESTREAM_SRT_IDX = 5;
+
+function isRestreamIdx(idx: number): boolean {
+    return idx === RESTREAM_RTMP_IDX || idx === RESTREAM_SRT_IDX;
+}
+
+const RESTREAM_RTMP_PREFIX = 'rtmp://localhost:1935/live/';
+const RESTREAM_SRT_PREFIX = 'srt://localhost:10080?streamid=#!::r=live/';
+
+function restreamRtmpUrl(streamKey: string): string {
+    return `${RESTREAM_RTMP_PREFIX}${streamKey}`;
+}
+
+function restreamSrtUrl(streamKey: string): string {
+    const passphrase = state.config.srtPassphrase;
+    const url = `${RESTREAM_SRT_PREFIX}${streamKey},m=publish`;
+    if (!passphrase) return url;
+    return `${url}&passphrase=${encodeURIComponent(passphrase)}&pbkeylen=16`;
+}
+
 function detectServer(url: string): { idx: number; key: string } {
+    if (url.startsWith(RESTREAM_RTMP_PREFIX)) {
+        const sk = url.slice(RESTREAM_RTMP_PREFIX.length);
+        const p = (state.config.pipelines ?? []).find((p) => p.streamKey === sk);
+        if (p) return { idx: RESTREAM_RTMP_IDX, key: p.id };
+    }
+    if (url.startsWith(RESTREAM_SRT_PREFIX) && url.includes('m=publish')) {
+        const sk = url.slice(RESTREAM_SRT_PREFIX.length).split(',')[0];
+        const p = (state.config.pipelines ?? []).find((p) => p.streamKey === sk);
+        if (p) return { idx: RESTREAM_SRT_IDX, key: p.id };
+    }
     for (let i = 0; i < SERVERS.length; i++) {
         const { prefix } = SERVERS[i];
         if (prefix && url.startsWith(prefix)) return { idx: i, key: url.slice(prefix.length) };
     }
     return { idx: url.startsWith('srt://') ? 3 : 2, key: url };
+}
+
+function restreamPipelineOpts(selectedId: string): string {
+    const pipelines = state.config.pipelines ?? [];
+    if (!pipelines.length) return '<option value="" disabled>No pipelines</option>';
+    return pipelines
+        .map(
+            (p) =>
+                `<option value="${escapeAttr(String(p.id))}"${String(p.id) === selectedId ? ' selected' : ''}>${escapeAttr(p.name)}</option>`,
+        )
+        .join('');
+}
+
+function sinkKeyFieldHtml(idx: number, key: string): string {
+    if (isRestreamIdx(idx)) {
+        return `<select class="select select-sm w-full js-sink-key">${restreamPipelineOpts(key)}</select>`;
+    }
+    const s = SERVERS[idx];
+    return `<input type="text" class="input input-sm w-full font-mono text-xs js-sink-key"
+               placeholder="${s.placeholder}" value="${escapeAttr(key)}"
+               oninput="this.classList.remove('input-error')" />`;
 }
 
 function outModal(): HTMLDialogElement {
@@ -275,11 +329,9 @@ function sinkRowHtml(tracks: AudioTrackInfo[], url = '', audioEncoding = 'copy')
         <legend class="fieldset-legend">Server</legend>
         <select class="select select-sm js-sink-server" onchange="outSinkServerChange(this)">${serverOpts}</select>
       </fieldset>
-      <fieldset class="fieldset flex-1">
+      <fieldset class="fieldset flex-1 js-sink-key-fieldset">
         <legend class="fieldset-legend js-sink-key-label">${server.keyLabel}</legend>
-        <input type="text" class="input input-sm w-full font-mono text-xs js-sink-key"
-               placeholder="${server.placeholder}" value="${escapeAttr(key)}"
-               oninput="this.classList.remove('input-error')" />
+        ${sinkKeyFieldHtml(idx, key)}
       </fieldset>
       <fieldset class="fieldset w-36">
         <legend class="fieldset-legend">Audio</legend>
@@ -327,11 +379,22 @@ export function removeSinkRow(btn: HTMLElement): void {
 export function onSinkServerChange(select: HTMLSelectElement): void {
     const row = select.closest('.js-sink-row');
     if (!row) return;
-    const s = SERVERS[parseInt(select.value)];
+    const idx = parseInt(select.value);
+    const s = SERVERS[idx];
     const label = row.querySelector('.js-sink-key-label') as HTMLElement | null;
-    const input = row.querySelector('.js-sink-key') as HTMLInputElement | null;
+    const fieldset = row.querySelector('.js-sink-key-fieldset') as HTMLElement | null;
     if (label) label.textContent = s.keyLabel;
-    if (input) input.placeholder = s.placeholder;
+    if (!fieldset) return;
+    const existing = fieldset.querySelector('.js-sink-key') as HTMLElement | null;
+    const wasRestream = existing?.tagName === 'SELECT';
+    const nowRestream = isRestreamIdx(idx);
+    if (wasRestream !== nowRestream) {
+        const el = fieldset.querySelector('.js-sink-key');
+        if (el) el.outerHTML = sinkKeyFieldHtml(idx, '');
+    } else if (!nowRestream) {
+        const input = fieldset.querySelector('.js-sink-key') as HTMLInputElement | null;
+        if (input) input.placeholder = s.placeholder;
+    }
 }
 
 function pipelineTracks(pipelineId: string): AudioTrackInfo[] {
@@ -407,15 +470,29 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
         const serverIdx = parseInt(
             (row.querySelector('.js-sink-server') as HTMLSelectElement).value,
         );
-        const keyEl = row.querySelector('.js-sink-key') as HTMLInputElement;
+        const keyEl = row.querySelector('.js-sink-key') as HTMLInputElement | HTMLSelectElement;
         const key = keyEl.value.trim();
         const audioEncoding = (row.querySelector('.js-sink-audio') as HTMLSelectElement).value;
-        keyEl.classList.toggle('input-error', !key);
-        if (!key) {
-            sinksValid = false;
-            continue;
+        let url: string;
+        if (isRestreamIdx(serverIdx)) {
+            const pipeline = (state.config.pipelines ?? []).find((p) => String(p.id) === key);
+            if (!pipeline) {
+                sinksValid = false;
+                continue;
+            }
+            url =
+                serverIdx === RESTREAM_RTMP_IDX
+                    ? restreamRtmpUrl(pipeline.streamKey)
+                    : restreamSrtUrl(pipeline.streamKey);
+        } else {
+            if (keyEl instanceof HTMLInputElement) keyEl.classList.toggle('input-error', !key);
+            if (!key) {
+                sinksValid = false;
+                continue;
+            }
+            url = SERVERS[serverIdx].prefix + key;
         }
-        sinks.push({ url: SERVERS[serverIdx].prefix + key, audioEncoding });
+        sinks.push({ url, audioEncoding });
     }
 
     if (!name || !sinksValid || sinks.length === 0) return;
