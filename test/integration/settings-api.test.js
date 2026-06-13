@@ -113,6 +113,7 @@ describe('Settings API integration', () => {
         assert.deepEqual(res.body, {
             serverName: 'Control Room',
             srtPassphrase: null,
+            publicHost: 'localhost',
             pending: false,
         });
         assert.equal(harness.db.getSetting('serverName'), 'Control Room');
@@ -132,6 +133,7 @@ describe('Settings API integration', () => {
         assert.deepEqual(res.body, {
             serverName: 'New Name',
             srtPassphrase: 'secret-value',
+            publicHost: 'localhost',
             pending: false,
         });
         assert.equal(harness.db.getSetting('serverName'), 'New Name');
@@ -149,6 +151,7 @@ describe('Settings API integration', () => {
         assert.deepEqual(res.body, {
             serverName: 'Control Room',
             srtPassphrase: 'secret-value',
+            publicHost: 'localhost',
             pending: true,
         });
         assert.equal(harness.db.getSetting('srtPassphrase'), 'secret-value');
