@@ -61,4 +61,11 @@ export function registerPipelineApi(
         db.deletePipeline(id);
         return res.json({ ok: true });
     });
+
+    app.get('/api/pipelines/:id/logs', (req, res) => {
+        const id = parseInt(req.params.id);
+        if (isNaN(id)) return res.status(400).json({ error: 'invalid id' });
+        if (!db.getPipeline(id)) return res.status(404).json({ error: 'Pipeline not found' });
+        return res.json(db.getPipelineLogs(id));
+    });
 }

@@ -109,6 +109,11 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
         try {
             db.setOutputDesiredState(outId, 'running');
             await outputService.start(outId);
+            try {
+                db.appendOutputLog(outId, 'start', 'User started output');
+            } catch {
+                /* non-critical */
+            }
             return res.json({ ok: true, status: outputService.getStats(outId) });
         } catch (err) {
             return res.status(400).json({ error: (err as Error).message });
@@ -124,6 +129,20 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
 
         db.setOutputDesiredState(outId, 'stopped');
         outputService.stop(outId);
+        try {
+            db.appendOutputLog(outId, 'stop', 'User stopped output');
+        } catch {
+            /* non-critical */
+        }
         return res.json({ ok: true });
+    });
+
+    app.get('/api/pipelines/:pipelineId/outputs/:outId/logs', (req, res) => {
+        const { pipelineId, outId } = req.params;
+        const output = db.getOutput(outId);
+        if (!output || output.pipelineId !== parseInt(pipelineId)) {
+            return res.status(404).json({ error: 'Output not found' });
+        }
+        return res.json(db.getOutputLogs(outId));
     });
 }

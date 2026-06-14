@@ -11,6 +11,7 @@ import {
     openEditPipeline,
     submitPipelineForm,
     confirmDeletePipeline,
+    showPipelineLogs,
     openAddOutput,
     submitOutputForm,
     addSinkRow,
@@ -32,6 +33,7 @@ declare global {
         pipeFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
         editPipeBtn: () => void;
         deletePipeBtn: (btn?: HTMLButtonElement) => Promise<void>;
+        pipeHistoryBtn: () => Promise<void>;
         addOutBtn: () => void;
         outFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
         outAddSink: () => void;
@@ -71,6 +73,11 @@ window.deletePipeBtn = async (btn) => {
     if (document.getElementById('pipe-delete-btn')?.classList.contains('btn-disabled')) return;
     const id = getUrlParam('p');
     if (id) await confirmDeletePipeline(id, btn);
+};
+
+window.pipeHistoryBtn = async () => {
+    const id = getUrlParam('p');
+    if (id) await showPipelineLogs(id);
 };
 
 window.addOutBtn = () => {

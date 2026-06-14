@@ -5,6 +5,8 @@ import { setupDatabaseSchema } from './schema.js';
 import type {
     Pipeline,
     Output,
+    OutputLog,
+    PipelineLog,
     OutputSink,
     PullMethod,
     SinkInput,
@@ -301,6 +303,69 @@ export function createDb(dbPath?: string): Db {
         deleteOutput(id: string): boolean {
             const result = sqlite.prepare('DELETE FROM outputs WHERE id = ?').run(id);
             return result.changes > 0;
+        },
+
+        appendOutputLog(outputId: string, event: string, message: string): void {
+            sqlite
+                .prepare(
+                    'INSERT INTO output_logs (output_id, ts, event, message) VALUES (?, ?, ?, ?)',
+                )
+                .run(outputId, Date.now(), event, message);
+            // Keep at most 50 entries per output
+            sqlite
+                .prepare(
+                    `DELETE FROM output_logs WHERE output_id = ? AND id NOT IN (
+                        SELECT id FROM output_logs WHERE output_id = ? ORDER BY id DESC LIMIT 50
+                    )`,
+                )
+                .run(outputId, outputId);
+        },
+
+        getOutputLogs(outputId: string, limit = 50): OutputLog[] {
+            return (
+                sqlite
+                    .prepare(
+                        'SELECT id, output_id, ts, event, message FROM output_logs WHERE output_id = ? ORDER BY id DESC LIMIT ?',
+                    )
+                    .all(outputId, limit) as Record<string, unknown>[]
+            ).map((r) => ({
+                id: r.id as number,
+                outputId: r.output_id as string,
+                ts: r.ts as number,
+                event: r.event as string,
+                message: r.message as string,
+            }));
+        },
+
+        appendPipelineLog(pipelineId: number, event: string, message: string): void {
+            sqlite
+                .prepare(
+                    'INSERT INTO pipeline_logs (pipeline_id, ts, event, message) VALUES (?, ?, ?, ?)',
+                )
+                .run(pipelineId, Date.now(), event, message);
+            sqlite
+                .prepare(
+                    `DELETE FROM pipeline_logs WHERE pipeline_id = ? AND id NOT IN (
+                        SELECT id FROM pipeline_logs WHERE pipeline_id = ? ORDER BY id DESC LIMIT 50
+                    )`,
+                )
+                .run(pipelineId, pipelineId);
+        },
+
+        getPipelineLogs(pipelineId: number, limit = 50): PipelineLog[] {
+            return (
+                sqlite
+                    .prepare(
+                        'SELECT id, pipeline_id, ts, event, message FROM pipeline_logs WHERE pipeline_id = ? ORDER BY id DESC LIMIT ?',
+                    )
+                    .all(pipelineId, limit) as Record<string, unknown>[]
+            ).map((r) => ({
+                id: r.id as number,
+                pipelineId: r.pipeline_id as number,
+                ts: r.ts as number,
+                event: r.event as string,
+                message: r.message as string,
+            }));
         },
     };
 }

@@ -1,4 +1,11 @@
-import type { ConfigData, HealthData, OutputPayload, SystemMetrics } from '../types.js';
+import type {
+    ConfigData,
+    HealthData,
+    OutputLog,
+    PipelineLog,
+    OutputPayload,
+    SystemMetrics,
+} from '../types.js';
 
 let loadingCount = 0;
 
@@ -120,3 +127,9 @@ export const regenerateStreamKeys = () =>
     apiRequest<{ streamKeys: unknown[] }>('/api/settings/regenerate-stream-keys', {
         method: 'POST',
     });
+
+export const getOutputLogs = (pipelineId: string, outId: string) =>
+    apiRequest<OutputLog[]>(`/api/pipelines/${pipelineId}/outputs/${outId}/logs`);
+
+export const getPipelineLogs = (pipelineId: string) =>
+    apiRequest<PipelineLog[]>(`/api/pipelines/${pipelineId}/logs`);

@@ -38,6 +38,7 @@ interface PipelineHealth {
             bitrateKbps: number | null;
             retries: number;
             startedAtMs: number | null;
+            lastError: string | null;
         }
     >;
 }
@@ -208,11 +209,32 @@ export function createHealthService(db: Db, outputService: OutputService) {
                 outputService.restartPipelineOutputs(pipeline.id);
                 const isSrt = !!s?.tcUrl?.startsWith('srt://');
                 scheduleFfprobe(pipeline.id, pipeline.streamKey, isSrt);
+                try {
+                    db.appendPipelineLog(
+                        pipeline.id,
+                        'online',
+                        `Input connected (${isSrt ? 'SRT' : 'RTMP'})`,
+                    );
+                } catch {
+                    /* non-critical */
+                }
             }
 
             if (wasLive && !nowLive) {
+                const uptimeSec = Math.round(
+                    (Date.now() - (inputLiveStartMs.get(pipeline.id) ?? Date.now())) / 1000,
+                );
                 inputLiveStartMs.delete(pipeline.id);
                 clearFfprobeState(pipeline.id);
+                try {
+                    db.appendPipelineLog(
+                        pipeline.id,
+                        'offline',
+                        `Input disconnected (was live for ${uptimeSec}s)`,
+                    );
+                } catch {
+                    /* non-critical */
+                }
             }
 
             const pipelineOutputs = outputs.filter((o) => o.pipelineId === pipeline.id);
@@ -224,6 +246,8 @@ export function createHealthService(db: Db, outputService: OutputService) {
                     bitrateKbps: number | null;
                     retries: number;
                     startedAtMs: number | null;
+                    lastError: string | null;
+                    lastErrorAt: number | null;
                 }
             > = {};
             for (const out of pipelineOutputs) {

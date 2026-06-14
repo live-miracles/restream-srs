@@ -410,6 +410,15 @@ function renderPipelineInfo(selectedId: string | null): void {
 
 const ICON_PENCIL = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>`;
 const ICON_TRASH = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>`;
+const ICON_LOGS = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`;
+
+function escHtml(s: string): string {
+    return s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
 
 function renderOutputCard(o: OutputView, inputLive: boolean): string {
     const isStopped = o.desiredState === 'stopped';
@@ -459,6 +468,22 @@ function renderOutputCard(o: OutputView, inputLive: boolean): string {
             </div>`;
         })
         .join('');
+
+    const lastErrorLine = o.lastError
+        ? (o.lastError
+              .split('\n')
+              .filter((l) => l.trim())
+              .slice(-1)[0] ?? '')
+        : '';
+    const lastErrorTs = o.lastErrorAt ? new Date(o.lastErrorAt).toLocaleTimeString() : '';
+    const lastErrorColor = st === 'error' ? 'text-error' : 'opacity-40';
+    const lastErrorHtml = lastErrorLine
+        ? `<div class="flex items-baseline gap-2 pl-2 mt-0.5 min-w-0">
+                <span class="text-xs ${lastErrorColor} shrink-0">${lastErrorTs}</span>
+                <span class="text-xs ${lastErrorColor} truncate" title="${escHtml(lastErrorLine)}">${escHtml(lastErrorLine)}</span>
+           </div>`
+        : '';
+
     const isPending = pendingOutputs.has(o.id);
     return `
     <div class="bg-base-100 px-3 py-1 border-b border-base-200 w-full flex gap-2 items-start">
@@ -475,8 +500,10 @@ function renderOutputCard(o: OutputView, inputLive: boolean): string {
                 ${badges.join('')}
             </div>
             <div class="space-y-0.5 pl-2">${sinksHtml}</div>
+            ${lastErrorHtml}
         </div>
         <div class="flex items-center gap-1 shrink-0">
+            <button class="btn btn-xs btn-ghost" data-action="logs" data-out-id="${o.id}" title="View logs">${ICON_LOGS}</button>
             <button class="btn btn-xs btn-ghost" data-action="edit" data-out-id="${o.id}">${ICON_PENCIL}</button>
             <button class="btn btn-xs btn-ghost text-error ${isStopped ? '' : 'btn-disabled'}"
                 data-action="delete" data-out-id="${o.id}">${ICON_TRASH}</button>
@@ -523,6 +550,7 @@ function renderOutputsList(pipeline: PipelineView): void {
             else if (action === 'stop') ed.stopOutput(pipeline.id, outId);
             else if (action === 'edit') ed.openEditOutput(pipeline.id, outId);
             else if (action === 'delete') ed.confirmDeleteOutput(pipeline.id, outId);
+            else if (action === 'logs') ed.showOutputLogs(pipeline.id, outId);
         });
     };
 }

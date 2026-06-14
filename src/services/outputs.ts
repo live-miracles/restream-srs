@@ -13,12 +13,16 @@ const MAX_RETRIES = 100;
 const SIGKILL_DELAY_MS = 5000;
 const FFMPEG_CMD = process.env.FFMPEG_PATH || 'ffmpeg';
 
+const LAST_ERROR_TTL_MS = 60_000;
+
 interface OutputStats {
     status: 'running' | 'stopped' | 'failed';
     pid: number | null;
     bitrateKbps: number | null;
     retries: number;
     startedAtMs: number | null;
+    lastError: string | null;
+    lastErrorAt: number | null;
 }
 
 export interface OutputService {
@@ -43,14 +47,19 @@ export function createOutputService(db: Db): OutputService {
     const startLocks = new Set<string>();
     const retryState = new Map<string, { failures: number; timer: NodeJS.Timeout | null }>();
     const exhausted = new Set<string>();
+    const lastErrors = new Map<string, { message: string; ts: number }>();
 
     function getStats(outputId: string): OutputStats {
         const s = statuses.get(outputId) ?? { status: 'stopped' as const, pid: null };
+        const err = lastErrors.get(outputId);
+        const fresh = err && Date.now() - err.ts < LAST_ERROR_TTL_MS ? err : null;
         return {
             ...s,
             bitrateKbps: bitrates.get(outputId) ?? null,
             retries: retryState.get(outputId)?.failures ?? 0,
             startedAtMs: startTimes.get(outputId) ?? null,
+            lastError: fresh?.message ?? null,
+            lastErrorAt: fresh?.ts ?? null,
         };
     }
 
@@ -153,7 +162,7 @@ export function createOutputService(db: Db): OutputService {
         const args = buildFfmpegArgs(inputUrl, output.sinks, output.videoEncoding);
 
         const child: ChildProcess = spawn(FFMPEG_CMD, args, {
-            stdio: ['ignore', 'pipe', 'ignore'],
+            stdio: ['ignore', 'pipe', 'pipe'],
             env: process.env,
         });
 
@@ -173,6 +182,11 @@ export function createOutputService(db: Db): OutputService {
             }
         });
 
+        let stderrTail = '';
+        child.stderr?.on('data', (d: Buffer) => {
+            stderrTail = (stderrTail + d.toString()).slice(-3000);
+        });
+
         child.on('error', (err) => {
             console.warn(`[outputs] ${output.id} error:`, err.message);
         });
@@ -185,6 +199,19 @@ export function createOutputService(db: Db): OutputService {
             console.log(
                 `[outputs] ${output.id} exited code=${code} signal=${signal} status=${status}`,
             );
+
+            if (!wasStop && code !== 0 && stderrTail) {
+                lastErrors.set(output.id, { message: stderrTail.trim(), ts: Date.now() });
+                try {
+                    db.appendOutputLog(
+                        output.id,
+                        'error',
+                        `exit=${code ?? signal}\n${stderrTail.trim()}`,
+                    );
+                } catch {
+                    /* non-critical */
+                }
+            }
 
             if (!wasStop && db.getOutput(output.id)?.desiredState === 'running') {
                 getRetry(output.id).failures++;
@@ -238,6 +265,11 @@ export function createOutputService(db: Db): OutputService {
                 if (statuses.get(output.id)?.status === 'running') {
                     startTimes.set(output.id, Date.now());
                     return;
+                }
+                try {
+                    db.appendOutputLog(output.id, 'reconnect', 'Pipeline input reconnected');
+                } catch {
+                    /* non-critical */
                 }
                 const r = getRetry(output.id);
                 r.failures = 0;

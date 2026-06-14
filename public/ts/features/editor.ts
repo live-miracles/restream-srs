@@ -570,3 +570,84 @@ export async function stopOutput(pipelineId: string, outId: string): Promise<voi
     await api.stopOutput(pipelineId, outId);
     await refreshAfterMutation();
 }
+
+export async function showPipelineLogs(pipelineId: string): Promise<void> {
+    const modal = document.getElementById('logs-modal') as HTMLDialogElement | null;
+    const titleEl = document.getElementById('logs-modal-title');
+    const contentEl = document.getElementById('logs-modal-content');
+    if (!modal || !contentEl) return;
+
+    const pipelineName = state.pipelines.find((p) => p.id === pipelineId)?.name ?? pipelineId;
+    if (titleEl) titleEl.textContent = `History — ${pipelineName}`;
+    contentEl.textContent = 'Loading…';
+    modal.showModal();
+
+    const logs = await api.getPipelineLogs(pipelineId);
+    if (!logs || logs.length === 0) {
+        contentEl.innerHTML = '<p class="opacity-50 text-sm">No history recorded yet.</p>';
+        return;
+    }
+
+    const fmtTs = (ts: number) => new Date(ts).toLocaleString();
+    contentEl.innerHTML = logs
+        .map(
+            (
+                l,
+            ) => `<div class="flex items-center gap-3 border-b border-base-200 py-1.5 last:border-0">
+                <span class="badge badge-xs leading-none ${l.event === 'online' ? 'badge-success' : 'badge-neutral'} shrink-0 uppercase">${l.event}</span>
+                <span class="text-xs opacity-70 shrink-0">${fmtTs(l.ts)}</span>
+                <span class="text-xs opacity-80">${l.message.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</span>
+            </div>`,
+        )
+        .join('');
+}
+
+export async function showOutputLogs(pipelineId: string, outId: string): Promise<void> {
+    const modal = document.getElementById('logs-modal') as HTMLDialogElement | null;
+    const titleEl = document.getElementById('logs-modal-title');
+    const contentEl = document.getElementById('logs-modal-content');
+    if (!modal || !contentEl) return;
+
+    const pipeline = state.pipelines.find((p) => p.id === pipelineId);
+    const outputName = pipeline?.outs.find((o) => o.id === outId)?.name ?? outId;
+    if (titleEl) titleEl.textContent = `Logs — ${outputName}`;
+    contentEl.textContent = 'Loading…';
+    modal.showModal();
+
+    const logs = await api.getOutputLogs(pipelineId, outId);
+    if (!logs || logs.length === 0) {
+        contentEl.innerHTML = '<p class="opacity-50 text-sm">No logs recorded yet.</p>';
+        return;
+    }
+
+    const fmtTs = (ts: number) => new Date(ts).toLocaleString();
+    const eventClass = (event: string) =>
+        event === 'error'
+            ? 'text-error'
+            : event === 'reconnect'
+              ? 'text-info'
+              : 'text-base-content';
+    const badgeClass = (event: string) =>
+        event === 'error'
+            ? 'badge-error'
+            : event === 'start'
+              ? 'badge-success'
+              : event === 'stop'
+                ? 'badge-neutral'
+                : 'badge-info';
+
+    contentEl.innerHTML = logs
+        .map(
+            (
+                l,
+                i,
+            ) => `<div class="border-b border-base-200 pb-2 mb-2 last:border-0 last:mb-0 last:pb-0">
+                <div class="flex items-center gap-2 mb-1">
+                    <span class="badge badge-xs leading-none ${badgeClass(l.event)} uppercase">${l.event}</span>
+                    <span class="text-xs opacity-50">${fmtTs(l.ts)}</span>
+                </div>
+                <pre class="text-xs ${eventClass(l.event)} opacity-80 whitespace-pre-wrap break-all overflow-x-auto${i === 0 ? '' : ' max-h-48'}">${l.message.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
+            </div>`,
+        )
+        .join('');
+}

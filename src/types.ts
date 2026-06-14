@@ -24,6 +24,22 @@ export interface SinkInput {
     audioEncoding?: string;
 }
 
+export interface OutputLog {
+    id: number;
+    outputId: string;
+    ts: number;
+    event: string;
+    message: string;
+}
+
+export interface PipelineLog {
+    id: number;
+    pipelineId: number;
+    ts: number;
+    event: string;
+    message: string;
+}
+
 export interface Output {
     id: string;
     pipelineId: number;
@@ -69,4 +85,10 @@ export interface Db {
     ): Output | null;
     setOutputDesiredState(id: string, desiredState: 'running' | 'stopped'): Output | null;
     deleteOutput(id: string): boolean;
+
+    appendOutputLog(outputId: string, event: string, message: string): void;
+    getOutputLogs(outputId: string, limit?: number): OutputLog[];
+
+    appendPipelineLog(pipelineId: number, event: string, message: string): void;
+    getPipelineLogs(pipelineId: number, limit?: number): PipelineLog[];
 }

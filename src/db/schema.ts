@@ -59,4 +59,34 @@ export function setupDatabaseSchema(db: Database.Database): void {
             value TEXT NOT NULL
         )`,
     ).run();
+
+    db.prepare(
+        `CREATE TABLE IF NOT EXISTS output_logs (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            output_id TEXT NOT NULL,
+            ts        INTEGER NOT NULL,
+            event     TEXT NOT NULL,
+            message   TEXT NOT NULL,
+            FOREIGN KEY(output_id) REFERENCES outputs(id) ON DELETE CASCADE
+        )`,
+    ).run();
+
+    db.prepare(
+        `CREATE INDEX IF NOT EXISTS idx_output_logs_output ON output_logs(output_id, id DESC)`,
+    ).run();
+
+    db.prepare(
+        `CREATE TABLE IF NOT EXISTS pipeline_logs (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            pipeline_id INTEGER NOT NULL,
+            ts          INTEGER NOT NULL,
+            event       TEXT NOT NULL,
+            message     TEXT NOT NULL,
+            FOREIGN KEY(pipeline_id) REFERENCES pipelines(id) ON DELETE CASCADE
+        )`,
+    ).run();
+
+    db.prepare(
+        `CREATE INDEX IF NOT EXISTS idx_pipeline_logs_pipeline ON pipeline_logs(pipeline_id, id DESC)`,
+    ).run();
 }

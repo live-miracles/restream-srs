@@ -223,6 +223,20 @@
       </div>
     </dialog>
 
+    <!-- Logs modal -->
+    <dialog id="logs-modal" class="modal">
+      <div class="modal-box w-[80vw] max-w-none">
+        <h2 class="text-xl font-bold" id="logs-modal-title">Output Logs</h2>
+        <div id="logs-modal-content" class="mt-4 max-h-[28rem] space-y-1 overflow-y-auto font-mono text-xs"></div>
+        <div class="modal-action">
+          <form method="dialog">
+            <button class="btn">Close</button>
+          </form>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
     <!-- Main grid -->
     <div class="grid h-screen min-h-0 flex-1 gap-4 p-4 pt-0" style="grid-template-columns: minmax(15rem, 20rem) minmax(0, 3fr) minmax(22rem, 4fr)">
       <!-- Left: Pipeline list -->
@@ -259,7 +273,22 @@
         <div class="mb-3 flex items-center justify-between gap-3 text-xl font-bold">
           <span class="truncate" id="pipe-name"></span>
           <div class="flex shrink-0 items-center gap-2">
-            <button id="pipe-edit-btn" class="btn btn-xs btn-accent btn-outline" onclick="editPipeBtn()">
+            <button class="btn btn-xs btn-ghost" onclick="pipeHistoryBtn()" title="View pipeline history">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <polyline points="12 6 12 12 16 14" />
+              </svg>
+            </button>
+            <button id="pipe-edit-btn" class="btn btn-xs btn-ghost" onclick="editPipeBtn()" title="Edit pipeline">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="14"
@@ -273,9 +302,8 @@
                 <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
                 <path d="m15 5 4 4" />
               </svg>
-              Edit
             </button>
-            <button id="pipe-delete-btn" class="btn btn-xs btn-error btn-outline" onclick="deletePipeBtn(this)">
+            <button id="pipe-delete-btn" class="btn btn-xs btn-ghost text-error" onclick="deletePipeBtn(this)" title="Delete pipeline">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="14"
@@ -292,7 +320,6 @@
                 <line x1="10" x2="10" y1="11" y2="17" />
                 <line x1="14" x2="14" y1="11" y2="17" />
               </svg>
-              Delete
             </button>
           </div>
         </div>

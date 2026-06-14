@@ -34,6 +34,8 @@ export function parsePipelines(
                 bitrateKbps: oh?.bitrateKbps ?? null,
                 retries: oh?.retries ?? 0,
                 startedAtMs: oh?.startedAtMs ?? null,
+                lastError: oh?.lastError ?? null,
+                lastErrorAt: oh?.lastErrorAt ?? null,
             };
         });
 

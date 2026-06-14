@@ -76,6 +76,24 @@ export interface OutputStatus {
     bitrateKbps: number | null;
     retries: number;
     startedAtMs: number | null;
+    lastError: string | null;
+    lastErrorAt: number | null;
+}
+
+export interface OutputLog {
+    id: number;
+    outputId: string;
+    ts: number;
+    event: string;
+    message: string;
+}
+
+export interface PipelineLog {
+    id: number;
+    pipelineId: number;
+    ts: number;
+    event: string;
+    message: string;
 }
 
 export interface InputHealth {
@@ -135,4 +153,6 @@ export interface OutputView extends Output {
     bitrateKbps: number | null;
     retries: number;
     startedAtMs: number | null;
+    lastError: string | null;
+    lastErrorAt: number | null;
 }
