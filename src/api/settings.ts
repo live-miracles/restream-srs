@@ -30,11 +30,9 @@ export function registerSettingsApi(app: Express, db: Db): void {
 
         if (!name) return res.status(400).json({ error: 'name is required' });
         if (passphrase === undefined) {
-            return res
-                .status(400)
-                .json({
-                    error: `SRT passphrase must be blank or ${SRT_PASSPHRASE_MIN_LEN} to ${SRT_PASSPHRASE_MAX_LEN} characters`,
-                });
+            return res.status(400).json({
+                error: `SRT passphrase must be blank or ${SRT_PASSPHRASE_MIN_LEN} to ${SRT_PASSPHRASE_MAX_LEN} characters`,
+            });
         }
 
         db.setSetting('serverName', name);
