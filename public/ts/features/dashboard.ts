@@ -65,7 +65,7 @@ async function fetchAndRender(): Promise<void> {
     renderMetrics();
 }
 
-const POLL_MS = 4000;
+const POLL_MS = 5000;
 const HIDDEN_POLL_MS = 30000;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 

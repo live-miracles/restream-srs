@@ -14,6 +14,7 @@ import type { OutputService } from './outputs.js';
 
 const FFPROBE_CMD = process.env.FFPROBE_PATH || 'ffprobe';
 const FFPROBE_DELAYS_MS = [3000, 10000, 20000, 40000];
+const POLL_INTERVAL_MS = 5000;
 
 export interface InputHealth {
     live: boolean;
@@ -259,11 +260,11 @@ export function createHealthService(db: Db, outputService: OutputService) {
 
     function start(): void {
         void poll();
-        setInterval(() => void poll(), 3000).unref();
+        setInterval(() => void poll(), POLL_INTERVAL_MS).unref();
     }
 
     function registerRoutes(app: Express): void {
-        app.get('/health', (_req, res) => {
+        app.get('/api/health', (_req, res) => {
             res.json(snapshot);
         });
     }

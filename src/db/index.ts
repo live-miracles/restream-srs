@@ -65,6 +65,44 @@ export function createDb(dbPath?: string): Db {
         }));
     }
 
+    function sinksForMany(outputIds: string[]): Map<string, OutputSink[]> {
+        if (outputIds.length === 0) return new Map();
+        const placeholders = outputIds.map(() => '?').join(',');
+        const rows = sqlite
+            .prepare(
+                `SELECT output_id, seq, url, audio_encoding FROM output_sinks WHERE output_id IN (${placeholders}) ORDER BY output_id, seq`,
+            )
+            .all(...outputIds) as Record<string, unknown>[];
+        const result = new Map<string, OutputSink[]>();
+        for (const r of rows) {
+            const id = r.output_id as string;
+            if (!result.has(id)) result.set(id, []);
+            result.get(id)!.push({
+                seq: r.seq as number,
+                url: r.url as string,
+                audioEncoding: (r.audio_encoding as string) || 'copy',
+            });
+        }
+        return result;
+    }
+
+    function rowToOutputWithSinks(
+        row: Record<string, unknown>,
+        sinksMap: Map<string, OutputSink[]>,
+    ): Output {
+        const id = row.id as string;
+        return {
+            id,
+            pipelineId: row.pipeline_id as number,
+            seq: row.seq as number,
+            name: row.name as string,
+            desiredState: row.desired_state as 'running' | 'stopped',
+            videoEncoding: (row.encoding as string) || 'copy',
+            pullMethod: (row.pull_method as PullMethod) || 'rtmp',
+            sinks: sinksMap.get(id) ?? [],
+        };
+    }
+
     function insertSinks(outputId: string, sinks: SinkInput[]): void {
         sinks.forEach((s, i) => {
             const seq = i + 1;
@@ -230,20 +268,19 @@ export function createDb(dbPath?: string): Db {
         },
 
         listOutputs(): Output[] {
-            return (
-                sqlite.prepare('SELECT * FROM outputs ORDER BY pipeline_id, seq').all() as Record<
-                    string,
-                    unknown
-                >[]
-            ).map(rowToOutput);
+            const rows = sqlite
+                .prepare('SELECT * FROM outputs ORDER BY pipeline_id, seq')
+                .all() as Record<string, unknown>[];
+            const sinksMap = sinksForMany(rows.map((r) => r.id as string));
+            return rows.map((r) => rowToOutputWithSinks(r, sinksMap));
         },
 
         listOutputsForPipeline(pipelineId: number): Output[] {
-            return (
-                sqlite
-                    .prepare('SELECT * FROM outputs WHERE pipeline_id = ? ORDER BY seq')
-                    .all(pipelineId) as Record<string, unknown>[]
-            ).map(rowToOutput);
+            const rows = sqlite
+                .prepare('SELECT * FROM outputs WHERE pipeline_id = ? ORDER BY seq')
+                .all(pipelineId) as Record<string, unknown>[];
+            const sinksMap = sinksForMany(rows.map((r) => r.id as string));
+            return rows.map((r) => rowToOutputWithSinks(r, sinksMap));
         },
 
         updateOutput(id: string, { name, videoEncoding, pullMethod, sinks }): Output | null {

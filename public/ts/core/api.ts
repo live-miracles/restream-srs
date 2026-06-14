@@ -59,7 +59,7 @@ async function apiRequest<T>(
 }
 
 export const getConfig = () => apiRequest<ConfigData>('/config');
-export const getHealth = () => apiRequest<HealthData>('/health');
+export const getHealth = () => apiRequest<HealthData>('/api/health');
 export const getSystemMetrics = () => apiRequest<SystemMetrics>('/metrics/system');
 
 export const updateServerName = (name: string) =>
