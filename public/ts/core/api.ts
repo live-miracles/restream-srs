@@ -8,6 +8,14 @@ import type {
 } from '../types.js';
 
 let loadingCount = 0;
+let serverUnreachable = false;
+
+function setConnectionBanner(unreachable: boolean): void {
+    if (unreachable === serverUnreachable) return;
+    serverUnreachable = unreachable;
+    const banner = document.getElementById('connection-banner');
+    banner?.classList.toggle('hidden', !unreachable);
+}
 
 function setLoading(active: boolean): void {
     const el = document.getElementById('saving-badge');
@@ -56,9 +64,10 @@ async function apiRequest<T>(
             showError((data as { error?: string })?.error || `HTTP ${res.status}`);
             return null;
         }
+        setConnectionBanner(false);
         return data;
-    } catch (e) {
-        showError('Request failed: ' + String(e));
+    } catch {
+        setConnectionBanner(true);
         return null;
     } finally {
         if (isMutating(method)) setLoading(false);
