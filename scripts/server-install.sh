@@ -182,6 +182,7 @@ Environment=FFPROBE_PATH=/usr/local/bin/ffprobe
 ExecStart=/usr/bin/node $APP_DIR/dist/index.js
 Restart=always
 RestartSec=2
+LimitNOFILE=1048576
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full

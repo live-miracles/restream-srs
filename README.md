@@ -203,3 +203,30 @@ npm run srs
 | `DB_PATH` | `./data.db` | SQLite database path |
 | `SRS_CONF_PATH` | `./srs.conf` | SRS config path written by the app |
 | `PORT` | `8080` | App HTTP port |
+
+## Known issues
+
+### SRT pull doesn't surface output errors (e.g. wrong stream key) (wontfix)
+
+When an output uses **SRT pull** from SRS and the destination rejects the stream
+(e.g. a wrong YouTube stream key), the output gets stuck showing `running`
+(yellow) with no error in the logs. With **RTMP pull** the same failure exits
+ffmpeg immediately with a clear error (`Error opening output files:
+Input/output error`).
+
+The difference is timing: with RTMP pull, input stream info is available right
+away, so ffmpeg opens the destination immediately and the rejection surfaces at
+`write_header` time, exiting non-zero. With SRT pull, ffmpeg must first probe the
+MPEG-TS input; by the time it connects, the destination accepts the handshake
+then drops the connection mid-publish, and ffmpeg deadlocks — SRT's large input
+buffers keep the input thread fed, so the broken-pipe error on the output write
+never propagates. The process never exits, so no error is ever logged.
+
+**Why wontfix:** this isn't fixable via ffmpeg flags — native RTMP ignores
+`rw_timeout`, and librtmp isn't compiled into the ffmpeg build; `linger=0` /
+input-side timeouts don't help because the input isn't the thing stalling. The
+only reliable fix is an app-side no-progress watchdog (kill an output that stays
+`running` with zero progress past a grace period), which adds complexity for a
+narrow misconfiguration case. Workaround: use RTMP pull if you need clear error
+reporting, or verify the destination stream key before starting an SRT-pull
+output.

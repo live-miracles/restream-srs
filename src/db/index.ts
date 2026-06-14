@@ -59,6 +59,29 @@ export function createDb(dbPath?: string): Db {
     const stmtInsertSink = sqlite.prepare(
         'INSERT INTO output_sinks (id, output_id, seq, url, audio_encoding) VALUES (?, ?, ?, ?, ?)',
     );
+    const stmtListOutputMeta = sqlite.prepare('SELECT id, pipeline_id FROM outputs');
+    const stmtInsertOutputLog = sqlite.prepare(
+        'INSERT INTO output_logs (output_id, ts, event, message) VALUES (?, ?, ?, ?)',
+    );
+    const stmtPruneOutputLogs = sqlite.prepare(
+        `DELETE FROM output_logs WHERE output_id = ? AND id NOT IN (
+            SELECT id FROM output_logs WHERE output_id = ? ORDER BY id DESC LIMIT ${LOG_RETENTION_LIMIT}
+        )`,
+    );
+    const stmtGetOutputLogs = sqlite.prepare(
+        'SELECT id, output_id, ts, event, message FROM output_logs WHERE output_id = ? ORDER BY id DESC LIMIT ?',
+    );
+    const stmtInsertPipelineLog = sqlite.prepare(
+        'INSERT INTO pipeline_logs (pipeline_id, ts, event, message) VALUES (?, ?, ?, ?)',
+    );
+    const stmtPrunePipelineLogs = sqlite.prepare(
+        `DELETE FROM pipeline_logs WHERE pipeline_id = ? AND id NOT IN (
+            SELECT id FROM pipeline_logs WHERE pipeline_id = ? ORDER BY id DESC LIMIT ${LOG_RETENTION_LIMIT}
+        )`,
+    );
+    const stmtGetPipelineLogs = sqlite.prepare(
+        'SELECT id, pipeline_id, ts, event, message FROM pipeline_logs WHERE pipeline_id = ? ORDER BY id DESC LIMIT ?',
+    );
 
     function sinksFor(outputId: string): OutputSink[] {
         return (stmtListSinks.all(outputId) as Record<string, unknown>[]).map((r) => ({
@@ -256,6 +279,13 @@ export function createDb(dbPath?: string): Db {
             return row ? rowToOutput(row) : undefined;
         },
 
+        listOutputMeta(): { id: string; pipelineId: number }[] {
+            return (stmtListOutputMeta.all() as { id: string; pipeline_id: number }[]).map((r) => ({
+                id: r.id,
+                pipelineId: r.pipeline_id,
+            }));
+        },
+
         listOutputs(): Output[] {
             const rows = sqlite
                 .prepare('SELECT * FROM outputs ORDER BY pipeline_id, seq')
@@ -307,66 +337,37 @@ export function createDb(dbPath?: string): Db {
         },
 
         appendOutputLog(outputId: string, event: string, message: string): void {
-            sqlite
-                .prepare(
-                    'INSERT INTO output_logs (output_id, ts, event, message) VALUES (?, ?, ?, ?)',
-                )
-                .run(outputId, Date.now(), event, message);
-            // Keep at most 50 entries per output
-            sqlite
-                .prepare(
-                    `DELETE FROM output_logs WHERE output_id = ? AND id NOT IN (
-                        SELECT id FROM output_logs WHERE output_id = ? ORDER BY id DESC LIMIT ${LOG_RETENTION_LIMIT}
-                    )`,
-                )
-                .run(outputId, outputId);
+            stmtInsertOutputLog.run(outputId, Date.now(), event, message);
+            stmtPruneOutputLogs.run(outputId, outputId);
         },
 
         getOutputLogs(outputId: string, limit = LOG_RETENTION_LIMIT): OutputLog[] {
-            return (
-                sqlite
-                    .prepare(
-                        'SELECT id, output_id, ts, event, message FROM output_logs WHERE output_id = ? ORDER BY id DESC LIMIT ?',
-                    )
-                    .all(outputId, limit) as Record<string, unknown>[]
-            ).map((r) => ({
-                id: r.id as number,
-                outputId: r.output_id as string,
-                ts: r.ts as number,
-                event: r.event as string,
-                message: r.message as string,
-            }));
+            return (stmtGetOutputLogs.all(outputId, limit) as Record<string, unknown>[]).map(
+                (r) => ({
+                    id: r.id as number,
+                    outputId: r.output_id as string,
+                    ts: r.ts as number,
+                    event: r.event as string,
+                    message: r.message as string,
+                }),
+            );
         },
 
         appendPipelineLog(pipelineId: number, event: string, message: string): void {
-            sqlite
-                .prepare(
-                    'INSERT INTO pipeline_logs (pipeline_id, ts, event, message) VALUES (?, ?, ?, ?)',
-                )
-                .run(pipelineId, Date.now(), event, message);
-            sqlite
-                .prepare(
-                    `DELETE FROM pipeline_logs WHERE pipeline_id = ? AND id NOT IN (
-                        SELECT id FROM pipeline_logs WHERE pipeline_id = ? ORDER BY id DESC LIMIT ${LOG_RETENTION_LIMIT}
-                    )`,
-                )
-                .run(pipelineId, pipelineId);
+            stmtInsertPipelineLog.run(pipelineId, Date.now(), event, message);
+            stmtPrunePipelineLogs.run(pipelineId, pipelineId);
         },
 
         getPipelineLogs(pipelineId: number, limit = LOG_RETENTION_LIMIT): PipelineLog[] {
-            return (
-                sqlite
-                    .prepare(
-                        'SELECT id, pipeline_id, ts, event, message FROM pipeline_logs WHERE pipeline_id = ? ORDER BY id DESC LIMIT ?',
-                    )
-                    .all(pipelineId, limit) as Record<string, unknown>[]
-            ).map((r) => ({
-                id: r.id as number,
-                pipelineId: r.pipeline_id as number,
-                ts: r.ts as number,
-                event: r.event as string,
-                message: r.message as string,
-            }));
+            return (stmtGetPipelineLogs.all(pipelineId, limit) as Record<string, unknown>[]).map(
+                (r) => ({
+                    id: r.id as number,
+                    pipelineId: r.pipeline_id as number,
+                    ts: r.ts as number,
+                    event: r.event as string,
+                    message: r.message as string,
+                }),
+            );
         },
     };
 }

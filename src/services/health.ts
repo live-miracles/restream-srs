@@ -193,7 +193,13 @@ export function createHealthService(db: Db, outputService: OutputService) {
 
     async function poll(): Promise<void> {
         const pipelines = db.listPipelines();
-        const outputs = db.listOutputs();
+        const outputMeta = db.listOutputMeta();
+        const outputsByPipeline = new Map<number, string[]>();
+        for (const o of outputMeta) {
+            const ids = outputsByPipeline.get(o.pipelineId);
+            if (ids) ids.push(o.id);
+            else outputsByPipeline.set(o.pipelineId, [o.id]);
+        }
 
         let streams: SrsStream[] = [];
         let srsReachable = true;
@@ -263,7 +269,6 @@ export function createHealthService(db: Db, outputService: OutputService) {
                 }
             }
 
-            const pipelineOutputs = outputs.filter((o) => o.pipelineId === pipeline.id);
             const outputsHealth: Record<
                 string,
                 {
@@ -276,8 +281,8 @@ export function createHealthService(db: Db, outputService: OutputService) {
                     lastErrorAt: number | null;
                 }
             > = {};
-            for (const out of pipelineOutputs) {
-                outputsHealth[out.id] = outputService.getStats(out.id);
+            for (const outId of outputsByPipeline.get(pipeline.id) ?? []) {
+                outputsHealth[outId] = outputService.getStats(outId);
             }
 
             const srtStream = nowLive && s?.tcUrl?.startsWith('srt://');
