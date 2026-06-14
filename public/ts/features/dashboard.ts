@@ -59,9 +59,12 @@ async function fetchAndRender(): Promise<void> {
     }
     if (healthResult) {
         state.health = healthResult;
-        const showSrsBanner = !healthResult.srsReachable && !isServerUnreachable();
-        document.getElementById('srs-banner')?.classList.toggle('hidden', !showSrsBanner);
     }
+    // Recompute even when health couldn't be fetched: if the server itself is
+    // unreachable, the connection banner already covers it, so suppress the
+    // SRS-down banner to avoid showing two alerts at once.
+    const showSrsBanner = !isServerUnreachable() && !!state.health && !state.health.srsReachable;
+    document.getElementById('srs-banner')?.classList.toggle('hidden', !showSrsBanner);
     if (metricsResult) state.metrics = metricsResult;
 
     state.pipelines = parsePipelines(state.config, state.health);

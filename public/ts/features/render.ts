@@ -30,9 +30,11 @@ function outStatus(o: OutputView, inputLive: boolean): OutStatus {
     if (o.status === 'running') {
         if (!inputLive) return 'error';
         if (o.bitrateKbps !== null && o.bitrateKbps >= LOW_BITRATE_KBPS) return 'good';
+        if (o.bitrateKbps === null && o.lastError !== null) return 'error';
         return 'warn';
     }
-    return 'off';
+    // status === 'stopped' but desiredState === 'running': between retries
+    return o.lastError !== null ? 'error' : 'warn';
 }
 
 // ── Pipeline list (left column) ───────────────────────
