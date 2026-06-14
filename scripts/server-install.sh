@@ -110,16 +110,31 @@ npm prune --omit=dev
 chown -R "$SERVICE_USER:$SERVICE_USER" "$APP_DIR"
 echo "Build complete."
 
-step "7/8 Config and data"
+step "7/9 Config and data"
 if [[ ! -f "$CONF_DIR/srs.conf" ]]; then
     cp "$APP_DIR/srs.conf" "$CONF_DIR/srs.conf"
+    sed -i "s|srs_log_file.*|srs_log_file        $LOG_DIR/srs.log;|" "$CONF_DIR/srs.conf"
 fi
 touch "$DATA_DIR/db.sqlite"
 chown "$SERVICE_USER:$SERVICE_USER" "$CONF_DIR/srs.conf" "$DATA_DIR/db.sqlite"
 echo "Config: $CONF_DIR/srs.conf"
 echo "Data:   $DATA_DIR/db.sqlite"
 
-step "8/8 Systemd"
+step "8/9 Logrotate"
+cat > /etc/logrotate.d/restream-srs <<EOF
+$LOG_DIR/srs.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
+EOF
+echo "Logrotate: /etc/logrotate.d/restream-srs"
+
+step "9/9 Systemd"
 cat > /etc/systemd/system/srs.service <<EOF
 [Unit]
 Description=SRS Streaming Server
