@@ -202,6 +202,12 @@ const SERVERS = [
         keyLabel: 'Stream Key',
         placeholder: 'xxxx-xxxx-xxxx-xxxx',
     },
+    {
+        label: 'Instagram RTMPS',
+        prefix: '',
+        keyLabel: 'Stream Key',
+        placeholder: '1234567890?s_bl=1&s_prp=xxx-1&...',
+    },
     { label: 'Custom RTMP', prefix: '', keyLabel: 'RTMP URL', placeholder: 'rtmp://...' },
     {
         label: 'Custom SRT',
@@ -213,11 +219,23 @@ const SERVERS = [
     { label: 'Restream SRT', prefix: '', keyLabel: 'Pipeline', placeholder: '' },
 ] as const;
 
-const RESTREAM_RTMP_IDX = 4;
-const RESTREAM_SRT_IDX = 5;
+const INSTAGRAM_RTMP_IDX = 2;
+const RESTREAM_RTMP_IDX = 5;
+const RESTREAM_SRT_IDX = 6;
 
 function isRestreamIdx(idx: number): boolean {
     return idx === RESTREAM_RTMP_IDX || idx === RESTREAM_SRT_IDX;
+}
+
+function buildInstagramUrl(key: string): string {
+    const m = key.match(/[?&]s_prp=([^&]+)/);
+    const sPrp = m ? m[1] : '';
+    return `rtmps://edgetee-upload-${sPrp}.xx.fbcdn.net:443/rtmp/${key}`;
+}
+
+function detectInstagramKey(url: string): string | null {
+    const m = url.match(/^rtmps:\/\/edgetee-upload-[^.]+\.xx\.fbcdn\.net:443\/rtmp\/(.+)$/);
+    return m ? m[1] : null;
 }
 
 function restreamRtmpUrl(streamKey: string): string {
@@ -236,11 +254,13 @@ function detectServer(url: string): { idx: number; key: string } {
         if (url === restreamRtmpUrl(p.streamKey)) return { idx: RESTREAM_RTMP_IDX, key: p.id };
         if (url === restreamSrtUrl(p.streamKey)) return { idx: RESTREAM_SRT_IDX, key: p.id };
     }
+    const instagramKey = detectInstagramKey(url);
+    if (instagramKey !== null) return { idx: INSTAGRAM_RTMP_IDX, key: instagramKey };
     for (let i = 0; i < SERVERS.length; i++) {
         const { prefix } = SERVERS[i];
         if (prefix && url.startsWith(prefix)) return { idx: i, key: url.slice(prefix.length) };
     }
-    return { idx: url.startsWith('srt://') ? 3 : 2, key: url };
+    return { idx: url.startsWith('srt://') ? 4 : 3, key: url };
 }
 
 function restreamPipelineOpts(selectedId: string): string {
@@ -321,7 +341,7 @@ function sinkRowHtml(tracks: AudioTrackInfo[], url = '', audioEncoding = 'copy')
             (s, i) => `<option value="${i}"${i === idx ? ' selected' : ''}>${s.label}</option>`,
         ).join('');
     return `
-    <div class="js-sink-row flex items-center gap-2 rounded-box bg-base-200 p-2">
+    <div class="js-sink-row flex items-center gap-2 rounded-box bg-base-200 px-2 py-1">
       <select class="select select-sm w-36 shrink-0 js-sink-server" onchange="outSinkServerChange(this)">${serverOpts}</select>
       <div class="flex-1 min-w-0 js-sink-key-fieldset">${sinkKeyFieldHtml(idx, key)}</div>
       <select class="select select-sm w-36 js-sink-audio">${audioOptionsHtml(tracks, audioEncoding)}</select>
@@ -476,6 +496,13 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
                 serverIdx === RESTREAM_RTMP_IDX
                     ? restreamRtmpUrl(pipeline.streamKey)
                     : restreamSrtUrl(pipeline.streamKey);
+        } else if (serverIdx === INSTAGRAM_RTMP_IDX) {
+            if (keyEl instanceof HTMLInputElement) keyEl.classList.toggle('input-error', !key);
+            if (!key) {
+                sinksValid = false;
+                continue;
+            }
+            url = buildInstagramUrl(key);
         } else {
             if (keyEl instanceof HTMLInputElement) keyEl.classList.toggle('input-error', !key);
             if (!key) {

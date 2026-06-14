@@ -452,15 +452,18 @@ function renderOutputCard(o: OutputView, inputLive: boolean): string {
                           .map((t) => `A${parseInt(t) + 1}`)
                           .join('+')}</span>`
                     : '';
+            const display = s.url.length > 27
+                ? s.url.slice(0, 25) + '...' + s.url.slice(-2)
+                : s.url;
             return `<div class="flex items-center gap-1 min-w-0">
-                <code class="text-xs font-normal opacity-60 truncate min-w-0" title="${s.url}">${s.url}</code>${trackBadge}
+                <code class="text-xs font-normal opacity-60" title="${s.url}">${display}</code>${trackBadge}
             </div>`;
         })
         .join('');
     const isPending = pendingOutputs.has(o.id);
     return `
-    <div class="bg-base-100 px-3 py-2 shadow rounded-box w-full flex gap-2 items-start">
-        <div class="min-w-0 flex-1 space-y-1">
+    <div class="bg-base-100 px-3 py-1 border-b border-base-200 w-full flex gap-2 items-start">
+        <div class="min-w-0 flex-1 space-y-0.5">
             <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <div class="flex items-center gap-2 shrink-0 font-semibold">
                     <div aria-label="status" class="status status-lg ${statusClass} mx-1"></div>

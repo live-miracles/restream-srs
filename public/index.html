@@ -211,7 +211,7 @@
             <span class="fieldset-legend">Destinations</span>
             <button type="button" class="btn btn-xs btn-ghost" onclick="outAddSink()">+ Add destination</button>
           </div>
-          <div id="out-sinks-container" class="space-y-3"></div>
+          <div id="out-sinks-container" class="space-y-1"></div>
         </div>
         <div class="modal-action flex-col items-end gap-2">
           <p id="out-running-hint" class="text-warning hidden text-xs">Stop the output before editing.</p>
@@ -369,7 +369,7 @@
       <!-- Right: Outputs -->
       <div class="bg-base-200 mt-4 hidden overflow-y-auto rounded-xl p-4 shadow" id="outs-col">
         <h2 class="mb-3 text-xl font-bold">Outputs</h2>
-        <div class="space-y-3" id="outputs-list"></div>
+        <div class="flex flex-col" id="outputs-list"></div>
         <div class="mt-5 text-center">
           <button class="btn btn-sm btn-accent btn-outline" onclick="addOutBtn()">Add Output</button>
         </div>
