@@ -1,6 +1,6 @@
 # restream-srs
 
-Minimal streaming server — takes RTMP/SRT inputs and restreams them to multiple RTMP/SRT outputs. Built on [SRS](https://github.com/ossrs/srs) for ingest and FFmpeg for outputs. Node.js + TypeScript backend, DaisyUI dashboard.
+Minimal streaming server — takes RTMP/SRT inputs and restreams them to multiple RTMP/SRT outputs. Built on [SRS](https://github.com/ossrs/srs) for ingest and FFmpeg for outputs. Node.js + TypeScript backend.
 
 ```
 OBS / ffmpeg  ──RTMP──►  SRS (1935)   ──FFmpeg──►  YouTube / Facebook / ...
@@ -35,11 +35,6 @@ sudo git clone https://github.com/live-miracles/restream-srs /opt/restream-srs
 sudo bash /opt/restream-srs/scripts/server-install.sh
 ```
 
-The install script downloads SRS `6.0-r0` by default. To install from an existing Linux SRS binary file instead:
-```bash
-SRS_BINARY_PATH=/path/to/srs sudo bash /opt/restream-srs/scripts/server-install.sh
-```
-
 **Update an installed server:**
 ```bash
 sudo bash /opt/restream-srs/scripts/server-update.sh
@@ -50,7 +45,7 @@ sudo bash /opt/restream-srs/scripts/server-update.sh
 sudo bash /opt/restream-srs/scripts/server-down.sh
 ```
 
-Open the dashboard: `http://SERVER_IP:8080` — default password is `admin`, change it in Settings after first login.
+Open the dashboard: `http://SERVER_IP:8080` — default password is `admin`.
 
 ### Firewall ports needed
 
@@ -68,29 +63,17 @@ The app writes SRS settings to `/etc/restream-srs/srs.conf`. SRS only reads this
 sudo systemctl restart srs.service
 ```
 
-The Node app does not need to restart for SRT config reloads.
-
 ---
 
 ## Authentication
 
 The dashboard is protected by a password. Default password on first run is `admin`. Change it in **Settings → Change Password** after logging in. Logout is also available from Settings.
 
-To reset a forgotten password, delete the stored hash and restart:
+To reset a forgotten password:
 ```bash
-node -e "const db=require('better-sqlite3')('/var/lib/restream-srs/db.sqlite'); db.prepare(\"DELETE FROM settings WHERE key='dashboardPasswordHash'\").run()"
-sudo systemctl restart restream-srs.service
+sudo bash /opt/restream-srs/scripts/server-reset-password.sh
 ```
-The server will reinitialise with `admin` on next start.
-
----
-
-## Dashboard
-
-- **Settings** — editable via the gear button next to the title in the navbar; includes server name, public host, SRT passphrase, password change, and logout
-- **Pipelines** — created with one click; auto-named `Pipeline N` and assigned the next available stream key
-- **Stream keys** — shown masked (`key01_as...ks`) in the pipeline info panel; copy button copies the full URL
-- **Outputs** — per-pipeline list; supports YouTube RTMP, Facebook RTMP, Custom RTMP, Custom SRT; encoding choices include `source`, `720p`, `1080p`, `vertical_rotate`
+This resets the password to `admin` and restarts the service.
 
 ---
 
@@ -143,7 +126,7 @@ it they stall waiting for the source's sparse keyframes.
 join mid-stream (or reconnect) can decode immediately without missing the parameter sets
 sent at stream start:
 ```bash
-ffmpeg -re -stream_loop -1 -i multitrack.mkv \
+ffmpeg -re -stream_loop -1 -i video.mp4 \
   -map 0 \
   -c:v libx264 -preset veryfast -tune zerolatency -b:v 2500k \
   -x264-params "repeat-headers=1" \
@@ -157,8 +140,6 @@ streamid as `%23` — VLC otherwise treats it as a URL fragment:
 ```
 srt://localhost:10080?streamid=%23!::r=live/<stream-key>,m=request
 ```
-
-> **Note:** SRS internally converts SRT/MPEG-TS to RTMP, which is a single-audio protocol. The dashboard will only detect one audio track from the live stream regardless of how many tracks are in the source file. Multi-track audio selection in outputs is intended for encoders that send a multi-track RTMP extension.
 
 ---
 
@@ -192,11 +173,6 @@ Prerequisites: Node.js 20+, FFmpeg.
 ```bash
 npm install
 npm run dev-install   # downloads SRS 6.0-r0 into ./objs/srs, no root required
-```
-
-To use a local SRS binary instead of downloading:
-```bash
-SRS_BINARY_PATH=/path/to/srs npm run dev-install
 ```
 
 **2. Start SRS** (terminal 1):

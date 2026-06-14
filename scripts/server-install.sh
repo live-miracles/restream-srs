@@ -9,7 +9,6 @@
 #
 # Optional:
 #   REPO_URL=https://github.com/your-fork/restream-srs sudo bash scripts/server-install.sh
-#   SRS_BINARY_PATH=/path/to/srs sudo bash scripts/server-install.sh
 set -euo pipefail
 
 if [[ "$(id -u)" -ne 0 ]]; then
@@ -30,7 +29,6 @@ CONF_DIR=/etc/restream-srs
 SERVICE_USER=restream-srs
 
 SRS_VERSION="${SRS_VERSION:-6.0-r0}"
-SRS_BINARY_PATH="${SRS_BINARY_PATH:-}"
 SRS_ZIP="SRS-CentOS7-x86_64-${SRS_VERSION}.zip"
 SRS_URL="${SRS_URL:-https://github.com/ossrs/srs/releases/download/v${SRS_VERSION}/${SRS_ZIP}}"
 FFMPEG_VERSION=7.1
@@ -72,9 +70,6 @@ fi
 step "4/8 SRS $SRS_VERSION"
 if /usr/local/bin/srs -v 2>&1 | grep -q "$SRS_VERSION"; then
     echo "SRS $SRS_VERSION already installed."
-elif [[ -n "$SRS_BINARY_PATH" ]]; then
-    install -m 755 "$SRS_BINARY_PATH" /usr/local/bin/srs
-    echo "Installed local SRS binary: $(/usr/local/bin/srs -v 2>&1 | head -1)"
 else
     echo "Downloading $SRS_ZIP..."
     curl -fsSL "$SRS_URL" -o "$WORK/$SRS_ZIP"
