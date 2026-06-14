@@ -18,6 +18,8 @@ import {
     checkIsAuthenticated,
 } from './api/auth.js';
 import { registerVersionApi } from './api/version.js';
+import { registerSrsLogsApi } from './api/srs-logs.js';
+import { writeSrsConf } from './utils/conf.js';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '8080');
@@ -46,6 +48,7 @@ registerSettingsApi(app, db);
 registerVersionApi(app);
 registerMetricsApi(app);
 healthService.registerRoutes(app);
+registerSrsLogsApi(app, healthService.getSrsEvents);
 
 app.use(
     '/hls',
@@ -80,9 +83,8 @@ app.get('/login', (req, res) => {
 app.use('/', express.static(publicDir));
 
 async function main(): Promise<void> {
-    // srs.conf is owned by the install script (initial copy) and rewritten by
-    // the settings API whenever the SRT passphrase changes — SRS reads it at
-    // its own startup, so the app does not touch it here.
+    writeSrsConf(db.getSetting('srtPassphrase') || null);
+
     const allOutputs = db.listOutputs();
     for (const output of allOutputs) {
         if (output.desiredState === 'running') {

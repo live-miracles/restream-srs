@@ -14,7 +14,9 @@ import type { OutputService } from './outputs.js';
 
 const FFPROBE_CMD = process.env.FFPROBE_PATH || 'ffprobe';
 const FFPROBE_DELAYS_MS = [3000, 10000, 20000, 40000];
+const FFPROBE_TIMEOUT_MS = 15000;
 const POLL_INTERVAL_MS = 5000;
+const MAX_SRS_EVENTS = 200;
 
 export interface InputHealth {
     live: boolean;
@@ -49,6 +51,12 @@ export interface HealthSnapshot {
     pipelines: Record<string, PipelineHealth>;
 }
 
+export interface SrsEvent {
+    ts: number;
+    type: 'up' | 'down';
+    message: string;
+}
+
 interface ProbeResult {
     video: SrsStreamVideo | null;
     audio: SrsStreamAudio | null;
@@ -71,7 +79,7 @@ function runFfprobe(url: string): Promise<ProbeResult | null> {
         execFile(
             FFPROBE_CMD,
             ['-v', 'quiet', '-print_format', 'json', '-show_streams', url],
-            { timeout: 15000 },
+            { timeout: FFPROBE_TIMEOUT_MS },
             (err, stdout) => {
                 if (err) {
                     resolve(null);
@@ -131,6 +139,14 @@ export function createHealthService(db: Db, outputService: OutputService) {
         pipelines: {},
     };
 
+    const srsEvents: SrsEvent[] = [];
+    let prevSrsReachable: boolean | null = null;
+
+    function pushSrsEvent(type: 'up' | 'down', message: string): void {
+        srsEvents.push({ ts: Date.now(), type, message });
+        if (srsEvents.length > MAX_SRS_EVENTS) srsEvents.shift();
+    }
+
     const inputLive = new Map<number, boolean>();
     const inputLiveStartMs = new Map<number, number>();
     const ffprobeResults = new Map<number, ProbeResult>();
@@ -183,9 +199,19 @@ export function createHealthService(db: Db, outputService: OutputService) {
         let srsReachable = true;
         try {
             streams = await fetchSrsStreams();
-        } catch {
+        } catch (e) {
             srsReachable = false;
+            if (prevSrsReachable !== false) {
+                const msg = `Unreachable: ${e instanceof Error ? e.message : String(e)}`;
+                pushSrsEvent('down', msg);
+                console.warn(`[srs] ${msg}`);
+            }
         }
+        if (srsReachable && prevSrsReachable === false) {
+            pushSrsEvent('up', 'SRS is reachable again');
+            console.log('[srs] reachable again');
+        }
+        prevSrsReachable = srsReachable;
 
         const liveByPath = new Map<string, SrsStream>();
         for (const s of streams) {
@@ -293,5 +319,5 @@ export function createHealthService(db: Db, outputService: OutputService) {
         });
     }
 
-    return { start, registerRoutes, isInputLive };
+    return { start, registerRoutes, isInputLive, getSrsEvents: (): SrsEvent[] => [...srsEvents] };
 }

@@ -2,6 +2,8 @@ const SRS_API_URL = process.env.SRS_API_URL || 'http://localhost:1985';
 const SRS_RTMP_HOST = process.env.SRS_RTMP_HOST || 'localhost';
 const SRS_RTMP_PORT = parseInt(process.env.SRS_RTMP_PORT || '1935');
 const SRS_SRT_PORT = parseInt(process.env.SRS_SRT_PORT || '10080');
+const SRS_CLIENT_FETCH_TIMEOUT_MS = 3000;
+const SRS_STREAMS_FETCH_TIMEOUT_MS = 5000;
 
 export interface SrsStreamVideo {
     codec: string;
@@ -48,7 +50,7 @@ export interface SrsStream {
 
 export async function kickSrsClientsByStream(app: string, stream: string): Promise<void> {
     const res = await fetch(`${SRS_API_URL}/api/v1/clients?start=0&count=100`, {
-        signal: AbortSignal.timeout(3000),
+        signal: AbortSignal.timeout(SRS_CLIENT_FETCH_TIMEOUT_MS),
     });
     if (!res.ok) return;
     const data = (await res.json()) as {
@@ -58,7 +60,7 @@ export async function kickSrsClientsByStream(app: string, stream: string): Promi
         if (client.app === app && client.stream === stream) {
             await fetch(`${SRS_API_URL}/api/v1/clients/${client.id}`, {
                 method: 'DELETE',
-                signal: AbortSignal.timeout(3000),
+                signal: AbortSignal.timeout(SRS_CLIENT_FETCH_TIMEOUT_MS),
             }).catch(() => {});
         }
     }
@@ -66,7 +68,7 @@ export async function kickSrsClientsByStream(app: string, stream: string): Promi
 
 export async function fetchSrsStreams(): Promise<SrsStream[]> {
     const res = await fetch(`${SRS_API_URL}/api/v1/streams/`, {
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(SRS_STREAMS_FETCH_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`SRS API ${res.status}`);
     const data = (await res.json()) as { code: number; streams: SrsStream[] };

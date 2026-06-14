@@ -651,3 +651,49 @@ export async function showOutputLogs(pipelineId: string, outId: string): Promise
         )
         .join('');
 }
+
+export async function showSrsLogs(): Promise<void> {
+    const modal = document.getElementById('logs-modal') as HTMLDialogElement | null;
+    const titleEl = document.getElementById('logs-modal-title');
+    const contentEl = document.getElementById('logs-modal-content');
+    if (!modal || !contentEl) return;
+
+    if (titleEl) titleEl.textContent = 'SRS Logs';
+    contentEl.textContent = 'Loading…';
+    modal.showModal();
+
+    const data = await api.getSrsLogs();
+    if (!data) return;
+
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const fmtTs = (ts: number) => new Date(ts).toLocaleString();
+
+    let html = '<p class="text-xs font-semibold uppercase opacity-50 mb-2">Connectivity</p>';
+    if (data.events.length === 0) {
+        html += '<p class="text-sm opacity-50 mb-4">No events recorded yet.</p>';
+    } else {
+        html += [...data.events]
+            .reverse()
+            .map(
+                (e) =>
+                    `<div class="flex items-center gap-3 border-b border-base-200 py-1.5 last:border-0">
+                        <span class="badge badge-xs leading-none shrink-0 uppercase ${e.type === 'up' ? 'badge-success' : 'badge-error'}">${e.type}</span>
+                        <span class="opacity-70 shrink-0">${fmtTs(e.ts)}</span>
+                        <span class="opacity-80">${esc(e.message)}</span>
+                    </div>`,
+            )
+            .join('');
+    }
+
+    html +=
+        '<p class="text-xs font-semibold uppercase opacity-50 mt-4 mb-2">SRS Output (last 200 lines)</p>';
+    if (data.logTail.length === 0) {
+        html +=
+            '<p class="text-sm opacity-50">No SRS log file found. SRS may not have been started yet, or is still logging to console.</p>';
+    } else {
+        html += `<pre class="opacity-70 whitespace-pre-wrap break-all">${data.logTail.map(esc).join('\n')}</pre>`;
+    }
+
+    contentEl.innerHTML = html;
+    contentEl.scrollTop = contentEl.scrollHeight;
+}

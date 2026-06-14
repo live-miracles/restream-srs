@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 const CONF_PATH = process.env.SRS_CONF_PATH ?? path.join(process.cwd(), 'srs.conf');
+export const SRS_LOG_PATH = process.env.SRS_LOG_PATH ?? path.join(process.cwd(), 'objs', 'srs.log');
 
 function quoteSrsString(value: string): string {
     return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
@@ -14,7 +15,8 @@ export function writeSrsConf(passphrase?: string | null): void {
     const conf = `listen              1935;
 max_connections     1000;
 daemon              off;
-srs_log_tank        console;
+srs_log_tank        file;
+srs_log_file        ${SRS_LOG_PATH};
 
 http_api {
     enabled         on;

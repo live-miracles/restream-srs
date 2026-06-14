@@ -5,10 +5,15 @@ import type {
     PipelineLog,
     OutputPayload,
     SystemMetrics,
+    SrsLogsData,
 } from '../types.js';
 
 let loadingCount = 0;
 let serverUnreachable = false;
+
+export function isServerUnreachable(): boolean {
+    return serverUnreachable;
+}
 
 function setConnectionBanner(unreachable: boolean): void {
     if (unreachable === serverUnreachable) return;
@@ -142,3 +147,5 @@ export const getOutputLogs = (pipelineId: string, outId: string) =>
 
 export const getPipelineLogs = (pipelineId: string) =>
     apiRequest<PipelineLog[]>(`/api/pipelines/${pipelineId}/logs`);
+
+export const getSrsLogs = () => apiRequest<SrsLogsData>('/api/srs-logs');

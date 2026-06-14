@@ -21,6 +21,7 @@ const PIPELINE_SELECT = `
 `;
 
 const STREAM_KEY_SLOTS = 99;
+const LOG_RETENTION_LIMIT = 50;
 
 function rowToPipeline(row: Record<string, unknown>): Pipeline {
     return {
@@ -315,13 +316,13 @@ export function createDb(dbPath?: string): Db {
             sqlite
                 .prepare(
                     `DELETE FROM output_logs WHERE output_id = ? AND id NOT IN (
-                        SELECT id FROM output_logs WHERE output_id = ? ORDER BY id DESC LIMIT 50
+                        SELECT id FROM output_logs WHERE output_id = ? ORDER BY id DESC LIMIT ${LOG_RETENTION_LIMIT}
                     )`,
                 )
                 .run(outputId, outputId);
         },
 
-        getOutputLogs(outputId: string, limit = 50): OutputLog[] {
+        getOutputLogs(outputId: string, limit = LOG_RETENTION_LIMIT): OutputLog[] {
             return (
                 sqlite
                     .prepare(
@@ -346,13 +347,13 @@ export function createDb(dbPath?: string): Db {
             sqlite
                 .prepare(
                     `DELETE FROM pipeline_logs WHERE pipeline_id = ? AND id NOT IN (
-                        SELECT id FROM pipeline_logs WHERE pipeline_id = ? ORDER BY id DESC LIMIT 50
+                        SELECT id FROM pipeline_logs WHERE pipeline_id = ? ORDER BY id DESC LIMIT ${LOG_RETENTION_LIMIT}
                     )`,
                 )
                 .run(pipelineId, pipelineId);
         },
 
-        getPipelineLogs(pipelineId: number, limit = 50): PipelineLog[] {
+        getPipelineLogs(pipelineId: number, limit = LOG_RETENTION_LIMIT): PipelineLog[] {
             return (
                 sqlite
                     .prepare(

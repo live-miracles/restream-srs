@@ -1,4 +1,4 @@
-import { getConfig, getHealth, getSystemMetrics } from '../core/api.js';
+import { getConfig, getHealth, getSystemMetrics, isServerUnreachable } from '../core/api.js';
 import { parsePipelines } from '../core/pipeline.js';
 import { state } from '../core/state.js';
 import { renderPipelines, renderMetrics } from './render.js';
@@ -57,7 +57,11 @@ async function fetchAndRender(): Promise<void> {
             document.title = configResult.serverName;
         }
     }
-    if (healthResult) state.health = healthResult;
+    if (healthResult) {
+        state.health = healthResult;
+        const showSrsBanner = !healthResult.srsReachable && !isServerUnreachable();
+        document.getElementById('srs-banner')?.classList.toggle('hidden', !showSrsBanner);
+    }
     if (metricsResult) state.metrics = metricsResult;
 
     state.pipelines = parsePipelines(state.config, state.health);

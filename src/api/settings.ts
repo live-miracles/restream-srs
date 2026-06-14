@@ -2,12 +2,16 @@ import type { Express } from 'express';
 import type { Db } from '../types.js';
 import { writeSrsConf } from '../utils/conf.js';
 
+const SRT_PASSPHRASE_MIN_LEN = 10;
+const SRT_PASSPHRASE_MAX_LEN = 79;
+
 function normalizeSrtPassphrase(value: unknown): string | null | undefined {
     if (value == null) return null;
     if (typeof value !== 'string') return undefined;
     const passphrase = value.trim();
     if (!passphrase) return null;
-    if (passphrase.length < 10 || passphrase.length > 79) return undefined;
+    if (passphrase.length < SRT_PASSPHRASE_MIN_LEN || passphrase.length > SRT_PASSPHRASE_MAX_LEN)
+        return undefined;
     return passphrase;
 }
 
@@ -28,7 +32,9 @@ export function registerSettingsApi(app: Express, db: Db): void {
         if (passphrase === undefined) {
             return res
                 .status(400)
-                .json({ error: 'SRT passphrase must be blank or 10 to 79 characters' });
+                .json({
+                    error: `SRT passphrase must be blank or ${SRT_PASSPHRASE_MIN_LEN} to ${SRT_PASSPHRASE_MAX_LEN} characters`,
+                });
         }
 
         db.setSetting('serverName', name);

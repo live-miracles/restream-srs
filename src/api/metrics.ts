@@ -3,6 +3,9 @@ import fs from 'fs';
 import { execFile } from 'child_process';
 import type { Express } from 'express';
 
+const DISK_STATS_INTERVAL_MS = 30_000;
+const NET_STATS_INTERVAL_MS = 3_000;
+
 let prevCpu = os.cpus().map((c) => c.times);
 
 function getCpuPercent(): number {
@@ -87,9 +90,9 @@ function updateNetStats(): void {
 }
 
 updateDiskStats();
-setInterval(updateDiskStats, 30_000).unref();
+setInterval(updateDiskStats, DISK_STATS_INTERVAL_MS).unref();
 updateNetStats();
-setInterval(updateNetStats, 3_000).unref();
+setInterval(updateNetStats, NET_STATS_INTERVAL_MS).unref();
 
 export function registerMetricsApi(app: Express): void {
     app.get('/api/metrics/system', (_req, res) => {

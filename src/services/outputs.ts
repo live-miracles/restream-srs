@@ -11,6 +11,8 @@ function hasValidSinks(output: Output): boolean {
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000];
 const MAX_RETRIES = 100;
 const SIGKILL_DELAY_MS = 5000;
+const STDERR_TAIL_BYTES = 3000;
+const RESTART_STAGGER_MS = 200;
 const FFMPEG_CMD = process.env.FFMPEG_PATH || 'ffmpeg';
 
 const LAST_ERROR_TTL_MS = 60_000;
@@ -184,7 +186,7 @@ export function createOutputService(db: Db): OutputService {
 
         let stderrTail = '';
         child.stderr?.on('data', (d: Buffer) => {
-            stderrTail = (stderrTail + d.toString()).slice(-3000);
+            stderrTail = (stderrTail + d.toString()).slice(-STDERR_TAIL_BYTES);
         });
 
         child.on('error', (err) => {
@@ -277,7 +279,7 @@ export function createOutputService(db: Db): OutputService {
                 r.timer = setTimeout(() => {
                     r.timer = null;
                     void tryStart(output.id);
-                }, i * 200);
+                }, i * RESTART_STAGGER_MS);
                 r.timer.unref?.();
             });
         },

@@ -3,9 +3,12 @@ import fs from 'fs';
 import os from 'os';
 import type { Express } from 'express';
 
+const VERSION_EXEC_TIMEOUT_MS = 3000;
+const VERSION_FETCH_TIMEOUT_MS = 2000;
+
 function exec(cmd: string, args: string[]): Promise<string> {
     return new Promise((resolve) => {
-        execFile(cmd, args, { timeout: 3000 }, (_err, stdout, stderr) => {
+        execFile(cmd, args, { timeout: VERSION_EXEC_TIMEOUT_MS }, (_err, stdout, stderr) => {
             resolve((stdout || stderr).trim());
         });
     });
@@ -25,7 +28,7 @@ async function getSrsVersion(): Promise<string> {
     const srsApiUrl = process.env.SRS_API_URL ?? 'http://localhost:1985';
     try {
         const resp = await fetch(`${srsApiUrl}/api/v1/versions`, {
-            signal: AbortSignal.timeout(2000),
+            signal: AbortSignal.timeout(VERSION_FETCH_TIMEOUT_MS),
         });
         const data = (await resp.json()) as { data?: { version?: string } };
         return data?.data?.version ?? 'unknown';

@@ -80,6 +80,17 @@ export interface OutputStatus {
     lastErrorAt: number | null;
 }
 
+export interface SrsLogEvent {
+    ts: number;
+    type: 'up' | 'down';
+    message: string;
+}
+
+export interface SrsLogsData {
+    events: SrsLogEvent[];
+    logTail: string[];
+}
+
 export interface OutputLog {
     id: number;
     outputId: string;

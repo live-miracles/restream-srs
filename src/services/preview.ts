@@ -6,6 +6,8 @@ import { rtmpPullUrl, srtPullUrl } from '../utils/srs.js';
 import type { Db } from '../types.js';
 
 const FFMPEG_CMD = process.env.FFMPEG_PATH || 'ffmpeg';
+const STDERR_TAIL_BYTES = 2000;
+const STOP_WAIT_MS = 200;
 
 function resolveBaseDir(): string {
     const dbPath = process.env.DB_PATH || path.join(process.cwd(), 'data.db');
@@ -21,7 +23,7 @@ async function waitForPlaylist(m3u8Path: string, timeoutMs: number): Promise<voi
         } catch {
             /* not yet */
         }
-        await new Promise((r) => setTimeout(r, 200));
+        await new Promise((r) => setTimeout(r, STOP_WAIT_MS));
     }
     throw new Error('Preview timed out — no active input stream on this pipeline');
 }
@@ -132,7 +134,7 @@ export function createPreviewService(db: Db): PreviewService {
         // Keep the tail of ffmpeg stderr so a failed preview reports why.
         let stderrTail = '';
         proc.stderr?.on('data', (d: Buffer) => {
-            stderrTail = (stderrTail + d.toString()).slice(-2000);
+            stderrTail = (stderrTail + d.toString()).slice(-STDERR_TAIL_BYTES);
         });
 
         proc.on('exit', (code, signal) => {

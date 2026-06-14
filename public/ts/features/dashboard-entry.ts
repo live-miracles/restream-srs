@@ -12,6 +12,7 @@ import {
     submitPipelineForm,
     confirmDeletePipeline,
     showPipelineLogs,
+    showSrsLogs,
     openAddOutput,
     submitOutputForm,
     addSinkRow,
@@ -22,6 +23,7 @@ import {
 
 declare global {
     interface Window {
+        openSrsLogsBtn: () => Promise<void>;
         editServerNameBtn: () => void;
         serverNameFormBtn: () => Promise<void>;
         openSettingsBtn: () => void;
@@ -47,6 +49,7 @@ declare global {
     }
 }
 
+window.openSrsLogsBtn = () => showSrsLogs();
 window.editServerNameBtn = () => openEditServerName();
 window.serverNameFormBtn = () => submitServerNameForm();
 window.openSettingsBtn = () => openSettings();
