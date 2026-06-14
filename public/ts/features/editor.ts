@@ -313,8 +313,8 @@ let currentSinkTracks: AudioTrackInfo[] = [];
 function audioOptionsHtml(tracks: AudioTrackInfo[], selected: string): string {
     const seen = new Set<string>(['copy']);
     const options = [
-        '<option value="" disabled>Audio</option>',
-        `<option value="copy"${selected === 'copy' ? ' selected' : ''}>Copy</option>`,
+        '<option value="" disabled>Audio Encoding</option>',
+        `<option value="copy"${selected === 'copy' ? ' selected' : ''}>copy</option>`,
     ];
     for (const t of tracks) {
         const val = String(t.index);
@@ -364,6 +364,29 @@ function updateSinkRemoveButtons(): void {
     });
 }
 
+function isRtmpPullMethod(): boolean {
+    return (
+        (document.getElementById('out-pull-method-input') as HTMLSelectElement)?.value === 'rtmp'
+    );
+}
+
+export function onPullMethodChange(): void {
+    const rtmp = isRtmpPullMethod();
+    document
+        .querySelectorAll<HTMLSelectElement>('#out-sinks-container .js-sink-audio')
+        .forEach((sel) => {
+            if (rtmp) {
+                sel.innerHTML = '<option value="copy">copy</option>';
+                sel.value = 'copy';
+                sel.disabled = true;
+            } else {
+                const prev = sel.value;
+                sel.innerHTML = audioOptionsHtml(currentSinkTracks, prev);
+                sel.disabled = false;
+            }
+        });
+}
+
 function populateSinks(
     tracks: AudioTrackInfo[],
     sinks: { url: string; audioEncoding: string }[],
@@ -374,6 +397,7 @@ function populateSinks(
     const rows = sinks.length ? sinks : [{ url: '', audioEncoding: 'copy' }];
     container.innerHTML = rows.map((s) => sinkRowHtml(tracks, s.url, s.audioEncoding)).join('');
     updateSinkRemoveButtons();
+    onPullMethodChange();
 }
 
 export function addSinkRow(): void {
@@ -381,6 +405,7 @@ export function addSinkRow(): void {
     if (!container) return;
     container.insertAdjacentHTML('beforeend', sinkRowHtml(currentSinkTracks));
     updateSinkRemoveButtons();
+    onPullMethodChange();
 }
 
 export function removeSinkRow(btn: HTMLElement): void {

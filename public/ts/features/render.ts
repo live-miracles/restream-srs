@@ -452,9 +452,8 @@ function renderOutputCard(o: OutputView, inputLive: boolean): string {
                           .map((t) => `A${parseInt(t) + 1}`)
                           .join('+')}</span>`
                     : '';
-            const display = s.url.length > 27
-                ? s.url.slice(0, 25) + '...' + s.url.slice(-2)
-                : s.url;
+            const display =
+                s.url.length > 27 ? s.url.slice(0, 25) + '...' + s.url.slice(-2) : s.url;
             return `<div class="flex items-center gap-1 min-w-0">
                 <code class="text-xs font-normal opacity-60" title="${s.url}">${display}</code>${trackBadge}
             </div>`;
