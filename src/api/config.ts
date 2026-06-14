@@ -4,7 +4,7 @@ import { rtmpPublishUrl, srtPublishUrl } from '../utils/srs.js';
 import type { Db } from '../types.js';
 
 export function registerConfigApi(app: Express, db: Db): void {
-    app.get('/config', (_req, res) => {
+    app.get('/api/config', (_req, res) => {
         const srtPassphrase = db.getSetting('srtPassphrase') || null;
         const host = db.getSetting('publicHost') || 'localhost';
         const pipelines = db.listPipelines().map((p) => ({

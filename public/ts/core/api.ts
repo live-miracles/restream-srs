@@ -74,9 +74,9 @@ async function apiRequest<T>(
     }
 }
 
-export const getConfig = () => apiRequest<ConfigData>('/config');
+export const getConfig = () => apiRequest<ConfigData>('/api/config');
 export const getHealth = () => apiRequest<HealthData>('/api/health');
-export const getSystemMetrics = () => apiRequest<SystemMetrics>('/metrics/system');
+export const getSystemMetrics = () => apiRequest<SystemMetrics>('/api/metrics/system');
 
 export const updateServerName = (name: string) =>
     apiRequest('/api/settings/server-name', { method: 'POST', body: { name } });

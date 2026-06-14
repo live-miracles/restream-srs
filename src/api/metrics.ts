@@ -92,7 +92,7 @@ updateNetStats();
 setInterval(updateNetStats, 3_000).unref();
 
 export function registerMetricsApi(app: Express): void {
-    app.get('/metrics/system', (_req, res) => {
+    app.get('/api/metrics/system', (_req, res) => {
         const totalMem = os.totalmem();
         const freeMem = os.freemem();
         res.json({
