@@ -12,16 +12,12 @@ export function registerConfigApi(app: Express, db: Db): void {
             rtmpPublishUrl: rtmpPublishUrl(p.streamKey, host),
             srtPublishUrl: srtPublishUrl(p.streamKey, host, srtPassphrase),
         }));
-        const outputs = db.listOutputs();
-        const encodings = Object.keys(ENCODINGS);
-        const streamKeys = db.listStreamKeys();
-        const serverName = db.getSetting('serverName') ?? 'Restream SRS';
         res.json({
             pipelines,
-            outputs,
-            encodings,
-            streamKeys,
-            serverName,
+            outputs: db.listOutputs(),
+            encodings: Object.keys(ENCODINGS),
+            streamKeys: db.listStreamKeys(),
+            serverName: db.getSetting('serverName') ?? 'Restream SRS',
             srtPassphrase,
             publicHost: host,
         });

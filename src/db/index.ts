@@ -86,23 +86,6 @@ export function createDb(dbPath?: string): Db {
         return result;
     }
 
-    function rowToOutputWithSinks(
-        row: Record<string, unknown>,
-        sinksMap: Map<string, OutputSink[]>,
-    ): Output {
-        const id = row.id as string;
-        return {
-            id,
-            pipelineId: row.pipeline_id as number,
-            seq: row.seq as number,
-            name: row.name as string,
-            desiredState: row.desired_state as 'running' | 'stopped',
-            videoEncoding: (row.encoding as string) || 'copy',
-            pullMethod: (row.pull_method as PullMethod) || 'rtmp',
-            sinks: sinksMap.get(id) ?? [],
-        };
-    }
-
     function insertSinks(outputId: string, sinks: SinkInput[]): void {
         sinks.forEach((s, i) => {
             const seq = i + 1;
@@ -116,18 +99,21 @@ export function createDb(dbPath?: string): Db {
         });
     }
 
-    function rowToOutput(row: Record<string, unknown>): Output {
-        const id = row.id as string;
+    function mapOutputFields(row: Record<string, unknown>) {
         return {
-            id,
+            id: row.id as string,
             pipelineId: row.pipeline_id as number,
             seq: row.seq as number,
             name: row.name as string,
             desiredState: row.desired_state as 'running' | 'stopped',
             videoEncoding: (row.encoding as string) || 'copy',
             pullMethod: (row.pull_method as PullMethod) || 'rtmp',
-            sinks: sinksFor(id),
         };
+    }
+
+    function rowToOutput(row: Record<string, unknown>): Output {
+        const base = mapOutputFields(row);
+        return { ...base, sinks: sinksFor(base.id) };
     }
 
     function nextPipelineId(): number {
@@ -272,7 +258,10 @@ export function createDb(dbPath?: string): Db {
                 .prepare('SELECT * FROM outputs ORDER BY pipeline_id, seq')
                 .all() as Record<string, unknown>[];
             const sinksMap = sinksForMany(rows.map((r) => r.id as string));
-            return rows.map((r) => rowToOutputWithSinks(r, sinksMap));
+            return rows.map((r) => ({
+                ...mapOutputFields(r),
+                sinks: sinksMap.get(r.id as string) ?? [],
+            }));
         },
 
         listOutputsForPipeline(pipelineId: number): Output[] {
@@ -280,7 +269,10 @@ export function createDb(dbPath?: string): Db {
                 .prepare('SELECT * FROM outputs WHERE pipeline_id = ? ORDER BY seq')
                 .all(pipelineId) as Record<string, unknown>[];
             const sinksMap = sinksForMany(rows.map((r) => r.id as string));
-            return rows.map((r) => rowToOutputWithSinks(r, sinksMap));
+            return rows.map((r) => ({
+                ...mapOutputFields(r),
+                sinks: sinksMap.get(r.id as string) ?? [],
+            }));
         },
 
         updateOutput(id: string, { name, videoEncoding, pullMethod, sinks }): Output | null {
