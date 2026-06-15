@@ -83,6 +83,13 @@ export function createDb(dbPath?: string): Db {
         'SELECT id, pipeline_id, ts, event, message FROM pipeline_logs WHERE pipeline_id = ? ORDER BY id DESC LIMIT ?',
     );
 
+    const stmtCreateSession = sqlite.prepare(
+        'INSERT OR REPLACE INTO sessions (token, created_at) VALUES (?, ?)',
+    );
+    const stmtDeleteSession = sqlite.prepare('DELETE FROM sessions WHERE token = ?');
+    const stmtListSessions = sqlite.prepare('SELECT token FROM sessions');
+    const stmtPruneExpiredSessions = sqlite.prepare('DELETE FROM sessions WHERE created_at < ?');
+
     function sinksFor(outputId: string): OutputSink[] {
         return (stmtListSinks.all(outputId) as Record<string, unknown>[]).map((r) => ({
             seq: r.seq as number,
@@ -368,6 +375,22 @@ export function createDb(dbPath?: string): Db {
                     message: r.message as string,
                 }),
             );
+        },
+
+        createSession(token: string): void {
+            stmtCreateSession.run(token, Date.now());
+        },
+
+        deleteSession(token: string): void {
+            stmtDeleteSession.run(token);
+        },
+
+        listSessions(): string[] {
+            return (stmtListSessions.all() as { token: string }[]).map((r) => r.token);
+        },
+
+        pruneExpiredSessions(maxAgeMs: number): void {
+            stmtPruneExpiredSessions.run(Date.now() - maxAgeMs);
         },
     };
 }

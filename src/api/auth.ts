@@ -2,6 +2,8 @@ import type { Express, Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import type { Db } from '../types.js';
 
+const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
 const sessions = new Set<string>();
 
 function hashPassword(password: string): string {
@@ -46,8 +48,13 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
 }
 
 export function initializePassword(db: Db): void {
-    if (db.getSetting('dashboardPasswordHash')) return;
-    db.setSetting('dashboardPasswordHash', hashPassword('admin'));
+    if (!db.getSetting('dashboardPasswordHash')) {
+        db.setSetting('dashboardPasswordHash', hashPassword('admin'));
+    }
+    db.pruneExpiredSessions(SESSION_MAX_AGE_MS);
+    for (const token of db.listSessions()) {
+        sessions.add(token);
+    }
 }
 
 export function registerAuthApi(app: Express, db: Db): void {
@@ -59,13 +66,17 @@ export function registerAuthApi(app: Express, db: Db): void {
         }
         const token = crypto.randomBytes(32).toString('hex');
         sessions.add(token);
+        db.createSession(token);
         res.setHeader('Set-Cookie', `session=${token}; HttpOnly; Path=/; SameSite=Strict`);
         return res.json({ ok: true });
     });
 
     app.post('/api/auth/logout', requireAuth, (req, res) => {
         const token = getSessionToken(req);
-        if (token) sessions.delete(token);
+        if (token) {
+            sessions.delete(token);
+            db.deleteSession(token);
+        }
         res.setHeader('Set-Cookie', 'session=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0');
         return res.json({ ok: true });
     });

@@ -89,4 +89,11 @@ export function setupDatabaseSchema(db: Database.Database): void {
     db.prepare(
         `CREATE INDEX IF NOT EXISTS idx_pipeline_logs_pipeline ON pipeline_logs(pipeline_id, id DESC)`,
     ).run();
+
+    db.prepare(
+        `CREATE TABLE IF NOT EXISTS sessions (
+            token      TEXT PRIMARY KEY,
+            created_at INTEGER NOT NULL
+        )`,
+    ).run();
 }

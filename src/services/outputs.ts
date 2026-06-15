@@ -9,6 +9,8 @@ function hasValidSinks(output: Output): boolean {
 }
 
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000];
+// Intentionally low: the team actively monitors streams and manually restarts
+// outputs when needed, so giving up after ~27 minutes is acceptable behaviour.
 const MAX_RETRIES = 100;
 const SIGKILL_DELAY_MS = 5000;
 const STDERR_TAIL_BYTES = 3000;

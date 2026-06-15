@@ -92,4 +92,9 @@ export interface Db {
 
     appendPipelineLog(pipelineId: number, event: string, message: string): void;
     getPipelineLogs(pipelineId: number, limit?: number): PipelineLog[];
+
+    createSession(token: string): void;
+    deleteSession(token: string): void;
+    listSessions(): string[];
+    pruneExpiredSessions(maxAgeMs: number): void;
 }

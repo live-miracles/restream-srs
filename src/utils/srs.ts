@@ -49,20 +49,27 @@ export interface SrsStream {
 }
 
 export async function kickSrsClientsByStream(app: string, stream: string): Promise<void> {
-    const res = await fetch(`${SRS_API_URL}/api/v1/clients?start=0&count=100`, {
-        signal: AbortSignal.timeout(SRS_CLIENT_FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) return;
-    const data = (await res.json()) as {
-        clients?: Array<{ id: string; app: string; stream: string }>;
-    };
-    for (const client of data.clients ?? []) {
-        if (client.app === app && client.stream === stream) {
-            await fetch(`${SRS_API_URL}/api/v1/clients/${client.id}`, {
-                method: 'DELETE',
-                signal: AbortSignal.timeout(SRS_CLIENT_FETCH_TIMEOUT_MS),
-            }).catch(() => {});
+    const PAGE_SIZE = 100;
+    let start = 0;
+    while (true) {
+        const res = await fetch(`${SRS_API_URL}/api/v1/clients?start=${start}&count=${PAGE_SIZE}`, {
+            signal: AbortSignal.timeout(SRS_CLIENT_FETCH_TIMEOUT_MS),
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+            clients?: Array<{ id: string; app: string; stream: string }>;
+        };
+        const clients = data.clients ?? [];
+        for (const client of clients) {
+            if (client.app === app && client.stream === stream) {
+                await fetch(`${SRS_API_URL}/api/v1/clients/${client.id}`, {
+                    method: 'DELETE',
+                    signal: AbortSignal.timeout(SRS_CLIENT_FETCH_TIMEOUT_MS),
+                }).catch(() => {});
+            }
         }
+        if (clients.length < PAGE_SIZE) break;
+        start += PAGE_SIZE;
     }
 }
 
