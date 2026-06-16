@@ -160,7 +160,6 @@ srt://localhost:10080?streamid=%23!::r=live/<stream-key>,m=request
 | POST | `/api/pipelines/:id/outputs/:outId/start` | Start output |
 | POST | `/api/pipelines/:id/outputs/:outId/stop` | Stop output |
 | POST | `/api/settings` | Update settings `{ name, srtPassphrase, publicHost }` |
-| POST | `/api/settings/server-name` | Set server display name `{ name }` |
 | POST | `/api/auth/login` | Login `{ password }` — sets session cookie |
 | POST | `/api/auth/logout` | Logout — clears session cookie |
 | POST | `/api/auth/change-password` | Change password `{ currentPassword, newPassword }` |

@@ -83,9 +83,6 @@ export const getConfig = () => apiRequest<ConfigData>('/api/config');
 export const getHealth = () => apiRequest<HealthData>('/api/health');
 export const getSystemMetrics = () => apiRequest<SystemMetrics>('/api/metrics/system');
 
-export const updateServerName = (name: string) =>
-    apiRequest('/api/settings/server-name', { method: 'POST', body: { name } });
-
 export const updateSettings = (name: string, srtPassphrase: string | null, publicHost: string) =>
     apiRequest('/api/settings', { method: 'POST', body: { name, srtPassphrase, publicHost } });
 

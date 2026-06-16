@@ -67,11 +67,4 @@ export function registerSettingsApi(app: Express, db: Db): void {
         const streamKeys = db.regenerateStreamKeys();
         return res.json({ streamKeys });
     });
-
-    app.post('/api/settings/server-name', (req, res) => {
-        const name = (req.body?.name as string | undefined)?.trim();
-        if (!name) return res.status(400).json({ error: 'name is required' });
-        db.setSetting('serverName', name);
-        return res.json({ serverName: name });
-    });
 }

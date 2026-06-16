@@ -1,8 +1,6 @@
 import { getUrlParam, setUrlParam, copyText } from '../core/utils.js';
 import { refreshDashboard } from './dashboard.js';
 import {
-    openEditServerName,
-    submitServerNameForm,
     openSettings,
     submitSettingsForm,
     logoutUser,
@@ -24,8 +22,6 @@ import {
 declare global {
     interface Window {
         openSrsLogsBtn: () => Promise<void>;
-        editServerNameBtn: () => void;
-        serverNameFormBtn: () => Promise<void>;
         openSettingsBtn: () => void;
         settingsFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
         logoutBtn: () => Promise<void>;
@@ -50,15 +46,13 @@ declare global {
 }
 
 window.openSrsLogsBtn = () => showSrsLogs();
-window.editServerNameBtn = () => openEditServerName();
-window.serverNameFormBtn = () => submitServerNameForm();
 window.openSettingsBtn = () => openSettings();
 window.settingsFormBtn = (btn) => submitSettingsForm(btn);
 window.logoutBtn = () => logoutUser();
 window.regenerateStreamKeysBtn = (btn) => regenerateStreamKeysBtn(btn);
 
 window.selectPipeline = (id) => {
-    void import('./render.js').then(({ stopCurrentPreview }) => stopCurrentPreview());
+    void import('./preview.js').then(({ stopCurrentPreview }) => stopCurrentPreview());
     setUrlParam('p', id);
     void refreshDashboard();
 };
@@ -101,16 +95,16 @@ window.previewPlayBtn = async () => {
     if (!id) return;
     const [{ startPreview }, { attachHls, selectedPreviewTrack }] = await Promise.all([
         import('../core/api.js'),
-        import('./render.js'),
+        import('./preview.js'),
     ]);
     const result = await startPreview(id, selectedPreviewTrack());
     if (result?.hlsUrl) attachHls(id, result.hlsUrl);
 };
 
 window.previewStopBtn = () => {
-    void import('./render.js').then(({ stopCurrentPreview }) => stopCurrentPreview());
+    void import('./preview.js').then(({ stopCurrentPreview }) => stopCurrentPreview());
 };
 
 window.previewTrackChange = () => {
-    void import('./render.js').then(({ previewTrackChange }) => previewTrackChange());
+    void import('./preview.js').then(({ previewTrackChange }) => previewTrackChange());
 };

@@ -10,7 +10,7 @@ import { registerMetricsApi } from './api/metrics.js';
 import { registerSettingsApi } from './api/settings.js';
 import { createPreviewService } from './services/preview.js';
 import { registerPreviewApi } from './api/preview.js';
-import { registerSrsHooks } from './api/srs-hooks.js';
+import { registerSrsHooks, registerSrsLogsApi } from './api/srs.js';
 import {
     registerAuthApi,
     requireAuth,
@@ -18,7 +18,6 @@ import {
     checkIsAuthenticated,
 } from './api/auth.js';
 import { registerVersionApi } from './api/version.js';
-import { registerSrsLogsApi } from './api/srs-logs.js';
 import { writeSrsConf } from './utils/conf.js';
 
 const app = express();

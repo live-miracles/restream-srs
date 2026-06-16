@@ -103,16 +103,6 @@ export async function regenerateStreamKeysBtn(btn?: HTMLButtonElement): Promise<
     });
 }
 
-// ── Server name ───────────────────────────────────────
-
-export function openEditServerName(): void {
-    openSettings();
-}
-
-export async function submitServerNameForm(): Promise<void> {
-    await submitSettingsForm();
-}
-
 // ── Pipeline ──────────────────────────────────────────
 
 function pipeModal(): HTMLDialogElement {
@@ -695,5 +685,5 @@ export async function showSrsLogs(): Promise<void> {
     }
 
     contentEl.innerHTML = html;
-    contentEl.scrollTop = contentEl.scrollHeight;
+    contentEl.scrollTop = 0;
 }

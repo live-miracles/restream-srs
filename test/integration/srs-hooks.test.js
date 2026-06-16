@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const express = require('express');
 const { Readable, Writable } = require('node:stream');
 
-const { registerSrsHooks } = require('../../src/api/srs-hooks');
+const { registerSrsHooks } = require('../../src/api/srs');
 
 class MockRequest extends Readable {
     constructor(method, url, body) {
