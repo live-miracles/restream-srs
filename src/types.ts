@@ -71,6 +71,7 @@ export interface Db {
         pullMethod?: PullMethod;
         sinks: SinkInput[];
     }): Output;
+    getOutput(id: string): Output | null;
     listOutputs(): Output[];
     listOutputsForPipeline(pipelineId: number): Output[];
     updateOutput(

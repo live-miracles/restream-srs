@@ -84,7 +84,7 @@ describe('buildFfmpegArgs', () => {
         assert.deepEqual(maps, ['0:v:0', '0:a:1']);
     });
 
-    test('fans out to multiple sinks in one command', () => {
+    test('fans out to multiple sinks in one command (copy encoding, per-output args)', () => {
         const args = buildFfmpegArgs('rtmp://in', [
             sink('rtmp://en', '0'),
             sink('srt://fr:10080', '1'),
@@ -99,6 +99,45 @@ describe('buildFfmpegArgs', () => {
             args.filter((a, i) => args[i - 1] === '-map'),
             ['0:v:0', '0:a:0', '0:v:0', '0:a:1'],
         );
+    });
+
+    test('multiple sinks with non-copy encoding and uniform audio use tee muxer', () => {
+        const args = buildFfmpegArgs(
+            'rtmp://in',
+            [sink('rtmp://out1'), sink('srt://out2:10080')],
+            '720p',
+        );
+        // tee muxer: exactly one -f tee
+        const fIndices = args.reduce((acc, a, i) => (a === '-f' ? [...acc, i] : acc), []);
+        assert.equal(fIndices.length, 1);
+        assert.equal(args[fIndices[0] + 1], 'tee');
+        // tee spec contains both URLs with correct formats
+        const teeSpec = args[args.length - 1];
+        assert.ok(teeSpec.includes('[f=flv]rtmp://out1'));
+        assert.ok(teeSpec.includes('[f=mpegts]srt://out2:10080'));
+        // encoding args appear only once
+        assert.equal(args.filter((a) => a === 'libx264').length, 1);
+        assert.ok(args.some((a) => String(a).includes('1280:720')));
+    });
+
+    test('multiple sinks with non-copy encoding and different audio fall back to per-output args', () => {
+        const args = buildFfmpegArgs(
+            'rtmp://in',
+            [sink('rtmp://out1', '0'), sink('rtmp://out2', '1')],
+            '720p',
+        );
+        // no tee muxer
+        assert.ok(!args.includes('tee'));
+        assert.ok(args.includes('rtmp://out1'));
+        assert.ok(args.includes('rtmp://out2'));
+        // encoding applied per sink
+        assert.equal(args.filter((a) => a === 'libx264').length, 2);
+    });
+
+    test('single sink with non-copy encoding does not use tee', () => {
+        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')], '1080p');
+        assert.ok(!args.includes('tee'));
+        assert.ok(args.some((a) => String(a).includes('1920:1080')));
     });
 });
 

@@ -57,6 +57,12 @@ export interface SinkSpec {
 // Build a single ffmpeg command that pulls the input once and fans it out to
 // every sink. The shared video encoding is applied per sink; each sink picks its
 // own audio track(s) via -map. SRT sinks use mpegts, everything else uses flv.
+//
+// When encoding video (non-copy) with multiple sinks that share the same audio
+// encoding, the tee muxer is used so ffmpeg encodes once and fans out — avoids
+// paying N× CPU for N sinks. Falls back to per-output args when sinks have
+// different audio encodings (mixed-track SRT layouts), where tee select mapping
+// would be complex and the configuration is rare.
 export function buildFfmpegArgs(
     inputUrl: string,
     sinks: SinkSpec[],
@@ -64,6 +70,21 @@ export function buildFfmpegArgs(
 ): string[] {
     const encArgs = ENCODINGS[videoEncoding] ?? ENCODINGS.copy;
     const args: string[] = ['-i', inputUrl, '-progress', 'pipe:1'];
+
+    const useTee =
+        videoEncoding !== 'copy' &&
+        sinks.length > 1 &&
+        sinks.every((s) => s.audioEncoding === sinks[0].audioEncoding);
+
+    if (useTee) {
+        const mapArgs = buildAudioMapArgs(sinks[0].audioEncoding);
+        const teeSpec = sinks
+            .map((s) => `[f=${s.url.startsWith('srt://') ? 'mpegts' : 'flv'}]${s.url}`)
+            .join('|');
+        args.push(...mapArgs, ...encArgs, '-f', 'tee', teeSpec);
+        return args;
+    }
+
     for (const sink of sinks) {
         const mapArgs = buildAudioMapArgs(sink.audioEncoding);
         const isSrt = sink.url.startsWith('srt://');

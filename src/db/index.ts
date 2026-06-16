@@ -58,9 +58,15 @@ export function createDb(dbPath?: string): Db {
     const stmtLoadSinks = sqlite.prepare(
         'SELECT output_id, seq, url, audio_encoding FROM output_sinks ORDER BY output_id, seq',
     );
+    // Targeted single-row lookups for the hot retry / process-exit paths.
+    const stmtGetOutput = sqlite.prepare('SELECT * FROM outputs WHERE id = ?');
+    const stmtGetSinksByOutput = sqlite.prepare(
+        'SELECT seq, url, audio_encoding FROM output_sinks WHERE output_id = ? ORDER BY seq',
+    );
 
     // Write prepared statements
     const stmtDeleteSinks = sqlite.prepare('DELETE FROM output_sinks WHERE output_id = ?');
+    const stmtUpdateStreamKey = sqlite.prepare('UPDATE stream_keys SET key = ? WHERE id = ?');
     const stmtInsertSink = sqlite.prepare(
         'INSERT INTO output_sinks (id, output_id, seq, url, audio_encoding) VALUES (?, ?, ?, ?, ?)',
     );
@@ -127,6 +133,34 @@ export function createDb(dbPath?: string): Db {
         });
     }
 
+    function rowToOutput(
+        row: Record<string, unknown>,
+        sinkRows: Record<string, unknown>[],
+    ): Output {
+        const id = row.id as string;
+        return {
+            id,
+            pipelineId: row.pipeline_id as number,
+            seq: row.seq as number,
+            name: row.name as string,
+            desiredState: row.desired_state as 'running' | 'stopped',
+            videoEncoding: (row.encoding as string) || 'copy',
+            pullMethod: (row.pull_method as PullMethod) || 'rtmp',
+            sinks: sinkRows.map((r) => ({
+                seq: r.seq as number,
+                url: r.url as string,
+                audioEncoding: (r.audio_encoding as string) || 'copy',
+            })),
+        };
+    }
+
+    function getOutputById(id: string): Output | null {
+        const row = stmtGetOutput.get(id) as Record<string, unknown> | undefined;
+        if (!row) return null;
+        const sinkRows = stmtGetSinksByOutput.all(id) as Record<string, unknown>[];
+        return rowToOutput(row, sinkRows);
+    }
+
     function insertSinks(outputId: string, sinks: SinkInput[]): void {
         sinks.forEach((s, i) => {
             const seq = i + 1;
@@ -180,9 +214,7 @@ export function createDb(dbPath?: string): Db {
             sqlite.transaction(() => {
                 for (const row of rows) {
                     const newKey = `key${String(row.slot).padStart(2, '0')}_${crypto.randomBytes(16).toString('hex')}`;
-                    sqlite
-                        .prepare('UPDATE stream_keys SET key = ? WHERE id = ?')
-                        .run(newKey, row.id);
+                    stmtUpdateStreamKey.run(newKey, row.id);
                 }
             })();
             return (
@@ -260,6 +292,10 @@ export function createDb(dbPath?: string): Db {
             return loadAllOutputs().find((o) => o.id === id)!;
         },
 
+        getOutput(id: string): Output | null {
+            return getOutputById(id);
+        },
+
         listOutputs(): Output[] {
             return loadAllOutputs();
         },
@@ -285,7 +321,7 @@ export function createDb(dbPath?: string): Db {
             sqlite
                 .prepare('UPDATE outputs SET desired_state = ? WHERE id = ?')
                 .run(desiredState, id);
-            return loadAllOutputs().find((o) => o.id === id) ?? null;
+            return getOutputById(id);
         },
 
         deleteOutput(id: string): boolean {
