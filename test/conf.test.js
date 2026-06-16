@@ -9,6 +9,14 @@ const path = require('node:path');
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'restream-srs-conf-'));
 process.env.SRS_CONF_PATH = path.join(tempDir, 'srs.conf');
 
+// writeSrsConf patches an existing file, so seed a minimal conf with the
+// srt_server block that the passphrase injection regex targets.
+fs.writeFileSync(
+    process.env.SRS_CONF_PATH,
+    'srt_server {\n    enabled     on;\n    listen      10080;\n}\n',
+    'utf8',
+);
+
 const { writeSrsConf } = require('../src/utils/conf');
 
 describe('SRS config generation', () => {
