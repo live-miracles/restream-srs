@@ -1,4 +1,11 @@
-import type { ConfigData, HealthData, InputHealth, PipelineView, OutputView } from '../types.js';
+import type {
+    ConfigData,
+    HealthData,
+    InputHealth,
+    OutputErrors,
+    PipelineView,
+    OutputView,
+} from '../types.js';
 
 const EMPTY_INPUT: InputHealth = {
     live: false,
@@ -15,6 +22,7 @@ const EMPTY_INPUT: InputHealth = {
 export function parsePipelines(
     config: Partial<ConfigData>,
     health: Partial<HealthData>,
+    outputErrors?: OutputErrors,
 ): PipelineView[] {
     const pipelines = config.pipelines ?? [];
     const outputs = config.outputs ?? [];
@@ -27,6 +35,7 @@ export function parsePipelines(
         const pipelineOutputs = outputs.filter((o) => String(o.pipelineId) === String(p.id));
         const outs: OutputView[] = pipelineOutputs.map((o) => {
             const oh = ph?.outputs?.[o.id];
+            const err = outputErrors?.[o.id] ?? null;
             return {
                 ...o,
                 status: oh?.status ?? 'stopped',
@@ -34,8 +43,8 @@ export function parsePipelines(
                 bitrateKbps: oh?.bitrateKbps ?? null,
                 retries: oh?.retries ?? 0,
                 startedAtMs: oh?.startedAtMs ?? null,
-                lastError: oh?.lastError ?? null,
-                lastErrorAt: oh?.lastErrorAt ?? null,
+                lastError: err?.message ?? null,
+                lastErrorAt: err?.ts ?? null,
             };
         });
 

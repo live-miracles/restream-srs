@@ -40,7 +40,6 @@ interface PipelineHealth {
             bitrateKbps: number | null;
             retries: number;
             startedAtMs: number | null;
-            lastError: string | null;
         }
     >;
 }
@@ -276,8 +275,6 @@ export function createHealthService(db: Db, outputService: OutputService) {
                     bitrateKbps: number | null;
                     retries: number;
                     startedAtMs: number | null;
-                    lastError: string | null;
-                    lastErrorAt: number | null;
                 }
             > = {};
             for (const outId of outputsByPipeline.get(pipeline.id) ?? []) {

@@ -85,6 +85,18 @@ export function createDb(dbPath?: string): Db {
     const stmtGetOutputLogs = sqlite.prepare(
         'SELECT id, output_id, ts, event, message FROM output_logs WHERE output_id = ? ORDER BY id DESC LIMIT ?',
     );
+    // Returns the latest log entry per output, but only if that entry is an error event.
+    // Any subsequent start/stop/reconnect entry suppresses the error automatically.
+    const stmtGetLatestOutputErrors = sqlite.prepare(`
+        SELECT ol.output_id, ol.ts, ol.message
+        FROM output_logs ol
+        INNER JOIN (
+            SELECT output_id, MAX(id) AS max_id
+            FROM output_logs
+            GROUP BY output_id
+        ) latest ON ol.id = latest.max_id
+        WHERE ol.event = 'error'
+    `);
     const stmtInsertPipelineLog = sqlite.prepare(
         'INSERT INTO pipeline_logs (pipeline_id, ts, event, message) VALUES (?, ?, ?, ?)',
     );
@@ -346,6 +358,19 @@ export function createDb(dbPath?: string): Db {
                     message: r.message as string,
                 }),
             );
+        },
+
+        getLatestOutputErrors(): Record<string, { ts: number; message: string }> {
+            const rows = stmtGetLatestOutputErrors.all() as {
+                output_id: string;
+                ts: number;
+                message: string;
+            }[];
+            const result: Record<string, { ts: number; message: string }> = {};
+            for (const r of rows) {
+                result[r.output_id] = { ts: r.ts, message: r.message };
+            }
+            return result;
         },
 
         appendPipelineLog(pipelineId: number, event: string, message: string): void {

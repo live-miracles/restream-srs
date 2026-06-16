@@ -76,9 +76,9 @@ export interface OutputStatus {
     bitrateKbps: number | null;
     retries: number;
     startedAtMs: number | null;
-    lastError: string | null;
-    lastErrorAt: number | null;
 }
+
+export type OutputErrors = Record<string, { ts: number; message: string }>;
 
 export interface SrsLogEvent {
     ts: number;

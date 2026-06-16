@@ -17,16 +17,12 @@ const STDERR_TAIL_BYTES = 3000;
 const RESTART_STAGGER_MS = 200;
 const FFMPEG_CMD = process.env.FFMPEG_PATH || 'ffmpeg';
 
-const LAST_ERROR_TTL_MS = 60_000;
-
 interface OutputStats {
     status: 'running' | 'stopped' | 'failed';
     pid: number | null;
     bitrateKbps: number | null;
     retries: number;
     startedAtMs: number | null;
-    lastError: string | null;
-    lastErrorAt: number | null;
 }
 
 export interface OutputService {
@@ -51,19 +47,14 @@ export function createOutputService(db: Db): OutputService {
     const startLocks = new Set<string>();
     const retryState = new Map<string, { failures: number; timer: NodeJS.Timeout | null }>();
     const exhausted = new Set<string>();
-    const lastErrors = new Map<string, { message: string; ts: number }>();
 
     function getStats(outputId: string): OutputStats {
         const s = statuses.get(outputId) ?? { status: 'stopped' as const, pid: null };
-        const err = lastErrors.get(outputId);
-        const fresh = err && Date.now() - err.ts < LAST_ERROR_TTL_MS ? err : null;
         return {
             ...s,
             bitrateKbps: bitrates.get(outputId) ?? null,
             retries: retryState.get(outputId)?.failures ?? 0,
             startedAtMs: startTimes.get(outputId) ?? null,
-            lastError: fresh?.message ?? null,
-            lastErrorAt: fresh?.ts ?? null,
         };
     }
 
@@ -205,7 +196,6 @@ export function createOutputService(db: Db): OutputService {
             );
 
             if (!wasStop && code !== 0 && stderrTail) {
-                lastErrors.set(output.id, { message: stderrTail.trim(), ts: Date.now() });
                 try {
                     db.appendOutputLog(
                         output.id,
