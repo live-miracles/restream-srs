@@ -59,9 +59,14 @@ export function createDb(dbPath?: string): Db {
         'SELECT output_id, seq, url, audio_encoding FROM output_sinks ORDER BY output_id, seq',
     );
     // Targeted single-row lookups for the hot retry / process-exit paths.
+    const stmtGetPipeline = sqlite.prepare(`${PIPELINE_SELECT} WHERE p.id = ?`);
     const stmtGetOutput = sqlite.prepare('SELECT * FROM outputs WHERE id = ?');
     const stmtGetSinksByOutput = sqlite.prepare(
         'SELECT seq, url, audio_encoding FROM output_sinks WHERE output_id = ? ORDER BY seq',
+    );
+    const stmtGetSetting = sqlite.prepare('SELECT value FROM settings WHERE key = ?');
+    const stmtSetSetting = sqlite.prepare(
+        'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
     );
 
     // Write prepared statements
@@ -183,18 +188,12 @@ export function createDb(dbPath?: string): Db {
 
     return {
         getSetting(key: string): string | null {
-            const row = sqlite.prepare('SELECT value FROM settings WHERE key = ?').get(key) as
-                | { value: string }
-                | undefined;
+            const row = stmtGetSetting.get(key) as { value: string } | undefined;
             return row?.value ?? null;
         },
 
         setSetting(key: string, value: string): void {
-            sqlite
-                .prepare(
-                    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
-                )
-                .run(key, value);
+            stmtSetSetting.run(key, value);
         },
 
         listStreamKeys(): StreamKey[] {
@@ -244,7 +243,8 @@ export function createDb(dbPath?: string): Db {
         },
 
         getPipeline(id: number): Pipeline | undefined {
-            return loadAllPipelines().find((p) => p.id === id);
+            const row = stmtGetPipeline.get(id) as Record<string, unknown> | undefined;
+            return row ? rowToPipeline(row) : undefined;
         },
 
         listPipelines(): Pipeline[] {

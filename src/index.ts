@@ -85,15 +85,6 @@ app.use('/', express.static(publicDir));
 async function main(): Promise<void> {
     writeSrsConf(db.getSetting('srtPassphrase') || null);
 
-    const allOutputs = db.listOutputs();
-    for (const output of allOutputs) {
-        if (output.desiredState === 'running') {
-            outputService.start(output.id).catch(() => {
-                /* will retry */
-            });
-        }
-    }
-
     healthService.start();
 
     app.listen(PORT, () => {
