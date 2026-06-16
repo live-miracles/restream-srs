@@ -21,7 +21,8 @@ const PIPELINE_SELECT = `
 `;
 
 const STREAM_KEY_SLOTS = 99;
-const LOG_RETENTION_LIMIT = 50;
+const LOG_RETENTION_LIMIT = 100;
+const PIPELINE_LOG_CAP = 100;
 
 function rowToPipeline(row: Record<string, unknown>): Pipeline {
     return {
@@ -78,10 +79,8 @@ export function createDb(dbPath?: string): Db {
     const stmtInsertOutputLog = sqlite.prepare(
         'INSERT INTO output_logs (output_id, ts, event, message) VALUES (?, ?, ?, ?)',
     );
-    const stmtPruneOutputLogs = sqlite.prepare(
-        `DELETE FROM output_logs WHERE output_id = ? AND id NOT IN (
-            SELECT id FROM output_logs WHERE output_id = ? ORDER BY id DESC LIMIT ${LOG_RETENTION_LIMIT}
-        )`,
+    const stmtGetLastOutputLog = sqlite.prepare(
+        'SELECT event, message FROM output_logs WHERE output_id = ? ORDER BY id DESC LIMIT 1',
     );
     const stmtGetOutputLogs = sqlite.prepare(
         'SELECT id, output_id, ts, event, message FROM output_logs WHERE output_id = ? ORDER BY id DESC LIMIT ?',
@@ -91,7 +90,7 @@ export function createDb(dbPath?: string): Db {
     );
     const stmtPrunePipelineLogs = sqlite.prepare(
         `DELETE FROM pipeline_logs WHERE pipeline_id = ? AND id NOT IN (
-            SELECT id FROM pipeline_logs WHERE pipeline_id = ? ORDER BY id DESC LIMIT ${LOG_RETENTION_LIMIT}
+            SELECT id FROM pipeline_logs WHERE pipeline_id = ? ORDER BY id DESC LIMIT ${PIPELINE_LOG_CAP}
         )`,
     );
     const stmtGetPipelineLogs = sqlite.prepare(
@@ -330,8 +329,11 @@ export function createDb(dbPath?: string): Db {
         },
 
         appendOutputLog(outputId: string, event: string, message: string): void {
+            const last = stmtGetLastOutputLog.get(outputId) as
+                | { event: string; message: string }
+                | undefined;
+            if (last?.event === event && last?.message === message) return;
             stmtInsertOutputLog.run(outputId, Date.now(), event, message);
-            stmtPruneOutputLogs.run(outputId, outputId);
         },
 
         getOutputLogs(outputId: string, limit = LOG_RETENTION_LIMIT): OutputLog[] {

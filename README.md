@@ -2,6 +2,8 @@
 
 Minimal streaming server — takes RTMP/SRT inputs and restreams them to multiple RTMP/SRT outputs. Built on [SRS](https://github.com/ossrs/srs) for ingest and FFmpeg for outputs. Node.js + TypeScript backend.
 
+Designed to handle tens of simultaneous pipelines (inputs) and hundreds of output forwards running continuously across long events.
+
 ```
 OBS / ffmpeg  ──RTMP──►  SRS (1935)   ──FFmpeg──►  YouTube / Facebook / ...
               ──SRT───►  SRS (10080)  ──FFmpeg──►  rtmp:// or srt://
