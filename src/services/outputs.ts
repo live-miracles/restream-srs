@@ -116,7 +116,7 @@ export function createOutputService(db: Db): OutputService {
         if (exhausted.has(outputId)) return;
         startLocks.add(outputId);
         try {
-            const output = db.getOutput(outputId);
+            const output = db.listOutputs().find((o) => o.id === outputId);
             if (!output || output.desiredState !== 'running') return;
             if (statuses.get(outputId)?.status === 'running') return;
             await startJob(output);
@@ -217,7 +217,10 @@ export function createOutputService(db: Db): OutputService {
                 }
             }
 
-            if (!wasStop && db.getOutput(output.id)?.desiredState === 'running') {
+            if (
+                !wasStop &&
+                db.listOutputs().find((o) => o.id === output.id)?.desiredState === 'running'
+            ) {
                 getRetry(output.id).failures++;
                 scheduleRetry(output);
             }
@@ -230,7 +233,7 @@ export function createOutputService(db: Db): OutputService {
         async start(outputId: string): Promise<void> {
             if (startLocks.has(outputId)) return;
             if (statuses.get(outputId)?.status === 'running') return;
-            const output = db.getOutput(outputId);
+            const output = db.listOutputs().find((o) => o.id === outputId);
             if (!output) throw new Error('Output not found');
             if (!hasValidSinks(output)) throw new Error('Invalid output URL');
             exhausted.delete(outputId);

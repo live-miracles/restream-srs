@@ -61,8 +61,8 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
 
     app.post('/api/pipelines/:pipelineId/outputs/:outId', (req, res) => {
         const { pipelineId, outId } = req.params;
-        const output = db.getOutput(outId);
-        if (!output || output.pipelineId !== parseInt(pipelineId)) {
+        const output = db.listOutputsForPipeline(parseInt(pipelineId)).find((o) => o.id === outId);
+        if (!output) {
             return res.status(404).json({ error: 'Output not found' });
         }
 
@@ -88,8 +88,8 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
 
     app.delete('/api/pipelines/:pipelineId/outputs/:outId', async (req, res) => {
         const { pipelineId, outId } = req.params;
-        const output = db.getOutput(outId);
-        if (!output || output.pipelineId !== parseInt(pipelineId)) {
+        const output = db.listOutputsForPipeline(parseInt(pipelineId)).find((o) => o.id === outId);
+        if (!output) {
             return res.status(404).json({ error: 'Output not found' });
         }
 
@@ -101,8 +101,8 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
 
     app.post('/api/pipelines/:pipelineId/outputs/:outId/start', async (req, res) => {
         const { pipelineId, outId } = req.params;
-        const output = db.getOutput(outId);
-        if (!output || output.pipelineId !== parseInt(pipelineId)) {
+        const output = db.listOutputsForPipeline(parseInt(pipelineId)).find((o) => o.id === outId);
+        if (!output) {
             return res.status(404).json({ error: 'Output not found' });
         }
 
@@ -122,8 +122,8 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
 
     app.post('/api/pipelines/:pipelineId/outputs/:outId/stop', async (req, res) => {
         const { pipelineId, outId } = req.params;
-        const output = db.getOutput(outId);
-        if (!output || output.pipelineId !== parseInt(pipelineId)) {
+        const output = db.listOutputsForPipeline(parseInt(pipelineId)).find((o) => o.id === outId);
+        if (!output) {
             return res.status(404).json({ error: 'Output not found' });
         }
 
@@ -139,8 +139,8 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
 
     app.get('/api/pipelines/:pipelineId/outputs/:outId/logs', (req, res) => {
         const { pipelineId, outId } = req.params;
-        const output = db.getOutput(outId);
-        if (!output || output.pipelineId !== parseInt(pipelineId)) {
+        const output = db.listOutputsForPipeline(parseInt(pipelineId)).find((o) => o.id === outId);
+        if (!output) {
             return res.status(404).json({ error: 'Output not found' });
         }
         return res.json(db.getOutputLogs(outId));

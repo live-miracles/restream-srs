@@ -104,7 +104,7 @@ describe('Output CRUD', () => {
             name: 'YouTube',
             sinks: [{ url: 'rtmp://a.rtmp.youtube.com/live2/key' }],
         });
-        const got = db.getOutput(o.id);
+        const got = db.listOutputs().find((out) => out.id === o.id);
         assert.equal(got?.name, 'YouTube');
         assert.equal(got?.sinks.length, 1);
         assert.equal(got?.sinks[0].url, 'rtmp://a.rtmp.youtube.com/live2/key');
@@ -126,7 +126,7 @@ describe('Output CRUD', () => {
                 { url: 'rtmp://fr', audioEncoding: '1' },
             ],
         });
-        const got = db.getOutput(o.id);
+        const got = db.listOutputs().find((out) => out.id === o.id);
         assert.equal(got?.pullMethod, 'srt');
         assert.equal(got?.sinks.length, 2);
         assert.deepEqual(
@@ -163,7 +163,7 @@ describe('Output CRUD', () => {
         const p = db.createPipeline();
         const o = db.createOutput({ pipelineId: p.id, name: 'X', sinks: [{ url: 'rtmp://x' }] });
         db.setOutputDesiredState(o.id, 'running');
-        assert.equal(db.getOutput(o.id)?.desiredState, 'running');
+        assert.equal(db.listOutputs().find((out) => out.id === o.id)?.desiredState, 'running');
     });
 
     test('updateOutput persists name, encoding, pullMethod, and sink changes', () => {
@@ -180,7 +180,7 @@ describe('Output CRUD', () => {
             pullMethod: 'srt',
             sinks: [{ url: 'rtmp://new', audioEncoding: '2' }],
         });
-        const got = db.getOutput(o.id);
+        const got = db.listOutputs().find((out) => out.id === o.id);
         assert.equal(got?.name, 'New');
         assert.equal(got?.videoEncoding, '720p');
         assert.equal(got?.pullMethod, 'srt');
@@ -203,7 +203,7 @@ describe('Output CRUD', () => {
             pullMethod: 'rtmp',
             sinks: [{ url: 'rtmp://only' }],
         });
-        assert.equal(db.getOutput(o.id)?.sinks.length, 1);
+        assert.equal(db.listOutputs().find((out) => out.id === o.id)?.sinks.length, 1);
     });
 
     test('deleteOutput removes the output', () => {
@@ -211,7 +211,10 @@ describe('Output CRUD', () => {
         const p = db.createPipeline();
         const o = db.createOutput({ pipelineId: p.id, name: 'X', sinks: [{ url: 'rtmp://x' }] });
         assert.ok(db.deleteOutput(o.id));
-        assert.equal(db.getOutput(o.id), undefined);
+        assert.equal(
+            db.listOutputs().find((out) => out.id === o.id),
+            undefined,
+        );
     });
 
     test('deleting a pipeline cascades to its outputs', () => {
@@ -219,7 +222,10 @@ describe('Output CRUD', () => {
         const p = db.createPipeline();
         const o = db.createOutput({ pipelineId: p.id, name: 'X', sinks: [{ url: 'rtmp://x' }] });
         db.deletePipeline(p.id);
-        assert.equal(db.getOutput(o.id), undefined);
+        assert.equal(
+            db.listOutputs().find((out) => out.id === o.id),
+            undefined,
+        );
     });
 });
 

@@ -193,9 +193,8 @@ export function createHealthService(db: Db, outputService: OutputService) {
 
     async function poll(): Promise<void> {
         const pipelines = db.listPipelines();
-        const outputMeta = db.listOutputMeta();
         const outputsByPipeline = new Map<number, string[]>();
-        for (const o of outputMeta) {
+        for (const o of db.listOutputs()) {
             const ids = outputsByPipeline.get(o.pipelineId);
             if (ids) ids.push(o.id);
             else outputsByPipeline.set(o.pipelineId, [o.id]);
