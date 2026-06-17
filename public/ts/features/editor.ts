@@ -144,6 +144,10 @@ export function openEditPipeline(id: string): void {
     (document.getElementById('pipe-id-input') as HTMLInputElement).value = id;
     (document.getElementById('pipe-modal-title') as HTMLElement).textContent = 'Edit Pipeline';
     populateKeySelect(pipeline.streamKeyId);
+    const keySelect = document.getElementById('pipe-key-select') as HTMLSelectElement;
+    const hasActiveOutputs = pipeline.outs.some((o) => o.desiredState !== 'stopped');
+    keySelect.disabled = hasActiveOutputs;
+    keySelect.title = hasActiveOutputs ? 'Stop all outputs before changing stream key' : '';
     modal.showModal();
 }
 

@@ -368,11 +368,9 @@ function renderPipelineInfo(selectedId: string | null): void {
     setInnerText('pipe-name', pipeline.name);
 
     const hasActiveOutputs = pipeline.outs.some((o) => o.desiredState !== 'stopped');
-    const editBtn = document.getElementById('pipe-edit-btn');
     const deleteBtn = document.getElementById('pipe-delete-btn');
-    editBtn?.classList.toggle('btn-disabled', hasActiveOutputs);
     deleteBtn?.classList.toggle('btn-disabled', hasActiveOutputs);
-    if (editBtn) editBtn.title = hasActiveOutputs ? 'Stop all outputs before editing' : '';
+    deleteBtn?.classList.toggle('opacity-40', hasActiveOutputs);
     if (deleteBtn) deleteBtn.title = hasActiveOutputs ? 'Stop all outputs before deleting' : '';
 
     const statsContainer = document.getElementById('input-stats-container');
@@ -504,7 +502,7 @@ function renderOutputCard(o: OutputView, inputLive: boolean): string {
         <div class="flex items-center gap-1 shrink-0">
             <button class="btn btn-xs btn-ghost" data-action="logs" data-out-id="${o.id}" title="View logs">${ICON_LOGS}</button>
             <button class="btn btn-xs btn-ghost" data-action="edit" data-out-id="${o.id}">${ICON_PENCIL}</button>
-            <button class="btn btn-xs btn-ghost text-error ${isStopped ? '' : 'btn-disabled'}"
+            <button class="btn btn-xs btn-ghost text-error ${isStopped ? '' : 'btn-disabled opacity-40'}"
                 data-action="delete" data-out-id="${o.id}">${ICON_TRASH}</button>
         </div>
     </div>`;
