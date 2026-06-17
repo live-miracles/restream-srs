@@ -15,6 +15,13 @@ import type { OutputService } from './outputs.js';
 const FFPROBE_CMD = process.env.FFPROBE_PATH || 'ffprobe';
 const FFPROBE_DELAYS_MS = [3000, 10000, 20000, 40000];
 const FFPROBE_TIMEOUT_MS = 15000;
+// Stagger concurrent ffprobe launches instead of capping concurrency with a
+// semaphore. The real risk is the thundering-herd burst (all N pipelines firing
+// at the same millisecond after a mass reconnect), not the sustained overlap —
+// probes read different streams so there is no shared bottleneck. Stagger is
+// simpler and mirrors the output restart pattern; a semaphore would be needed
+// only if memory pressure from simultaneous ffprobe processes became a concern.
+const FFPROBE_STAGGER_MS = 200;
 const POLL_INTERVAL_MS = 5000;
 const MAX_SRS_EVENTS = 200;
 
@@ -163,11 +170,13 @@ export function createHealthService(db: Db, outputService: OutputService) {
         streamKey: string,
         isSrt: boolean,
         attempt = 0,
+        stagger = 0,
     ): void {
         if (attempt >= FFPROBE_DELAYS_MS.length) return;
         const url = isSrt ? srtPullUrl(streamKey) : rtmpPullUrl(streamKey);
         const entry: { timer: NodeJS.Timeout | null; attempt: number } = { timer: null, attempt };
         ffprobeRetries.set(pipelineId, entry);
+        const delay = FFPROBE_DELAYS_MS[attempt] + stagger * FFPROBE_STAGGER_MS;
         entry.timer = setTimeout(async () => {
             entry.timer = null;
             if (!ffprobeRetries.has(pipelineId)) return;
@@ -182,7 +191,7 @@ export function createHealthService(db: Db, outputService: OutputService) {
                 ffprobeRetries.delete(pipelineId);
                 console.warn(`[ffprobe] exhausted all attempts for pipeline ${pipelineId}`);
             }
-        }, FFPROBE_DELAYS_MS[attempt]);
+        }, delay);
         entry.timer?.unref?.();
     }
 
@@ -227,6 +236,7 @@ export function createHealthService(db: Db, outputService: OutputService) {
         }
 
         const pipelinesHealth: Record<string, PipelineHealth> = {};
+        let ffprobeStagger = 0;
         for (const pipeline of pipelines) {
             const path = `live/${pipeline.streamKey}`;
             const s = liveByPath.get(path);
@@ -238,7 +248,7 @@ export function createHealthService(db: Db, outputService: OutputService) {
                 inputLiveStartMs.set(pipeline.id, Date.now());
                 outputService.restartPipelineOutputs(pipeline.id);
                 const isSrt = !!s?.tcUrl?.startsWith('srt://');
-                scheduleFfprobe(pipeline.id, pipeline.streamKey, isSrt);
+                scheduleFfprobe(pipeline.id, pipeline.streamKey, isSrt, 0, ffprobeStagger++);
                 try {
                     db.appendPipelineLog(
                         pipeline.id,
