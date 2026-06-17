@@ -41,6 +41,8 @@ function rowToStreamKey(row: Record<string, unknown>): StreamKey {
 export function createDb(dbPath?: string): Db {
     const resolvedPath = dbPath ?? process.env.DB_PATH ?? path.join(process.cwd(), 'data.db');
     const sqlite = new BetterSqlite3(resolvedPath);
+    // WAL mode not enabled: better-sqlite3 is synchronous with a single connection, so all
+    // reads and writes are already serialized by the JS event loop — no concurrency benefit.
     setupDatabaseSchema(sqlite);
 
     // Seed stream key slots 1–99 if missing
