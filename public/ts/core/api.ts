@@ -82,7 +82,8 @@ async function apiRequest<T>(
 export const getConfig = () => apiRequest<ConfigData>('/api/config');
 export const getHealth = () => apiRequest<HealthData>('/api/health');
 export const getSystemMetrics = () => apiRequest<SystemMetrics>('/api/metrics/system');
-export const getRecentOutputLogs = () => apiRequest<OutputLog[]>('/api/output-logs');
+export const getOutputLogsForPipeline = (pipelineId: string) =>
+    apiRequest<OutputLog[]>(`/api/pipelines/${pipelineId}/output-logs`);
 
 export const updateSettings = (name: string, srtPassphrase: string | null, publicHost: string) =>
     apiRequest('/api/settings', { method: 'POST', body: { name, srtPassphrase, publicHost } });
@@ -139,9 +140,6 @@ export const regenerateStreamKeys = () =>
     apiRequest<{ streamKeys: unknown[] }>('/api/settings/regenerate-stream-keys', {
         method: 'POST',
     });
-
-export const getOutputLogs = (pipelineId: string, outId: string) =>
-    apiRequest<OutputLog[]>(`/api/pipelines/${pipelineId}/outputs/${outId}/logs`);
 
 export const getPipelineLogs = (pipelineId: string) =>
     apiRequest<PipelineLog[]>(`/api/pipelines/${pipelineId}/logs`);

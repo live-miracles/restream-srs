@@ -194,7 +194,7 @@ export function createOutputService(db: Db): OutputService {
 
         child.on('close', (code, signal) => {
             const wasStop = stopRequested.delete(output.id);
-            const status = wasStop || code === 0 ? 'stopped' : 'failed';
+            const status = wasStop ? 'stopped' : 'failed';
             processes.delete(output.id);
             setStatus(output.id, status, null);
             console.log(

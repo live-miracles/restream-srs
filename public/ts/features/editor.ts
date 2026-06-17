@@ -604,7 +604,8 @@ export async function showOutputLogs(pipelineId: string, outId: string): Promise
     contentEl.textContent = 'Loading…';
     modal.showModal();
 
-    const logs = await api.getOutputLogs(pipelineId, outId);
+    const allLogs = await api.getOutputLogsForPipeline(pipelineId);
+    const logs = allLogs?.filter((l) => l.outputId === outId) ?? null;
     if (!logs || logs.length === 0) {
         contentEl.innerHTML = '<p class="opacity-50 text-sm">No logs recorded yet.</p>';
         return;

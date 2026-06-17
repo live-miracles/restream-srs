@@ -112,21 +112,14 @@ export function createDb(dbPath?: string): Db {
     const stmtGetLastOutputLog = sqlite.prepare(
         'SELECT event, message FROM output_logs WHERE output_id = ? ORDER BY id DESC LIMIT 1',
     );
-    const stmtGetOutputLogs = sqlite.prepare(
-        'SELECT id, output_id, ts, event, message FROM output_logs WHERE output_id = ? ORDER BY id DESC LIMIT ?',
+    const stmtGetOutputLogsByPipeline = sqlite.prepare(
+        `SELECT ol.id, ol.output_id, ol.ts, ol.event, ol.message
+         FROM output_logs ol
+         JOIN outputs o ON ol.output_id = o.id
+         WHERE o.pipeline_id = ?
+         ORDER BY ol.id DESC
+         LIMIT ?`,
     );
-    // Returns the 10 most recent log entries per output so the frontend can
-    // derive the current error state without complex server-side SQL.
-    // Messages are truncated to 500 chars since the UI only shows the last line.
-    const stmtGetRecentOutputLogs = sqlite.prepare(`
-        SELECT id, output_id, ts, event, message
-        FROM (
-            SELECT *, ROW_NUMBER() OVER (PARTITION BY output_id ORDER BY id DESC) AS rn
-            FROM output_logs
-        )
-        WHERE rn <= 10
-        ORDER BY id DESC
-    `);
     const stmtInsertPipelineLog = sqlite.prepare(
         'INSERT INTO pipeline_logs (pipeline_id, ts, event, message) VALUES (?, ?, ?, ?)',
     );
@@ -387,20 +380,10 @@ export function createDb(dbPath?: string): Db {
             stmtInsertOutputLog.run(outputId, Date.now(), event, message);
         },
 
-        getOutputLogs(outputId: string, limit = LOG_RETENTION_LIMIT): OutputLog[] {
-            return (stmtGetOutputLogs.all(outputId, limit) as Record<string, unknown>[]).map(
-                (r) => ({
-                    id: r.id as number,
-                    outputId: r.output_id as string,
-                    ts: r.ts as number,
-                    event: r.event as string,
-                    message: r.message as string,
-                }),
-            );
-        },
-
-        getRecentOutputLogs(): OutputLog[] {
-            return (stmtGetRecentOutputLogs.all() as Record<string, unknown>[]).map((r) => ({
+        getOutputLogsForPipeline(pipelineId: number, limit = LOG_RETENTION_LIMIT): OutputLog[] {
+            return (
+                stmtGetOutputLogsByPipeline.all(pipelineId, limit) as Record<string, unknown>[]
+            ).map((r) => ({
                 id: r.id as number,
                 outputId: r.output_id as string,
                 ts: r.ts as number,

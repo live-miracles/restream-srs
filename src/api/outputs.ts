@@ -137,16 +137,11 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
         return res.json({ ok: true });
     });
 
-    app.get('/api/pipelines/:pipelineId/outputs/:outId/logs', (req, res) => {
-        const { pipelineId, outId } = req.params;
-        const output = db.getOutput(outId);
-        if (!output || output.pipelineId !== parseInt(pipelineId)) {
-            return res.status(404).json({ error: 'Output not found' });
-        }
-        return res.json(db.getOutputLogs(outId));
-    });
-
-    app.get('/api/output-logs', (_req, res) => {
-        return res.json(db.getRecentOutputLogs());
+    app.get('/api/pipelines/:pipelineId/output-logs', (req, res) => {
+        const pipelineId = parseInt(req.params.pipelineId);
+        if (isNaN(pipelineId)) return res.status(400).json({ error: 'invalid pipelineId' });
+        if (!db.getPipeline(pipelineId))
+            return res.status(404).json({ error: 'Pipeline not found' });
+        return res.json(db.getOutputLogsForPipeline(pipelineId));
     });
 }

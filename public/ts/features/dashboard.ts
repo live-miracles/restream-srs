@@ -1,10 +1,4 @@
-import {
-    getConfig,
-    getHealth,
-    getSystemMetrics,
-    getRecentOutputLogs,
-    isServerUnreachable,
-} from '../core/api.js';
+import { getConfig, getHealth, getSystemMetrics, isServerUnreachable } from '../core/api.js';
 import { parsePipelines } from '../core/pipeline.js';
 import { state } from '../core/state.js';
 import { renderPipelines, renderMetrics } from './render.js';
@@ -46,11 +40,10 @@ async function fetchAndRender(): Promise<void> {
     const doConfig = configStale;
     configStale = false;
 
-    const [configResult, healthResult, metricsResult, outputLogsResult] = await Promise.all([
+    const [configResult, healthResult, metricsResult] = await Promise.all([
         doConfig ? getConfig() : Promise.resolve(null),
         getHealth(),
         getSystemMetrics(),
-        getRecentOutputLogs(),
     ]);
 
     if (configResult) {
@@ -74,7 +67,7 @@ async function fetchAndRender(): Promise<void> {
     document.getElementById('srs-banner')?.classList.toggle('hidden', !showSrsBanner);
     if (metricsResult) state.metrics = metricsResult;
 
-    state.pipelines = parsePipelines(state.config, state.health, outputLogsResult ?? undefined);
+    state.pipelines = parsePipelines(state.config, state.health);
     renderPipelines();
     renderMetrics();
 }
