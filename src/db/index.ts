@@ -38,6 +38,15 @@ function rowToStreamKey(row: Record<string, unknown>): StreamKey {
     return { id: row.id as number, slot: row.slot as number, key: row.key as string };
 }
 
+function lastLine(s: string): string {
+    const lines = s.split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+        const l = lines[i].trim();
+        if (l) return l;
+    }
+    return s.trim();
+}
+
 export function createDb(dbPath?: string): Db {
     const resolvedPath = dbPath ?? process.env.DB_PATH ?? path.join(process.cwd(), 'data.db');
     const sqlite = new BetterSqlite3(resolvedPath);
@@ -67,6 +76,24 @@ export function createDb(dbPath?: string): Db {
     const stmtGetOutput = sqlite.prepare('SELECT * FROM outputs WHERE id = ?');
     const stmtGetSinksByOutput = sqlite.prepare(
         'SELECT seq, url, audio_encoding FROM output_sinks WHERE output_id = ? ORDER BY seq',
+    );
+    // Targeted per-pipeline lookups — avoids full-table scans in the hot restart
+    // path where restartPipelineOutputs is called once per reconnecting pipeline.
+    const stmtGetOutputsByPipeline = sqlite.prepare(
+        'SELECT * FROM outputs WHERE pipeline_id = ? ORDER BY seq',
+    );
+    const stmtGetSinksByPipeline = sqlite.prepare(
+        `SELECT os.output_id, os.seq, os.url, os.audio_encoding
+         FROM output_sinks os
+         JOIN outputs o ON os.output_id = o.id
+         WHERE o.pipeline_id = ?
+         ORDER BY os.output_id, os.seq`,
+    );
+    const stmtListStreamKeys = sqlite.prepare(
+        'SELECT id, slot, key FROM stream_keys WHERE slot IS NOT NULL ORDER BY slot',
+    );
+    const stmtListStreamKeySlots = sqlite.prepare(
+        'SELECT id, slot FROM stream_keys WHERE slot IS NOT NULL ORDER BY slot',
     );
     const stmtGetSetting = sqlite.prepare('SELECT value FROM settings WHERE key = ?');
     const stmtSetSetting = sqlite.prepare(
@@ -120,6 +147,19 @@ export function createDb(dbPath?: string): Db {
 
     function loadAllPipelines(): Pipeline[] {
         return (stmtLoadPipelines.all() as Record<string, unknown>[]).map(rowToPipeline);
+    }
+
+    function getOutputsByPipeline(pipelineId: number): Output[] {
+        const outputRows = stmtGetOutputsByPipeline.all(pipelineId) as Record<string, unknown>[];
+        if (outputRows.length === 0) return [];
+        const sinkRows = stmtGetSinksByPipeline.all(pipelineId) as Record<string, unknown>[];
+        const sinksMap = new Map<string, Record<string, unknown>[]>();
+        for (const r of sinkRows) {
+            const id = r.output_id as string;
+            if (!sinksMap.has(id)) sinksMap.set(id, []);
+            sinksMap.get(id)!.push(r);
+        }
+        return outputRows.map((row) => rowToOutput(row, sinksMap.get(row.id as string) ?? []));
     }
 
     function loadAllOutputs(): Output[] {
@@ -194,6 +234,9 @@ export function createDb(dbPath?: string): Db {
     }
 
     function nextPipelineId(): number {
+        // Deliberately fills gaps: if existing IDs are [1, 2, 4, 5] the next
+        // pipeline gets id=3, not 6. Pipelines are deleted and recreated often
+        // enough that leaving permanent holes would exhaust readable slot names.
         const existing = loadAllPipelines();
         let id = 1;
         while (existing.some((p) => p.id === id)) id++;
@@ -211,32 +254,18 @@ export function createDb(dbPath?: string): Db {
         },
 
         listStreamKeys(): StreamKey[] {
-            return (
-                sqlite
-                    .prepare(
-                        'SELECT id, slot, key FROM stream_keys WHERE slot IS NOT NULL ORDER BY slot',
-                    )
-                    .all() as Record<string, unknown>[]
-            ).map(rowToStreamKey);
+            return (stmtListStreamKeys.all() as Record<string, unknown>[]).map(rowToStreamKey);
         },
 
         regenerateStreamKeys(): StreamKey[] {
-            const rows = sqlite
-                .prepare('SELECT id, slot FROM stream_keys WHERE slot IS NOT NULL ORDER BY slot')
-                .all() as { id: number; slot: number }[];
+            const rows = stmtListStreamKeySlots.all() as { id: number; slot: number }[];
             sqlite.transaction(() => {
                 for (const row of rows) {
                     const newKey = `key${String(row.slot).padStart(2, '0')}_${crypto.randomBytes(16).toString('hex')}`;
                     stmtUpdateStreamKey.run(newKey, row.id);
                 }
             })();
-            return (
-                sqlite
-                    .prepare(
-                        'SELECT id, slot, key FROM stream_keys WHERE slot IS NOT NULL ORDER BY slot',
-                    )
-                    .all() as Record<string, unknown>[]
-            ).map(rowToStreamKey);
+            return (stmtListStreamKeys.all() as Record<string, unknown>[]).map(rowToStreamKey);
         },
 
         createPipeline(): Pipeline {
@@ -253,7 +282,7 @@ export function createDb(dbPath?: string): Db {
             sqlite
                 .prepare('INSERT INTO pipelines (id, name, stream_key_id) VALUES (?, ?, ?)')
                 .run(id, `Pipeline ${id}`, keyRow.id);
-            return loadAllPipelines().find((p) => p.id === id)!;
+            return rowToPipeline(stmtGetPipeline.get(id) as Record<string, unknown>);
         },
 
         getPipeline(id: number): Pipeline | undefined {
@@ -273,7 +302,8 @@ export function createDb(dbPath?: string): Db {
             } else {
                 sqlite.prepare('UPDATE pipelines SET name = ? WHERE id = ?').run(name, id);
             }
-            return loadAllPipelines().find((p) => p.id === id) ?? null;
+            const row = stmtGetPipeline.get(id) as Record<string, unknown> | undefined;
+            return row ? rowToPipeline(row) : null;
         },
 
         deletePipeline(id: number): boolean {
@@ -303,7 +333,7 @@ export function createDb(dbPath?: string): Db {
                     .run(id, pipelineId, seq, name, 'stopped', videoEncoding, pullMethod);
                 insertSinks(id, sinks);
             })();
-            return loadAllOutputs().find((o) => o.id === id)!;
+            return getOutputById(id)!;
         },
 
         getOutput(id: string): Output | null {
@@ -315,7 +345,7 @@ export function createDb(dbPath?: string): Db {
         },
 
         listOutputsForPipeline(pipelineId: number): Output[] {
-            return loadAllOutputs().filter((o) => o.pipelineId === pipelineId);
+            return getOutputsByPipeline(pipelineId);
         },
 
         updateOutput(id: string, { name, videoEncoding, pullMethod, sinks }): Output | null {
@@ -328,7 +358,7 @@ export function createDb(dbPath?: string): Db {
                 stmtDeleteSinks.run(id);
                 insertSinks(id, sinks);
             })();
-            return loadAllOutputs().find((o) => o.id === id) ?? null;
+            return getOutputById(id);
         },
 
         setOutputDesiredState(id: string, desiredState: 'running' | 'stopped'): Output | null {
@@ -352,7 +382,8 @@ export function createDb(dbPath?: string): Db {
             const last = stmtGetLastOutputLog.get(outputId) as
                 | { event: string; message: string }
                 | undefined;
-            if (last?.event === event && last?.message === message) return;
+            if (last && last.event === event && lastLine(last.message) === lastLine(message))
+                return;
             stmtInsertOutputLog.run(outputId, Date.now(), event, message);
         },
 
