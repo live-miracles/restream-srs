@@ -30,7 +30,7 @@ export interface OutputService {
     start(outputId: string): Promise<void>;
     stop(outputId: string): void;
     stopAndWait(outputId: string): Promise<void>;
-    restartPipelineOutputs(pipelineId: number): void;
+    restartPipelineOutputs(pipelineId: number, staggerBase?: number): number;
     clearRetryState(outputId: string): void;
     shutdown(): void;
 }
@@ -270,14 +270,15 @@ export function createOutputService(db: Db): OutputService {
             await killProcess(outputId, proc);
         },
 
-        restartPipelineOutputs(pipelineId: number): void {
+        restartPipelineOutputs(pipelineId: number, staggerBase = 0): number {
             const outputs = db.listOutputsForPipeline(pipelineId);
-            outputs.forEach((output, i) => {
-                if (output.desiredState !== 'running') return;
-                if (exhausted.has(output.id)) return;
+            let scheduled = 0;
+            for (const output of outputs) {
+                if (output.desiredState !== 'running') continue;
+                if (exhausted.has(output.id)) continue;
                 if (statuses.get(output.id)?.status === 'running') {
                     startTimes.set(output.id, Date.now());
-                    return;
+                    continue;
                 }
                 try {
                     db.appendOutputLog(output.id, 'reconnect', 'Pipeline input reconnected');
@@ -287,12 +288,17 @@ export function createOutputService(db: Db): OutputService {
                 const r = getRetry(output.id);
                 r.failures = 0;
                 if (r.timer) clearTimeout(r.timer);
-                r.timer = setTimeout(() => {
-                    r.timer = null;
-                    void tryStart(output.id);
-                }, i * RESTART_STAGGER_MS);
+                r.timer = setTimeout(
+                    () => {
+                        r.timer = null;
+                        void tryStart(output.id);
+                    },
+                    (staggerBase + scheduled) * RESTART_STAGGER_MS,
+                );
                 r.timer.unref?.();
-            });
+                scheduled++;
+            }
+            return scheduled;
         },
 
         clearRetryState: clearRetry,

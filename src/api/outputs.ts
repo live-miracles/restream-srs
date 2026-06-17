@@ -116,6 +116,11 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
             }
             return res.json({ ok: true, status: outputService.getStats(outId) });
         } catch (err) {
+            try {
+                db.setOutputDesiredState(outId, 'stopped');
+            } catch {
+                /* best-effort */
+            }
             return res.status(400).json({ error: (err as Error).message });
         }
     });

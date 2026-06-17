@@ -199,7 +199,19 @@ export function createHealthService(db: Db, outputService: OutputService) {
         return inputLive.get(pipelineId) ?? false;
     }
 
+    let pollInProgress = false;
+
     async function poll(): Promise<void> {
+        if (pollInProgress) return;
+        pollInProgress = true;
+        try {
+            await doPoll();
+        } finally {
+            pollInProgress = false;
+        }
+    }
+
+    async function doPoll(): Promise<void> {
         const pipelines = db.listPipelines();
         const outputsByPipeline = new Map<number, string[]>();
         for (const o of db.listOutputs()) {
@@ -237,43 +249,53 @@ export function createHealthService(db: Db, outputService: OutputService) {
 
         const pipelinesHealth: Record<string, PipelineHealth> = {};
         let ffprobeStagger = 0;
+        let restartStagger = 0;
         for (const pipeline of pipelines) {
             const path = `live/${pipeline.streamKey}`;
-            const s = liveByPath.get(path);
-            const wasLive = inputLive.get(pipeline.id) ?? false;
-            const nowLive = !!s;
-            inputLive.set(pipeline.id, nowLive);
+            // When SRS is unreachable we can't distinguish a real stream drop from a
+            // transient API failure. Preserve the last known live state so we don't
+            // fire spurious offline/online transitions or mass-restart all outputs.
+            const prevLive = inputLive.get(pipeline.id) ?? false;
+            const s = srsReachable ? liveByPath.get(path) : undefined;
+            const nowLive = srsReachable ? !!s : prevLive;
 
-            if (!wasLive && nowLive) {
-                inputLiveStartMs.set(pipeline.id, Date.now());
-                outputService.restartPipelineOutputs(pipeline.id);
-                const isSrt = !!s?.tcUrl?.startsWith('srt://');
-                scheduleFfprobe(pipeline.id, pipeline.streamKey, isSrt, 0, ffprobeStagger++);
-                try {
-                    db.appendPipelineLog(
+            if (srsReachable) {
+                inputLive.set(pipeline.id, nowLive);
+
+                if (!prevLive && nowLive) {
+                    inputLiveStartMs.set(pipeline.id, Date.now());
+                    restartStagger += outputService.restartPipelineOutputs(
                         pipeline.id,
-                        'online',
-                        `Input connected (${isSrt ? 'SRT' : 'RTMP'})`,
+                        restartStagger,
                     );
-                } catch {
-                    /* non-critical */
+                    const isSrt = !!s?.tcUrl?.startsWith('srt://');
+                    scheduleFfprobe(pipeline.id, pipeline.streamKey, isSrt, 0, ffprobeStagger++);
+                    try {
+                        db.appendPipelineLog(
+                            pipeline.id,
+                            'online',
+                            `Input connected (${isSrt ? 'SRT' : 'RTMP'})`,
+                        );
+                    } catch {
+                        /* non-critical */
+                    }
                 }
-            }
 
-            if (wasLive && !nowLive) {
-                const uptimeSec = Math.round(
-                    (Date.now() - (inputLiveStartMs.get(pipeline.id) ?? Date.now())) / 1000,
-                );
-                inputLiveStartMs.delete(pipeline.id);
-                clearFfprobeState(pipeline.id);
-                try {
-                    db.appendPipelineLog(
-                        pipeline.id,
-                        'offline',
-                        `Input disconnected (was live for ${uptimeSec}s)`,
+                if (prevLive && !nowLive) {
+                    const uptimeSec = Math.round(
+                        (Date.now() - (inputLiveStartMs.get(pipeline.id) ?? Date.now())) / 1000,
                     );
-                } catch {
-                    /* non-critical */
+                    inputLiveStartMs.delete(pipeline.id);
+                    clearFfprobeState(pipeline.id);
+                    try {
+                        db.appendPipelineLog(
+                            pipeline.id,
+                            'offline',
+                            `Input disconnected (was live for ${uptimeSec}s)`,
+                        );
+                    } catch {
+                        /* non-critical */
+                    }
                 }
             }
 
