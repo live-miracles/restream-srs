@@ -78,8 +78,6 @@ export interface OutputStatus {
     startedAtMs: number | null;
 }
 
-export type OutputErrors = Record<string, { ts: number; message: string }>;
-
 export interface SrsLogEvent {
     ts: number;
     type: 'up' | 'down';

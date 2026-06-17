@@ -146,7 +146,7 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
         return res.json(db.getOutputLogs(outId));
     });
 
-    app.get('/api/output-errors', (_req, res) => {
-        return res.json(db.getLatestOutputErrors());
+    app.get('/api/output-logs', (_req, res) => {
+        return res.json(db.getRecentOutputLogs());
     });
 }

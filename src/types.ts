@@ -88,7 +88,7 @@ export interface Db {
 
     appendOutputLog(outputId: string, event: string, message: string): void;
     getOutputLogs(outputId: string, limit?: number): OutputLog[];
-    getLatestOutputErrors(): Record<string, { ts: number; message: string }>;
+    getRecentOutputLogs(): OutputLog[];
 
     appendPipelineLog(pipelineId: number, event: string, message: string): void;
     getPipelineLogs(pipelineId: number, limit?: number): PipelineLog[];

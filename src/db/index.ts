@@ -21,6 +21,7 @@ const PIPELINE_SELECT = `
 `;
 
 const STREAM_KEY_SLOTS = 99;
+// Fetch limit only — output_logs has no storage cap (see appendOutputLog).
 const LOG_RETENTION_LIMIT = 100;
 const PIPELINE_LOG_CAP = 100;
 
@@ -85,17 +86,17 @@ export function createDb(dbPath?: string): Db {
     const stmtGetOutputLogs = sqlite.prepare(
         'SELECT id, output_id, ts, event, message FROM output_logs WHERE output_id = ? ORDER BY id DESC LIMIT ?',
     );
-    // Returns the latest log entry per output, but only if that entry is an error event.
-    // Any subsequent start/stop/reconnect entry suppresses the error automatically.
-    const stmtGetLatestOutputErrors = sqlite.prepare(`
-        SELECT ol.output_id, ol.ts, ol.message
-        FROM output_logs ol
-        INNER JOIN (
-            SELECT output_id, MAX(id) AS max_id
+    // Returns the 10 most recent log entries per output so the frontend can
+    // derive the current error state without complex server-side SQL.
+    // Messages are truncated to 500 chars since the UI only shows the last line.
+    const stmtGetRecentOutputLogs = sqlite.prepare(`
+        SELECT id, output_id, ts, event, message
+        FROM (
+            SELECT *, ROW_NUMBER() OVER (PARTITION BY output_id ORDER BY id DESC) AS rn
             FROM output_logs
-            GROUP BY output_id
-        ) latest ON ol.id = latest.max_id
-        WHERE ol.event = 'error'
+        )
+        WHERE rn <= 10
+        ORDER BY id DESC
     `);
     const stmtInsertPipelineLog = sqlite.prepare(
         'INSERT INTO pipeline_logs (pipeline_id, ts, event, message) VALUES (?, ?, ?, ?)',
@@ -340,6 +341,11 @@ export function createDb(dbPath?: string): Db {
             return result.changes > 0;
         },
 
+        // No storage cap on output_logs, by design:
+        // - Capping would require a per-output prune query on every insert. With
+        //   hundreds of outputs failing and retrying simultaneously that adds up fast.
+        // - Outputs are short-lived (typically deleted after 1–2 days), and the
+        //   ON DELETE CASCADE on output_id cleans up all their logs automatically.
         appendOutputLog(outputId: string, event: string, message: string): void {
             const last = stmtGetLastOutputLog.get(outputId) as
                 | { event: string; message: string }
@@ -360,17 +366,14 @@ export function createDb(dbPath?: string): Db {
             );
         },
 
-        getLatestOutputErrors(): Record<string, { ts: number; message: string }> {
-            const rows = stmtGetLatestOutputErrors.all() as {
-                output_id: string;
-                ts: number;
-                message: string;
-            }[];
-            const result: Record<string, { ts: number; message: string }> = {};
-            for (const r of rows) {
-                result[r.output_id] = { ts: r.ts, message: r.message };
-            }
-            return result;
+        getRecentOutputLogs(): OutputLog[] {
+            return (stmtGetRecentOutputLogs.all() as Record<string, unknown>[]).map((r) => ({
+                id: r.id as number,
+                outputId: r.output_id as string,
+                ts: r.ts as number,
+                event: r.event as string,
+                message: r.message as string,
+            }));
         },
 
         appendPipelineLog(pipelineId: number, event: string, message: string): void {

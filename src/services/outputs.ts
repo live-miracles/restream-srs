@@ -156,6 +156,12 @@ export function createOutputService(db: Db): OutputService {
                 : rtmpPullUrl(pipeline.streamKey);
         const args = buildFfmpegArgs(inputUrl, output.sinks, output.videoEncoding);
 
+        // stdout and stderr must stay as 'pipe' (not 'ignore' or 'inherit').
+        // When Node.js exits for any reason — including SIGKILL or a crash — the OS
+        // closes the read ends of these pipes. ffmpeg writes to stdout every ~1s via
+        // '-progress pipe:1', so it receives SIGPIPE within a second and exits.
+        // Using 'ignore' (i.e. /dev/null) would break this coupling and leave
+        // orphaned ffmpeg processes running after the parent dies.
         const child: ChildProcess = spawn(FFMPEG_CMD, args, {
             stdio: ['ignore', 'pipe', 'pipe'],
             env: process.env,
@@ -195,13 +201,26 @@ export function createOutputService(db: Db): OutputService {
                 `[outputs] ${output.id} exited code=${code} signal=${signal} status=${status}`,
             );
 
-            if (!wasStop && code !== 0 && stderrTail) {
+            if (!wasStop) {
                 try {
-                    db.appendOutputLog(
-                        output.id,
-                        'error',
-                        `exit=${code ?? signal}\n${stderrTail.trim()}`,
-                    );
+                    if (code !== 0 && stderrTail) {
+                        db.appendOutputLog(
+                            output.id,
+                            'error',
+                            `exit=${code ?? signal}\n${stderrTail.trim()}`,
+                        );
+                    } else if (code === 0) {
+                        // FFmpeg exited cleanly without being asked to stop.
+                        // This typically means the destination closed the connection
+                        // (e.g. wrong stream key). Log a concise error so the UI
+                        // shows red instead of silently cycling through retries.
+                        const detail = stderrTail.trim();
+                        db.appendOutputLog(
+                            output.id,
+                            'error',
+                            detail ? `exit=0 (unexpected)\n${detail}` : 'exit=0 (unexpected)',
+                        );
+                    }
                 } catch {
                     /* non-critical */
                 }
