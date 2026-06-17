@@ -1,6 +1,13 @@
-import { getConfig, getHealth, getSystemMetrics, isServerUnreachable } from '../core/api.js';
+import {
+    getConfig,
+    getHealth,
+    getSystemMetrics,
+    getOutputLogsForPipeline,
+    isServerUnreachable,
+} from '../core/api.js';
 import { parsePipelines } from '../core/pipeline.js';
 import { state } from '../core/state.js';
+import { getUrlParam } from '../core/utils.js';
 import { renderPipelines, renderMetrics } from './render.js';
 
 let refreshInFlight: Promise<void> | null = null;
@@ -40,10 +47,12 @@ async function fetchAndRender(): Promise<void> {
     const doConfig = configStale;
     configStale = false;
 
-    const [configResult, healthResult, metricsResult] = await Promise.all([
+    const selectedPipelineId = getUrlParam('p');
+    const [configResult, healthResult, metricsResult, logsResult] = await Promise.all([
         doConfig ? getConfig() : Promise.resolve(null),
         getHealth(),
         getSystemMetrics(),
+        selectedPipelineId ? getOutputLogsForPipeline(selectedPipelineId) : Promise.resolve(null),
     ]);
 
     if (configResult) {
@@ -66,8 +75,13 @@ async function fetchAndRender(): Promise<void> {
     const showSrsBanner = !isServerUnreachable() && !!state.health && !state.health.srsReachable;
     document.getElementById('srs-banner')?.classList.toggle('hidden', !showSrsBanner);
     if (metricsResult) state.metrics = metricsResult;
+    if (selectedPipelineId) {
+        if (logsResult) state.outputLogs = logsResult;
+    } else {
+        state.outputLogs = [];
+    }
 
-    state.pipelines = parsePipelines(state.config, state.health);
+    state.pipelines = parsePipelines(state.config, state.health, state.outputLogs);
     renderPipelines();
     renderMetrics();
 }

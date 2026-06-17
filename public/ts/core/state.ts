@@ -1,4 +1,11 @@
-import type { PipelineView, ConfigData, HealthData, SystemMetrics, StreamKey } from '../types.js';
+import type {
+    PipelineView,
+    ConfigData,
+    HealthData,
+    SystemMetrics,
+    StreamKey,
+    OutputLog,
+} from '../types.js';
 
 export interface AppState {
     config: Partial<ConfigData>;
@@ -6,6 +13,7 @@ export interface AppState {
     pipelines: PipelineView[];
     metrics: Partial<SystemMetrics>;
     streamKeys: StreamKey[];
+    outputLogs: OutputLog[];
 }
 
 export const state: AppState = {
@@ -14,4 +22,5 @@ export const state: AppState = {
     pipelines: [],
     metrics: {},
     streamKeys: [],
+    outputLogs: [],
 };
