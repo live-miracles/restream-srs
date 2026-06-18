@@ -56,9 +56,7 @@
     </div>
 
     <!-- Server connection banner -->
-    <div
-      id="connection-banner"
-      class="bg-error text-error-content flex hidden shrink-0 items-center justify-center gap-2 px-4 py-2 text-sm font-semibold">
+    <div id="connection-banner" class="bg-error text-error-content hidden shrink-0 items-center justify-center gap-2 px-4 py-2 text-sm font-semibold">
       <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
         <path
           stroke-linecap="round"
@@ -69,7 +67,7 @@
     </div>
 
     <!-- SRS down banner -->
-    <div id="srs-banner" class="bg-error text-error-content flex hidden shrink-0 items-center justify-center gap-2 px-4 py-2 text-sm font-semibold">
+    <div id="srs-banner" class="bg-error text-error-content hidden shrink-0 items-center justify-center gap-2 px-4 py-2 text-sm font-semibold">
       <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
         <path
           stroke-linecap="round"
@@ -77,6 +75,20 @@
           d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
       </svg>
       SRS media server is unreachable — streaming unavailable
+    </div>
+
+    <!-- Config changed elsewhere banner -->
+    <div
+      id="config-changed-banner"
+      class="bg-warning text-warning-content hidden shrink-0 items-center justify-center gap-3 px-4 py-2 text-sm font-semibold">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+      </svg>
+      Configuration was changed in another session.
+      <button type="button" onclick="reloadConfigBtn()" class="btn btn-xs btn-outline">Reload</button>
     </div>
 
     <!-- Error banner -->
@@ -268,7 +280,7 @@
     <dialog id="logs-modal" class="modal">
       <div class="modal-box w-[80vw] max-w-none">
         <h2 class="text-xl font-bold" id="logs-modal-title">Output Logs</h2>
-        <div id="logs-modal-content" class="mt-4 max-h-[28rem] space-y-1 overflow-y-auto font-mono text-xs"></div>
+        <div id="logs-modal-content" class="mt-4 max-h-112 space-y-1 overflow-y-auto font-mono text-xs"></div>
         <div class="modal-action">
           <form method="dialog">
             <button class="btn">Close</button>

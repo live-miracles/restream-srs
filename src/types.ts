@@ -45,6 +45,8 @@ export interface Output {
 }
 
 export interface Db {
+    getConfigRev(): number;
+
     getSetting(key: string): string | null;
     setSetting(key: string, value: string): void;
 

@@ -249,3 +249,37 @@ describe('Settings', () => {
         assert.equal(db.getSetting('key'), 'second');
     });
 });
+
+// ── Config revision ───────────────────────────────────
+
+describe('Config revision', () => {
+    test('starts positive and is monotonic across config writes', () => {
+        const db = makeDb();
+        const rev0 = db.getConfigRev();
+        assert.ok(rev0 > 0);
+
+        const p = db.createPipeline();
+        const rev1 = db.getConfigRev();
+        assert.ok(rev1 > rev0);
+
+        const o = db.createOutput({ pipelineId: p.id, name: 'A', sinks: [{ url: 'rtmp://a' }] });
+        const rev2 = db.getConfigRev();
+        assert.ok(rev2 > rev1);
+
+        db.setOutputDesiredState(o.id, 'running');
+        assert.ok(db.getConfigRev() > rev2);
+    });
+
+    test('does not bump on lastError or pipeline-log writes', () => {
+        const db = makeDb();
+        const p = db.createPipeline();
+        const o = db.createOutput({ pipelineId: p.id, name: 'A', sinks: [{ url: 'rtmp://a' }] });
+        const rev = db.getConfigRev();
+
+        db.setOutputLastError(o.id, 'boom');
+        db.clearOutputLastError(o.id);
+        db.appendPipelineLog(p.id, 'online', 'connected');
+
+        assert.equal(db.getConfigRev(), rev);
+    });
+});

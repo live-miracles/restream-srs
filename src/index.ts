@@ -1,4 +1,5 @@
 import express from 'express';
+import compression from 'compression';
 import path from 'path';
 import { createDb } from './db/index.js';
 import { createOutputService } from './services/outputs.js';
@@ -23,6 +24,10 @@ import { writeSrsConf } from './utils/conf.js';
 const app = express();
 const PORT = parseInt(process.env.PORT || '8080');
 
+// gzip responses. The /api/config and /api/health JSON for 50 inputs / 500
+// outputs is large and re-fetched by every dashboard client on the 5s poll;
+// JSON compresses very well, so this cuts response size and bandwidth sharply.
+app.use(compression());
 app.use(express.json());
 
 const db = createDb();

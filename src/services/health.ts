@@ -57,6 +57,11 @@ interface PipelineHealth {
 export interface HealthSnapshot {
     generatedAt: string;
     srsReachable: boolean;
+    // Config revision at snapshot time. Clients compare this against the rev they
+    // loaded /api/config at; a mismatch means the config was edited elsewhere and
+    // the client should reload. Carried on the health snapshot so it reaches every
+    // client on the regular 5s poll without an extra request.
+    configRev: number;
     pipelines: Record<string, PipelineHealth>;
 }
 
@@ -145,6 +150,7 @@ export function createHealthService(db: Db, outputService: OutputService) {
     let snapshot: HealthSnapshot = {
         generatedAt: new Date().toISOString(),
         srsReachable: false,
+        configRev: db.getConfigRev(),
         pipelines: {},
     };
 
@@ -340,6 +346,7 @@ export function createHealthService(db: Db, outputService: OutputService) {
         snapshot = {
             generatedAt: new Date().toISOString(),
             srsReachable,
+            configRev: db.getConfigRev(),
             pipelines: pipelinesHealth,
         };
     }

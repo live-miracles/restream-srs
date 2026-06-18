@@ -19,6 +19,7 @@ function setConnectionBanner(unreachable: boolean): void {
     serverUnreachable = unreachable;
     const banner = document.getElementById('connection-banner');
     banner?.classList.toggle('hidden', !unreachable);
+    banner?.classList.toggle('flex', unreachable);
 }
 
 function setLoading(active: boolean): void {

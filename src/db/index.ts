@@ -217,6 +217,26 @@ export function createDb(dbPath?: string): Db {
         });
     }
 
+    // Monotonic config revision, bumped on every config-shaping write (pipelines,
+    // outputs, sinks, stream keys, settings). Clients compare the value delivered
+    // with the health snapshot against the rev they loaded /api/config at; a higher
+    // server rev means someone else edited the config and they should reload.
+    //
+    // Seeded from Date.now() (not 0) and bumped to the max of "current+1" and
+    // Date.now() so it is (a) strictly increasing — even for several edits in the
+    // same millisecond — and (b) always larger than any rev a client loaded before
+    // a process restart. That makes a restart look like a config change to old
+    // clients and prompts them to reload, which is the desired behaviour after a
+    // deploy. It is kept in process memory only — no DB persistence needed.
+    //
+    // Deliberately excludes lastError and pipeline logs — those reach clients
+    // through the health snapshot already, so bumping on them would cause needless
+    // config reloads.
+    let configRev = Date.now();
+    const bumpConfigRev = (): void => {
+        configRev = Math.max(configRev + 1, Date.now());
+    };
+
     function nextPipelineId(): number {
         // Deliberately fills gaps: if existing IDs are [1, 2, 4, 5] the next
         // pipeline gets id=3, not 6. Pipelines are deleted and recreated often
@@ -233,8 +253,13 @@ export function createDb(dbPath?: string): Db {
             return row?.value ?? null;
         },
 
+        getConfigRev(): number {
+            return configRev;
+        },
+
         setSetting(key: string, value: string): void {
             stmtSetSetting.run(key, value);
+            bumpConfigRev();
         },
 
         listStreamKeys(): StreamKey[] {
@@ -249,6 +274,7 @@ export function createDb(dbPath?: string): Db {
                     stmtUpdateStreamKey.run(newKey, row.id);
                 }
             })();
+            bumpConfigRev();
             return (stmtListStreamKeys.all() as Record<string, unknown>[]).map(rowToStreamKey);
         },
 
@@ -266,6 +292,7 @@ export function createDb(dbPath?: string): Db {
             sqlite
                 .prepare('INSERT INTO pipelines (id, name, stream_key_id) VALUES (?, ?, ?)')
                 .run(id, `Pipeline ${id}`, keyRow.id);
+            bumpConfigRev();
             return rowToPipeline(stmtGetPipeline.get(id) as Record<string, unknown>);
         },
 
@@ -286,12 +313,14 @@ export function createDb(dbPath?: string): Db {
             } else {
                 sqlite.prepare('UPDATE pipelines SET name = ? WHERE id = ?').run(name, id);
             }
+            bumpConfigRev();
             const row = stmtGetPipeline.get(id) as Record<string, unknown> | undefined;
             return row ? rowToPipeline(row) : null;
         },
 
         deletePipeline(id: number): boolean {
             const result = sqlite.prepare('DELETE FROM pipelines WHERE id = ?').run(id);
+            if (result.changes > 0) bumpConfigRev();
             return result.changes > 0;
         },
 
@@ -317,6 +346,7 @@ export function createDb(dbPath?: string): Db {
                     .run(id, pipelineId, seq, name, 'stopped', videoEncoding, pullMethod);
                 insertSinks(id, sinks);
             })();
+            bumpConfigRev();
             return getOutputById(id)!;
         },
 
@@ -350,6 +380,7 @@ export function createDb(dbPath?: string): Db {
                 stmtDeleteExtraSinks.run(id);
                 insertSinks(id, sinks);
             })();
+            bumpConfigRev();
             return getOutputById(id);
         },
 
@@ -357,11 +388,13 @@ export function createDb(dbPath?: string): Db {
             sqlite
                 .prepare('UPDATE outputs SET desired_state = ? WHERE id = ?')
                 .run(desiredState, id);
+            bumpConfigRev();
             return getOutputById(id);
         },
 
         deleteOutput(id: string): boolean {
             const result = sqlite.prepare('DELETE FROM outputs WHERE id = ?').run(id);
+            if (result.changes > 0) bumpConfigRev();
             return result.changes > 0;
         },
 

@@ -27,8 +27,25 @@ export async function refreshDashboard(): Promise<void> {
 
 let configStale = true;
 
+// The configRev the currently loaded /api/config corresponds to. Each health poll
+// carries the server's current rev; when it no longer matches what we loaded, the
+// config was edited elsewhere (another dashboard client) and we surface a reload
+// banner. null until the first config load.
+let loadedConfigRev: number | null = null;
+
 export function invalidateConfig(): void {
     configStale = true;
+}
+
+function updateConfigChangedBanner(healthRev: number | undefined): void {
+    // configRev is monotonic, so only a health rev ahead of what we loaded means a
+    // newer config exists. Using `>` (not `!=`) avoids a false banner from a health
+    // snapshot that is momentarily staler than a just-reloaded config.
+    const changed =
+        loadedConfigRev !== null && healthRev !== undefined && healthRev > loadedConfigRev;
+    const banner = document.getElementById('config-changed-banner');
+    banner?.classList.toggle('hidden', !changed);
+    banner?.classList.toggle('flex', changed);
 }
 
 export async function refreshAfterMutation(): Promise<void> {
@@ -48,6 +65,7 @@ async function fetchAndRender(): Promise<void> {
 
     if (configResult) {
         state.config = configResult;
+        loadedConfigRev = configResult.configRev ?? loadedConfigRev;
         if (configResult.streamKeys?.length) {
             state.streamKeys = configResult.streamKeys;
         }
@@ -59,12 +77,15 @@ async function fetchAndRender(): Promise<void> {
     }
     if (healthResult) {
         state.health = healthResult;
+        updateConfigChangedBanner(healthResult.configRev);
     }
     // Recompute even when health couldn't be fetched: if the server itself is
     // unreachable, the connection banner already covers it, so suppress the
     // SRS-down banner to avoid showing two alerts at once.
     const showSrsBanner = !isServerUnreachable() && !!state.health && !state.health.srsReachable;
-    document.getElementById('srs-banner')?.classList.toggle('hidden', !showSrsBanner);
+    const srsBanner = document.getElementById('srs-banner');
+    srsBanner?.classList.toggle('hidden', !showSrsBanner);
+    srsBanner?.classList.toggle('flex', showSrsBanner);
     if (metricsResult) state.metrics = metricsResult;
     state.pipelines = parsePipelines(state.config, state.health);
     renderPipelines();

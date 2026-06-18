@@ -13,6 +13,7 @@ export function registerConfigApi(app: Express, db: Db): void {
             srtPublishUrl: srtPublishUrl(p.streamKey, host, srtPassphrase),
         }));
         res.json({
+            configRev: db.getConfigRev(),
             pipelines,
             outputs: db.listOutputs(),
             encodings: Object.keys(ENCODINGS),

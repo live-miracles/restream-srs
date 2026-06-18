@@ -2,7 +2,7 @@
 
 Minimal streaming server — takes RTMP/SRT inputs and restreams them to multiple RTMP/SRT outputs. Built on [SRS](https://github.com/ossrs/srs) for ingest and FFmpeg for outputs. Node.js + TypeScript backend.
 
-Designed to handle tens of simultaneous pipelines (inputs) and hundreds of output forwards running continuously across long events.
+Designed to handle tens of simultaneous pipelines (inputs) and hundreds of output forwards running continuously across long events. See [Server limitations](#server-limitations) for the tested envelope.
 
 ```
 OBS / ffmpeg  ──RTMP──►  SRS (1935)   ──FFmpeg──►  YouTube / Facebook / ...
@@ -19,6 +19,45 @@ OBS / ffmpeg  ──RTMP──►  SRS (1935)   ──FFmpeg──►  YouTube /
 | Node.js app | REST API + dashboard on port 8080 |
 | FFmpeg | One process per output, spawned and managed by the app |
 | SQLite | Persistent state for pipelines, outputs, stream keys, settings |
+
+---
+
+## Capacity & Limits 
+
+The server is built and operated for the envelope below. It has **not** been
+tested or designed for anything beyond it — treat these as the supported ceiling,
+not a target to exceed.
+
+| Limit | Supported ceiling |
+|-------|-------------------|
+| Inputs (pipelines) | up to **50** |
+| Outputs (forwards) | up to **500** total |
+| Outputs using custom (transcoding) encoding | only **a few** at a time — see below |
+| Parallel dashboard clients | up to **~10** |
+
+Past these figures, expect host CPU/RAM/network and the number of concurrent
+FFmpeg processes (one per output) to become the limiting factors well before the
+dashboard or API does.
+
+**Keep almost all outputs in `copy` mode.** A `copy` output is a passthrough — it
+remuxes the input and forwards it with negligible CPU cost, so hundreds can run on
+modest hardware. A custom encoding (`720p`, `1080p`, `vertical_rotate`, …) makes
+FFmpeg transcode the video, which is CPU-intensive: each such output consumes
+roughly a full core's worth of work. **Only a handful of outputs should use custom
+encoding at any one time**; everything else should be `copy`. Putting many outputs
+into custom-encoding mode will saturate the CPU long before the 500-output ceiling
+and starve the `copy` outputs and the dashboard alike.
+
+**Parallel dashboard clients.** The dashboard fans out cheaply to multiple
+viewers: input/output health is computed once per 5s on the server and cached, so
+additional browser clients read that shared snapshot rather than multiplying
+SRS/FFprobe work. API responses are gzip-compressed to keep the per-client
+bandwidth low. When one client changes the configuration (adds/edits/removes a
+pipeline or output, etc.), the others detect it via a config revision carried on
+the health poll and show a "Configuration was changed in another session" banner
+with a Reload button, so no client silently shows stale structure. Around 10
+simultaneous dashboard clients is fine within the limits above; the server has not
+been tuned or tested for substantially more.
 
 ---
 

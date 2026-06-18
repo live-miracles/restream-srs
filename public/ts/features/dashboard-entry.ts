@@ -1,5 +1,5 @@
 import { getUrlParam, setUrlParam, copyText } from '../core/utils.js';
-import { refreshDashboard } from './dashboard.js';
+import { refreshDashboard, refreshAfterMutation } from './dashboard.js';
 import {
     openSettings,
     submitSettingsForm,
@@ -42,8 +42,14 @@ declare global {
         previewPlayBtn: () => Promise<void>;
         previewStopBtn: () => void;
         previewTrackChange: () => void;
+        reloadConfigBtn: () => Promise<void>;
     }
 }
+
+// Refetch config (and re-render) after the config was changed by another client.
+// refreshAfterMutation invalidates the cached config so it is reloaded, which
+// resyncs the loaded configRev and clears the "config changed" banner.
+window.reloadConfigBtn = () => refreshAfterMutation();
 
 window.openSrsLogsBtn = () => showSrsLogs();
 window.openSettingsBtn = () => openSettings();

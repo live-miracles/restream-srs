@@ -118,10 +118,12 @@ export interface PipelineHealth {
 export interface HealthData {
     generatedAt: string;
     srsReachable: boolean;
+    configRev: number;
     pipelines: Record<string, PipelineHealth>;
 }
 
 export interface ConfigData {
+    configRev: number;
     pipelines: Pipeline[];
     outputs: Output[];
     encodings: string[];
