@@ -219,7 +219,7 @@ and `audioEncoding`, while `videoEncoding` and `pullMethod` are shared per outpu
 
 ## Development
 
-Prerequisites: Node.js 20+, FFmpeg.
+Prerequisites: Node.js 22+, FFmpeg.
 
 **1. Install dependencies and the SRS binary:**
 ```bash

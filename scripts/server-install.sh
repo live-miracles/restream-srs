@@ -30,19 +30,54 @@ SERVICE_USER=restream-srs
 
 SRS_VERSION="${SRS_VERSION:-6.0-r0}"
 SRS_ZIP="SRS-CentOS7-x86_64-${SRS_VERSION}.zip"
+SRS_URL_OVERRIDDEN="${SRS_URL+yes}"
 SRS_URL="${SRS_URL:-https://github.com/ossrs/srs/releases/download/v${SRS_VERSION}/${SRS_ZIP}}"
+# Pinned SHA256 for the default SRS build. Cleared (checksum skipped) when a
+# custom SRS_VERSION or SRS_URL is supplied, since the hash would no longer match.
+SRS_SHA256=""
+if [[ "$SRS_VERSION" == "6.0-r0" && -z "$SRS_URL_OVERRIDDEN" ]]; then
+    SRS_SHA256="1eb20245a76643b2d32a1be85e71015079689a0733a10f79964f9a8189c21609"
+fi
+
+# FFmpeg is pinned to a specific immutable BtbN build (a month-end autobuild tag,
+# which BtbN retains for 2 years) instead of the floating "latest" tag, so installs
+# are reproducible and the SHA256 stays valid. To bump: pick a newer month-end tag
+# from https://github.com/BtbN/FFmpeg-Builds/releases, then take the linux64-gpl
+# (non-shared) filename and its hash from that release's checksums.sha256.
 FFMPEG_VERSION=7.1
+FFMPEG_BUILD_TAG="autobuild-2026-05-31-13-22"
+FFMPEG_FILENAME="ffmpeg-n7.1.4-7-gadcf20da26-linux64-gpl-7.1.tar.xz"
+FFMPEG_SHA256="ce46c711e3ff79ae1e9318bf7daa54c77f41ce37b71010c44f4a0b38f1d7a29f"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 step() { echo; echo "=== $* ==="; }
 
-step "1/8 System packages"
+# Verify a downloaded file against an expected SHA256. An empty expected hash
+# skips the check (used when a custom version/URL override makes the pin moot).
+verify_sha256() {
+    local file="$1" expected="$2"
+    if [[ -z "$expected" ]]; then
+        echo "Checksum: skipped (custom version/URL)"
+        return
+    fi
+    local actual
+    actual="$(sha256sum "$file" | awk '{print $1}')"
+    if [[ "$actual" != "$expected" ]]; then
+        echo "ERROR: checksum mismatch for $(basename "$file")" >&2
+        echo "  expected: $expected" >&2
+        echo "  actual:   $actual" >&2
+        exit 1
+    fi
+    echo "Checksum OK: $(basename "$file")"
+}
+
+step "1/9 System packages"
 apt-get update -q
 apt-get install -y -q curl tar xz-utils unzip git ca-certificates
 
-step "2/8 Node.js 22"
+step "2/9 Node.js 22"
 if node --version 2>/dev/null | grep -q '^v22'; then
     echo "Node.js 22 already installed: $(node --version)"
 else
@@ -51,15 +86,15 @@ else
     echo "Installed: $(node --version)"
 fi
 
-step "3/8 FFmpeg $FFMPEG_VERSION"
-FFMPEG_FILENAME="ffmpeg-n${FFMPEG_VERSION}-latest-linux64-gpl-${FFMPEG_VERSION}.tar.xz"
-FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/${FFMPEG_FILENAME}"
+step "3/9 FFmpeg $FFMPEG_VERSION"
+FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_BUILD_TAG}/${FFMPEG_FILENAME}"
 
 if /usr/local/bin/ffmpeg -version 2>/dev/null | grep -q "ffmpeg version n${FFMPEG_VERSION}"; then
     echo "FFmpeg $FFMPEG_VERSION already installed."
 else
     echo "Downloading $FFMPEG_FILENAME..."
     curl -fsSL "$FFMPEG_URL" -o "$WORK/$FFMPEG_FILENAME"
+    verify_sha256 "$WORK/$FFMPEG_FILENAME" "$FFMPEG_SHA256"
     tar -xJf "$WORK/$FFMPEG_FILENAME" -C "$WORK"
     FFMPEG_DIR="$(find "$WORK" -maxdepth 1 -type d -name 'ffmpeg-*' | head -1)"
     install -m 755 "${FFMPEG_DIR}/bin/ffmpeg" /usr/local/bin/ffmpeg
@@ -67,12 +102,13 @@ else
     echo "Installed: $(/usr/local/bin/ffmpeg -version 2>&1 | head -1)"
 fi
 
-step "4/8 SRS $SRS_VERSION"
+step "4/9 SRS $SRS_VERSION"
 if /usr/local/bin/srs -v 2>&1 | grep -q "$SRS_VERSION"; then
     echo "SRS $SRS_VERSION already installed."
 else
     echo "Downloading $SRS_ZIP..."
     curl -fsSL "$SRS_URL" -o "$WORK/$SRS_ZIP"
+    verify_sha256 "$WORK/$SRS_ZIP" "$SRS_SHA256"
     unzip -q "$WORK/$SRS_ZIP" -d "$WORK/srs"
     # The zip root contains an init wrapper script also named 'srs'; the real
     # ELF binary lives deeper at usr/local/srs/objs/srs. Match it precisely so
@@ -86,7 +122,7 @@ else
     echo "Installed: $(/usr/local/bin/srs -v 2>&1 | head -1)"
 fi
 
-step "5/8 Service user and directories"
+step "5/9 Service user and directories"
 if ! id "$SERVICE_USER" &>/dev/null; then
     useradd --system --home "$APP_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
     echo "Created user: $SERVICE_USER"
@@ -96,7 +132,7 @@ fi
 mkdir -p "$APP_DIR" "$DATA_DIR" "$LOG_DIR" "$CONF_DIR"
 chown "$SERVICE_USER:$SERVICE_USER" "$APP_DIR" "$DATA_DIR" "$LOG_DIR" "$CONF_DIR"
 
-step "6/8 Application"
+step "6/9 Application"
 if [[ ! -d "$APP_DIR/.git" ]]; then
     git clone "$REPO_URL" "$APP_DIR"
 else
@@ -115,6 +151,12 @@ if [[ ! -f "$CONF_DIR/srs.conf" ]]; then
     cp "$APP_DIR/srs.conf" "$CONF_DIR/srs.conf"
     sed -i "s|srs_log_file.*|srs_log_file        $LOG_DIR/srs.log;|" "$CONF_DIR/srs.conf"
 fi
+# Intentionally wipe the database on (re)install. We don't do data migrations, so
+# if the schema changed in a past update, an old db.sqlite could be incompatible
+# and cause hard-to-debug issues. Starting fresh avoids that — the app re-seeds
+# defaults (stream keys, 'admin' password) on first boot. Use server-update.sh
+# (which preserves the DB) for normal upgrades; this destructive reset is the
+# install-time behaviour by design.
 rm -f "$DATA_DIR/db.sqlite"
 touch "$DATA_DIR/db.sqlite"
 chown "$SERVICE_USER:$SERVICE_USER" "$CONF_DIR/srs.conf" "$DATA_DIR/db.sqlite"
@@ -175,6 +217,7 @@ Environment=NODE_ENV=production
 Environment=PORT=8080
 Environment=DB_PATH=$DATA_DIR/db.sqlite
 Environment=SRS_CONF_PATH=$CONF_DIR/srs.conf
+Environment=SRS_LOG_PATH=$LOG_DIR/srs.log
 Environment=SRS_API_URL=http://127.0.0.1:1985
 Environment=SRS_RTMP_HOST=127.0.0.1
 Environment=SRS_RTMP_PORT=1935

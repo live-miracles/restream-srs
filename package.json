@@ -23,7 +23,7 @@
         "format:check": "npx prettier --check ."
     },
     "engines": {
-        "node": ">=20"
+        "node": ">=22"
     },
     "dependencies": {
         "better-sqlite3": "12.6.0",
