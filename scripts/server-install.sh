@@ -183,7 +183,15 @@ Environment=FFPROBE_PATH=/usr/local/bin/ffprobe
 ExecStart=/usr/bin/node $APP_DIR/dist/index.js
 Restart=always
 RestartSec=2
+# This service forks one ffmpeg per output (300+) plus ffprobe/preview helpers,
+# each carrying several threads. LimitNOFILE covers the parent's pipe/socket fds;
+# TasksMax/LimitNPROC lift the task (thread+process) cap, which otherwise falls
+# back to systemd's default (~15% of pid_max) and would be hit during a mass
+# start/restart surge — manifesting as spawn failures (EAGAIN) right when many
+# outputs are recovering at once.
 LimitNOFILE=1048576
+TasksMax=infinity
+LimitNPROC=infinity
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full

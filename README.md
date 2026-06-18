@@ -147,22 +147,34 @@ srt://localhost:10080?streamid=%23!::r=live/<stream-key>,m=request
 
 ## API
 
+All routes below sit behind the session-cookie auth middleware (except the SRS
+hook). An output fans out to one or more **sinks**; each sink has its own `url`
+and `audioEncoding`, while `videoEncoding` and `pullMethod` are shared per output.
+
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/config` | Pipelines, outputs, encodings, stream keys, server name |
-| GET | `/health` | Live input/output status |
+| GET | `/api/config` | Pipelines, outputs, encodings, stream keys, server name |
+| GET | `/api/health` | Live input/output status snapshot (refreshed every 5s) |
+| GET | `/api/version` | App version / build info |
+| GET | `/api/metrics/system` | Host CPU, RAM, disk and network stats |
+| GET | `/api/srs-logs` | Recent SRS up/down events and a tail of the SRS log |
 | POST | `/api/pipelines` | Create pipeline (auto-names and assigns stream key) |
 | POST | `/api/pipelines/:id` | Rename pipeline `{ name }`, optionally reassign key `{ name, streamKeyId }` |
 | DELETE | `/api/pipelines/:id` | Delete pipeline (stream key is freed, not deleted) |
-| POST | `/api/pipelines/:id/outputs` | Create output `{ name, url, encoding }` |
-| POST | `/api/pipelines/:id/outputs/:outId` | Update output |
+| GET | `/api/pipelines/:id/logs` | Pipeline online/offline event log |
+| POST | `/api/pipelines/:id/preview/start` | Start an HLS preview `{ audioTrack? }` |
+| POST | `/api/pipelines/:id/preview/stop` | Stop the HLS preview |
+| POST | `/api/pipelines/:id/outputs` | Create output `{ name, videoEncoding, pullMethod, sinks: [{ url, audioEncoding }] }` |
+| POST | `/api/pipelines/:id/outputs/:outId` | Update output (same body as create) |
 | DELETE | `/api/pipelines/:id/outputs/:outId` | Delete output |
 | POST | `/api/pipelines/:id/outputs/:outId/start` | Start output |
 | POST | `/api/pipelines/:id/outputs/:outId/stop` | Stop output |
 | POST | `/api/settings` | Update settings `{ name, srtPassphrase, publicHost }` |
+| POST | `/api/settings/regenerate-stream-keys` | Regenerate all stream keys |
 | POST | `/api/auth/login` | Login `{ password }` — sets session cookie |
 | POST | `/api/auth/logout` | Logout — clears session cookie |
 | POST | `/api/auth/change-password` | Change password `{ currentPassword, newPassword }` |
+| POST | `/api/srs/on_publish` | SRS publish hook (called by SRS, not the dashboard) |
 
 ---
 
@@ -201,8 +213,12 @@ npm run srs
 | `SRS_API_URL` | `http://localhost:1985` | SRS HTTP API URL |
 | `SRS_RTMP_HOST` | `localhost` | SRS RTMP host (for FFmpeg to pull from) |
 | `SRS_RTMP_PORT` | `1935` | SRS RTMP port |
+| `SRS_SRT_PORT` | `10080` | SRS SRT port (for FFmpeg to pull from) |
 | `DB_PATH` | `./data.db` | SQLite database path |
 | `SRS_CONF_PATH` | `./srs.conf` | SRS config path written by the app |
+| `SRS_LOG_PATH` | `./objs/srs.log` | SRS log path read for the dashboard log tail |
+| `FFMPEG_PATH` | `ffmpeg` | FFmpeg binary (uses `$PATH` if unset) |
+| `FFPROBE_PATH` | `ffprobe` | FFprobe binary (uses `$PATH` if unset) |
 | `PORT` | `8080` | App HTTP port |
 
 ## Known issues

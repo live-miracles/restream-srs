@@ -37,18 +37,21 @@ export interface InputHealth {
     audioTracks: AudioTrackInfo[];
 }
 
+// Per-output entry in the health snapshot: live process stats (OutputStats from
+// the output service) merged with the persisted lastError read from the DB.
+// lastError is not part of the runtime stats — it's joined in here so the UI can
+// show the last failure alongside live status.
+interface OutputHealth {
+    status: string;
+    pid: number | null;
+    bitrateKbps: number | null;
+    startedAtMs: number | null;
+    lastError: string | null;
+}
+
 interface PipelineHealth {
     input: InputHealth;
-    outputs: Record<
-        string,
-        {
-            status: string;
-            pid: number | null;
-            bitrateKbps: number | null;
-            startedAtMs: number | null;
-            lastError: string | null;
-        }
-    >;
+    outputs: Record<string, OutputHealth>;
 }
 
 export interface HealthSnapshot {
@@ -196,10 +199,6 @@ export function createHealthService(db: Db, outputService: OutputService) {
         entry.timer?.unref?.();
     }
 
-    function isInputLive(pipelineId: number): boolean {
-        return inputLive.get(pipelineId) ?? false;
-    }
-
     // An output may only be (re)started when SRS is reachable and the pipeline's
     // input is live — otherwise ffmpeg would just hang or churn against a dead input.
     function isInputReady(pipelineId: number): boolean {
@@ -309,15 +308,7 @@ export function createHealthService(db: Db, outputService: OutputService) {
                 }
             }
 
-            const outputsHealth: Record<
-                string,
-                {
-                    status: string;
-                    pid: number | null;
-                    bitrateKbps: number | null;
-                    startedAtMs: number | null;
-                }
-            > = {};
+            const outputsHealth: Record<string, OutputHealth> = {};
             for (const outId of outputsByPipeline.get(pipeline.id) ?? []) {
                 outputsHealth[outId] = {
                     ...outputService.getStats(outId),
@@ -367,7 +358,6 @@ export function createHealthService(db: Db, outputService: OutputService) {
     return {
         start,
         registerRoutes,
-        isInputLive,
         isInputReady,
         getSrsEvents: (): SrsEvent[] => [...srsEvents],
     };

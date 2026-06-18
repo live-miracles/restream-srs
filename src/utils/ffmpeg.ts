@@ -85,6 +85,15 @@ export function buildFfmpegArgs(
         '-nostats',
         '-loglevel',
         'warning',
+        // Emit '-progress pipe:1' every 3s instead of the default ~1s. The only
+        // consumer (live bitrate) is sampled at the 5s health-poll cadence, so a
+        // sub-5s update rate is invisible — at hundreds of outputs the extra
+        // stdout writes are pure event-loop/GC churn on the parent. 3s keeps each
+        // poll's bitrate at most ~3s stale while cutting the write rate ~3x.
+        // (Progress on stdout is also the SIGPIPE keepalive that lets ffmpeg
+        // self-exit when the parent dies; at 3s that detection is still prompt.)
+        '-stats_period',
+        '3',
         '-rw_timeout',
         String(INPUT_TIMEOUT_US),
         '-i',
