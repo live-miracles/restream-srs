@@ -64,22 +64,23 @@ export function createDb(dbPath?: string): Db {
     }
 
     // Read prepared statements — load entire tables, combine in JS.
-    // The dataset is small (~30 pipelines / 500 sinks) so full-table reads
+    // The dataset is small (~30 pipelines / 300+ outputs) so full-table reads
     // are cheaper and simpler than maintaining targeted per-entity queries.
     const stmtLoadPipelines = sqlite.prepare(`${PIPELINE_SELECT} ORDER BY p.id`);
     const stmtLoadOutputs = sqlite.prepare('SELECT * FROM outputs ORDER BY pipeline_id, seq');
     // Lightweight id/pipeline map for the 5s health poll — avoids loading every
-    // output row and all its sinks just to group output ids by pipeline.
+    // output row just to group output ids by pipeline.
     const stmtLoadOutputIds = sqlite.prepare(
         'SELECT id, pipeline_id FROM outputs ORDER BY pipeline_id, seq',
     );
-    const stmtLoadSinks = sqlite.prepare(
+    // Extra sinks only — primary sink (seq=1) is inlined on the outputs row.
+    const stmtLoadExtraSinks = sqlite.prepare(
         'SELECT output_id, seq, url, audio_encoding FROM output_sinks ORDER BY output_id, seq',
     );
     // Targeted single-row lookups for the hot retry / process-exit paths.
     const stmtGetPipeline = sqlite.prepare(`${PIPELINE_SELECT} WHERE p.id = ?`);
     const stmtGetOutput = sqlite.prepare('SELECT * FROM outputs WHERE id = ?');
-    const stmtGetSinksByOutput = sqlite.prepare(
+    const stmtGetExtraSinksByOutput = sqlite.prepare(
         'SELECT seq, url, audio_encoding FROM output_sinks WHERE output_id = ? ORDER BY seq',
     );
     // Targeted per-pipeline lookups — avoids full-table scans in the hot restart
@@ -87,7 +88,7 @@ export function createDb(dbPath?: string): Db {
     const stmtGetOutputsByPipeline = sqlite.prepare(
         'SELECT * FROM outputs WHERE pipeline_id = ? ORDER BY seq',
     );
-    const stmtGetSinksByPipeline = sqlite.prepare(
+    const stmtGetExtraSinksByPipeline = sqlite.prepare(
         `SELECT os.output_id, os.seq, os.url, os.audio_encoding
          FROM output_sinks os
          JOIN outputs o ON os.output_id = o.id
@@ -106,7 +107,10 @@ export function createDb(dbPath?: string): Db {
     );
 
     // Write prepared statements
-    const stmtDeleteSinks = sqlite.prepare('DELETE FROM output_sinks WHERE output_id = ?');
+    const stmtUpdateInlineSink = sqlite.prepare(
+        'UPDATE outputs SET url = ?, audio_encoding = ? WHERE id = ?',
+    );
+    const stmtDeleteExtraSinks = sqlite.prepare('DELETE FROM output_sinks WHERE output_id = ?');
     const stmtUpdateStreamKey = sqlite.prepare('UPDATE stream_keys SET key = ? WHERE id = ?');
     const stmtInsertSink = sqlite.prepare(
         'INSERT INTO output_sinks (id, output_id, seq, url, audio_encoding) VALUES (?, ?, ?, ?, ?)',
@@ -150,51 +154,59 @@ export function createDb(dbPath?: string): Db {
     function getOutputsByPipeline(pipelineId: number): Output[] {
         const outputRows = stmtGetOutputsByPipeline.all(pipelineId) as Record<string, unknown>[];
         if (outputRows.length === 0) return [];
-        const sinkRows = stmtGetSinksByPipeline.all(pipelineId) as Record<string, unknown>[];
-        const sinksMap = new Map<string, Record<string, unknown>[]>();
-        for (const r of sinkRows) {
+        const extraSinkRows = stmtGetExtraSinksByPipeline.all(pipelineId) as Record<
+            string,
+            unknown
+        >[];
+        const extraSinksMap = new Map<string, Record<string, unknown>[]>();
+        for (const r of extraSinkRows) {
             const id = r.output_id as string;
-            if (!sinksMap.has(id)) sinksMap.set(id, []);
-            sinksMap.get(id)!.push(r);
+            if (!extraSinksMap.has(id)) extraSinksMap.set(id, []);
+            extraSinksMap.get(id)!.push(r);
         }
-        return outputRows.map((row) => rowToOutput(row, sinksMap.get(row.id as string) ?? []));
+        return outputRows.map((row) =>
+            rowToOutput(row, extraSinksMap.get(row.id as string) ?? []),
+        );
     }
 
     function loadAllOutputs(): Output[] {
         const outputRows = stmtLoadOutputs.all() as Record<string, unknown>[];
-        const sinkRows = stmtLoadSinks.all() as Record<string, unknown>[];
+        const extraSinkRows = stmtLoadExtraSinks.all() as Record<string, unknown>[];
 
-        const sinksMap = new Map<string, OutputSink[]>();
-        for (const r of sinkRows) {
+        const extraSinksMap = new Map<string, Record<string, unknown>[]>();
+        for (const r of extraSinkRows) {
             const id = r.output_id as string;
-            if (!sinksMap.has(id)) sinksMap.set(id, []);
-            sinksMap.get(id)!.push({
+            if (!extraSinksMap.has(id)) extraSinksMap.set(id, []);
+            extraSinksMap.get(id)!.push(r);
+        }
+
+        return outputRows.map((row) =>
+            rowToOutput(row, extraSinksMap.get(row.id as string) ?? []),
+        );
+    }
+
+    // Builds an Output from an outputs row plus any extra sink rows (seq >= 2).
+    // The primary sink (seq=1) is stored inline on the outputs row itself.
+    function rowToOutput(
+        row: Record<string, unknown>,
+        extraSinkRows: Record<string, unknown>[],
+    ): Output {
+        const id = row.id as string;
+        const sinks: OutputSink[] = [];
+        if (row.url) {
+            sinks.push({
+                seq: 1,
+                url: row.url as string,
+                audioEncoding: (row.audio_encoding as string) || 'copy',
+            });
+        }
+        for (const r of extraSinkRows) {
+            sinks.push({
                 seq: r.seq as number,
                 url: r.url as string,
                 audioEncoding: (r.audio_encoding as string) || 'copy',
             });
         }
-
-        return outputRows.map((row) => {
-            const id = row.id as string;
-            return {
-                id,
-                pipelineId: row.pipeline_id as number,
-                seq: row.seq as number,
-                name: row.name as string,
-                desiredState: row.desired_state as 'running' | 'stopped',
-                videoEncoding: (row.encoding as string) || 'copy',
-                pullMethod: (row.pull_method as PullMethod) || 'rtmp',
-                sinks: sinksMap.get(id) ?? [],
-            };
-        });
-    }
-
-    function rowToOutput(
-        row: Record<string, unknown>,
-        sinkRows: Record<string, unknown>[],
-    ): Output {
-        const id = row.id as string;
         return {
             id,
             pipelineId: row.pipeline_id as number,
@@ -203,31 +215,25 @@ export function createDb(dbPath?: string): Db {
             desiredState: row.desired_state as 'running' | 'stopped',
             videoEncoding: (row.encoding as string) || 'copy',
             pullMethod: (row.pull_method as PullMethod) || 'rtmp',
-            sinks: sinkRows.map((r) => ({
-                seq: r.seq as number,
-                url: r.url as string,
-                audioEncoding: (r.audio_encoding as string) || 'copy',
-            })),
+            sinks,
         };
     }
 
     function getOutputById(id: string): Output | null {
         const row = stmtGetOutput.get(id) as Record<string, unknown> | undefined;
         if (!row) return null;
-        const sinkRows = stmtGetSinksByOutput.all(id) as Record<string, unknown>[];
-        return rowToOutput(row, sinkRows);
+        const extraSinkRows = stmtGetExtraSinksByOutput.all(id) as Record<string, unknown>[];
+        return rowToOutput(row, extraSinkRows);
     }
 
+    // First sink goes inline on the outputs row; any extras (seq >= 2) go to output_sinks.
     function insertSinks(outputId: string, sinks: SinkInput[]): void {
-        sinks.forEach((s, i) => {
-            const seq = i + 1;
-            stmtInsertSink.run(
-                `${outputId}:${seq}`,
-                outputId,
-                seq,
-                s.url,
-                s.audioEncoding ?? 'copy',
-            );
+        if (sinks.length > 0) {
+            stmtUpdateInlineSink.run(sinks[0].url, sinks[0].audioEncoding ?? 'copy', outputId);
+        }
+        sinks.slice(1).forEach((s, i) => {
+            const seq = i + 2;
+            stmtInsertSink.run(`${outputId}:${seq}`, outputId, seq, s.url, s.audioEncoding ?? 'copy');
         });
     }
 
@@ -360,7 +366,7 @@ export function createDb(dbPath?: string): Db {
                         'UPDATE outputs SET name = ?, encoding = ?, pull_method = ? WHERE id = ?',
                     )
                     .run(name, videoEncoding, pullMethod, id);
-                stmtDeleteSinks.run(id);
+                stmtDeleteExtraSinks.run(id);
                 insertSinks(id, sinks);
             })();
             return getOutputById(id);

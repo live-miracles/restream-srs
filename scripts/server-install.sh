@@ -115,6 +115,7 @@ if [[ ! -f "$CONF_DIR/srs.conf" ]]; then
     cp "$APP_DIR/srs.conf" "$CONF_DIR/srs.conf"
     sed -i "s|srs_log_file.*|srs_log_file        $LOG_DIR/srs.log;|" "$CONF_DIR/srs.conf"
 fi
+rm -f "$DATA_DIR/db.sqlite"
 touch "$DATA_DIR/db.sqlite"
 chown "$SERVICE_USER:$SERVICE_USER" "$CONF_DIR/srs.conf" "$DATA_DIR/db.sqlite"
 echo "Config: $CONF_DIR/srs.conf"

@@ -20,8 +20,10 @@ export function setupDatabaseSchema(db: Database.Database): void {
     ).run();
 
     // One output = one ffmpeg process that pulls the input once and fans out to
-    // one or more sinks (output_sinks). pull_method selects how that single input
-    // is pulled from SRS (rtmp collapses to one audio track; srt preserves all).
+    // one or more sinks. The primary (and almost always only) sink is stored
+    // inline on this row; extra sinks for the rare multi-audio-remap case live
+    // in output_sinks. pull_method selects how the input is pulled from SRS
+    // (rtmp collapses to one audio track; srt preserves all).
     db.prepare(
         `CREATE TABLE IF NOT EXISTS outputs (
             id              TEXT PRIMARY KEY,
@@ -31,13 +33,16 @@ export function setupDatabaseSchema(db: Database.Database): void {
             desired_state   TEXT NOT NULL DEFAULT 'stopped',
             encoding        TEXT NOT NULL DEFAULT 'copy',
             pull_method     TEXT NOT NULL DEFAULT 'rtmp',
+            url             TEXT,
+            audio_encoding  TEXT NOT NULL DEFAULT 'copy',
             FOREIGN KEY(pipeline_id) REFERENCES pipelines(id) ON DELETE CASCADE
         )`,
     ).run();
 
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_outputs_pipeline ON outputs(pipeline_id)`).run();
 
-    // Each sink is a single destination URL with its own audio track selection.
+    // Extra sinks only — the primary sink (seq=1) is stored inline in outputs.url.
+    // Populated only for the rare outputs that fan out to multiple destinations.
     db.prepare(
         `CREATE TABLE IF NOT EXISTS output_sinks (
             id              TEXT PRIMARY KEY,
