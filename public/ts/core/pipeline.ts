@@ -57,7 +57,6 @@ export function parsePipelines(
                 status: oh?.status ?? 'stopped',
                 pid: oh?.pid ?? null,
                 bitrateKbps: oh?.bitrateKbps ?? null,
-                retries: oh?.retries ?? 0,
                 startedAtMs: oh?.startedAtMs ?? null,
                 lastError: err?.message ?? null,
                 lastErrorAt: err?.ts ?? null,

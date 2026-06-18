@@ -73,6 +73,19 @@ describe('buildFfmpegArgs', () => {
         assert.equal(args[args.indexOf('-progress') + 1], 'pipe:1');
     });
 
+    test('sets a 10-minute -rw_timeout before -i so a dead input exits', () => {
+        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')]);
+        const i = args.indexOf('-rw_timeout');
+        assert.ok(i >= 0 && i < args.indexOf('-i'));
+        assert.equal(args[i + 1], String(10 * 60 * 1_000_000));
+    });
+
+    test('suppresses ffmpeg stderr stats spam (-nostats -loglevel warning)', () => {
+        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')]);
+        assert.ok(args.includes('-nostats'));
+        assert.equal(args[args.indexOf('-loglevel') + 1], 'warning');
+    });
+
     test('copy audio adds no -map (ffmpeg default selection)', () => {
         const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out', 'copy')]);
         assert.ok(!args.includes('-map'));
@@ -89,7 +102,9 @@ describe('buildFfmpegArgs', () => {
             sink('rtmp://en', '0'),
             sink('srt://fr:10080', '1'),
         ]);
-        assert.equal(args.indexOf('-i'), 0);
+        // input options precede -i, which precedes the fan-out sink URLs
+        assert.ok(args.indexOf('-rw_timeout') < args.indexOf('-i'));
+        assert.ok(args.indexOf('-i') < args.indexOf('rtmp://en'));
         assert.ok(args.includes('rtmp://en'));
         assert.ok(args.includes('srt://fr:10080'));
         // one flv output and one mpegts output

@@ -73,6 +73,7 @@ export interface Db {
     }): Output;
     getOutput(id: string): Output | null;
     listOutputs(): Output[];
+    listOutputIds(): { id: string; pipelineId: number }[];
     listOutputsForPipeline(pipelineId: number): Output[];
     updateOutput(
         id: string,

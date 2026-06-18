@@ -54,6 +54,13 @@ export interface SinkSpec {
     audioEncoding: string;
 }
 
+// Abort the pull if no input data is read for this long (microseconds, ffmpeg's
+// -rw_timeout unit). SRS holds publisher-less pulls open indefinitely, so without
+// this an output whose input never returns (or sits on a stale half-open socket)
+// would hang "running" forever. On timeout ffmpeg exits, the retry loop takes
+// over, and the output is restarted once the input is live again.
+const INPUT_TIMEOUT_US = 10 * 60 * 1_000_000; // 10 minutes
+
 // Build a single ffmpeg command that pulls the input once and fans it out to
 // every sink. The shared video encoding is applied per sink; each sink picks its
 // own audio track(s) via -map. SRT sinks use mpegts, everything else uses flv.
@@ -69,7 +76,22 @@ export function buildFfmpegArgs(
     videoEncoding = 'copy',
 ): string[] {
     const encArgs = ENCODINGS[videoEncoding] ?? ENCODINGS.copy;
-    const args: string[] = ['-i', inputUrl, '-progress', 'pipe:1'];
+    const args: string[] = [
+        // Keep stderr quiet: '-nostats' drops the ~2/s "frame=…bitrate=…" line and
+        // '-loglevel warning' the one-time info banner. With hundreds of outputs
+        // those stderr writes are pure GC/event-loop pressure on the parent, and we
+        // already read live bitrate from '-progress pipe:1'. Warnings/errors are
+        // still emitted so the stderr tail explains failures.
+        '-nostats',
+        '-loglevel',
+        'warning',
+        '-rw_timeout',
+        String(INPUT_TIMEOUT_US),
+        '-i',
+        inputUrl,
+        '-progress',
+        'pipe:1',
+    ];
 
     const useTee =
         videoEncoding !== 'copy' &&

@@ -74,7 +74,6 @@ export interface OutputStatus {
     status: 'running' | 'stopped' | 'failed';
     pid: number | null;
     bitrateKbps: number | null;
-    retries: number;
     startedAtMs: number | null;
 }
 
@@ -160,7 +159,6 @@ export interface OutputView extends Output {
     status: 'running' | 'stopped' | 'failed';
     pid: number | null;
     bitrateKbps: number | null;
-    retries: number;
     startedAtMs: number | null;
     lastError: string | null;
     lastErrorAt: number | null;

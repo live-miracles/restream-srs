@@ -9,9 +9,10 @@ function hasValidSinks(output: Output): boolean {
 }
 
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000];
-// Intentionally low: the team actively monitors streams and manually restarts
-// outputs when needed, so giving up after ~27 minutes is acceptable behaviour.
-const MAX_RETRIES = 100;
+// Outputs retry indefinitely — an input can be down for hours during a major
+// incident and must come back on its own when it returns. While the input/SRS is
+// not ready we only re-check (no ffmpeg spawned), so an idle retry is cheap.
+const RECHECK_DELAY_MS = 5000;
 const SIGKILL_DELAY_MS = 5000;
 const STDERR_TAIL_BYTES = 3000;
 const RESTART_STAGGER_MS = 200;
@@ -21,7 +22,6 @@ interface OutputStats {
     status: 'running' | 'stopped' | 'failed';
     pid: number | null;
     bitrateKbps: number | null;
-    retries: number;
     startedAtMs: number | null;
 }
 
@@ -32,6 +32,7 @@ export interface OutputService {
     stopAndWait(outputId: string): Promise<void>;
     restartPipelineOutputs(pipelineId: number, staggerBase?: number): number;
     clearRetryState(outputId: string): void;
+    setInputReadyCheck(fn: (pipelineId: number) => boolean): void;
     shutdown(): void;
 }
 
@@ -46,14 +47,17 @@ export function createOutputService(db: Db): OutputService {
     const stopRequested = new Set<string>();
     const startLocks = new Set<string>();
     const retryState = new Map<string, { failures: number; timer: NodeJS.Timeout | null }>();
-    const exhausted = new Set<string>();
+
+    // Whether an output's input is live and SRS is reachable. Wired up after
+    // construction (the health service that knows this is created later). Defaults
+    // to "ready" so behaviour is safe before wiring and in tests.
+    let isInputReady: (pipelineId: number) => boolean = () => true;
 
     function getStats(outputId: string): OutputStats {
         const s = statuses.get(outputId) ?? { status: 'stopped' as const, pid: null };
         return {
             ...s,
             bitrateKbps: bitrates.get(outputId) ?? null,
-            retries: retryState.get(outputId)?.failures ?? 0,
             startedAtMs: startTimes.get(outputId) ?? null,
         };
     }
@@ -88,28 +92,38 @@ export function createOutputService(db: Db): OutputService {
 
     function scheduleRetry(output: Output): void {
         const r = getRetry(output.id);
-        if (r.failures >= MAX_RETRIES) {
-            console.log(`[outputs] ${output.id} max retries reached, giving up`);
-            exhausted.add(output.id);
-            return;
-        }
         const delayMs = RETRY_DELAYS_MS[Math.min(r.failures - 1, RETRY_DELAYS_MS.length - 1)];
+        scheduleTryStart(output.id, delayMs);
+    }
+
+    // Schedule a tryStart without counting a failure — used when the input/SRS is
+    // not yet ready, so we keep checking cheaply until it is.
+    function scheduleRecheck(outputId: string): void {
+        scheduleTryStart(outputId, RECHECK_DELAY_MS);
+    }
+
+    function scheduleTryStart(outputId: string, delayMs: number): void {
+        const r = getRetry(outputId);
         if (r.timer) clearTimeout(r.timer);
         r.timer = setTimeout(() => {
             r.timer = null;
-            void tryStart(output.id);
+            void tryStart(outputId);
         }, delayMs);
         r.timer.unref?.();
     }
 
     async function tryStart(outputId: string): Promise<void> {
         if (startLocks.has(outputId)) return;
-        if (exhausted.has(outputId)) return;
         startLocks.add(outputId);
         try {
             const output = db.getOutput(outputId);
             if (!output || output.desiredState !== 'running') return;
             if (statuses.get(outputId)?.status === 'running') return;
+            // Don't spawn a doomed ffmpeg against a dead input; re-check until ready.
+            if (!isInputReady(output.pipelineId)) {
+                scheduleRecheck(outputId);
+                return;
+            }
             await startJob(output);
         } catch (err) {
             console.warn(`[outputs] ${outputId} auto-start failed:`, err);
@@ -236,20 +250,31 @@ export function createOutputService(db: Db): OutputService {
     return {
         getStats,
 
+        // Double-start safety here relies on startJob() being synchronous up to and
+        // including spawn()+setStatus('running'): there is no await before the process
+        // is registered, so a second concurrent start() always observes status
+        // 'running' below and bails. If an await is ever introduced before spawn in
+        // startJob, this check is no longer sufficient — add an explicit start lock
+        // (as tryStart uses) to prevent racing spawns.
         async start(outputId: string): Promise<void> {
             if (startLocks.has(outputId)) return;
             if (statuses.get(outputId)?.status === 'running') return;
             const output = db.getOutput(outputId);
             if (!output) throw new Error('Output not found');
             if (!hasValidSinks(output)) throw new Error('Invalid output URL');
-            exhausted.delete(outputId);
             clearRetry(outputId);
             getRetry(outputId).failures = 0;
+            // Input not live yet — keep the output "running" (desiredState) but
+            // don't spawn a doomed ffmpeg. The recheck loop starts it once the
+            // input comes online.
+            if (!isInputReady(output.pipelineId)) {
+                scheduleRecheck(outputId);
+                return;
+            }
             await startJob(output);
         },
 
         stop(outputId: string): void {
-            exhausted.delete(outputId);
             clearRetry(outputId);
             const proc = processes.get(outputId);
             if (proc) {
@@ -260,7 +285,6 @@ export function createOutputService(db: Db): OutputService {
         },
 
         async stopAndWait(outputId: string): Promise<void> {
-            exhausted.delete(outputId);
             clearRetry(outputId);
             const proc = processes.get(outputId);
             if (!proc) {
@@ -275,7 +299,6 @@ export function createOutputService(db: Db): OutputService {
             let scheduled = 0;
             for (const output of outputs) {
                 if (output.desiredState !== 'running') continue;
-                if (exhausted.has(output.id)) continue;
                 if (statuses.get(output.id)?.status === 'running') {
                     startTimes.set(output.id, Date.now());
                     continue;
@@ -302,6 +325,10 @@ export function createOutputService(db: Db): OutputService {
         },
 
         clearRetryState: clearRetry,
+
+        setInputReadyCheck(fn: (pipelineId: number) => boolean): void {
+            isInputReady = fn;
+        },
 
         shutdown(): void {
             for (const r of retryState.values()) {

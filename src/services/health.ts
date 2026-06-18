@@ -45,7 +45,6 @@ interface PipelineHealth {
             status: string;
             pid: number | null;
             bitrateKbps: number | null;
-            retries: number;
             startedAtMs: number | null;
         }
     >;
@@ -147,6 +146,7 @@ export function createHealthService(db: Db, outputService: OutputService) {
 
     const srsEvents: SrsEvent[] = [];
     let prevSrsReachable: boolean | null = null;
+    let lastSrsReachable = false;
 
     function pushSrsEvent(type: 'up' | 'down', message: string): void {
         srsEvents.push({ ts: Date.now(), type, message });
@@ -199,6 +199,12 @@ export function createHealthService(db: Db, outputService: OutputService) {
         return inputLive.get(pipelineId) ?? false;
     }
 
+    // An output may only be (re)started when SRS is reachable and the pipeline's
+    // input is live — otherwise ffmpeg would just hang or churn against a dead input.
+    function isInputReady(pipelineId: number): boolean {
+        return lastSrsReachable && (inputLive.get(pipelineId) ?? false);
+    }
+
     let pollInProgress = false;
 
     async function poll(): Promise<void> {
@@ -214,7 +220,7 @@ export function createHealthService(db: Db, outputService: OutputService) {
     async function doPoll(): Promise<void> {
         const pipelines = db.listPipelines();
         const outputsByPipeline = new Map<number, string[]>();
-        for (const o of db.listOutputs()) {
+        for (const o of db.listOutputIds()) {
             const ids = outputsByPipeline.get(o.pipelineId);
             if (ids) ids.push(o.id);
             else outputsByPipeline.set(o.pipelineId, [o.id]);
@@ -237,6 +243,7 @@ export function createHealthService(db: Db, outputService: OutputService) {
             console.log('[srs] reachable again');
         }
         prevSrsReachable = srsReachable;
+        lastSrsReachable = srsReachable;
 
         const liveByPath = new Map<string, SrsStream>();
         for (const s of streams) {
@@ -305,7 +312,6 @@ export function createHealthService(db: Db, outputService: OutputService) {
                     status: string;
                     pid: number | null;
                     bitrateKbps: number | null;
-                    retries: number;
                     startedAtMs: number | null;
                 }
             > = {};
@@ -352,5 +358,11 @@ export function createHealthService(db: Db, outputService: OutputService) {
         });
     }
 
-    return { start, registerRoutes, isInputLive, getSrsEvents: (): SrsEvent[] => [...srsEvents] };
+    return {
+        start,
+        registerRoutes,
+        isInputLive,
+        isInputReady,
+        getSrsEvents: (): SrsEvent[] => [...srsEvents],
+    };
 }

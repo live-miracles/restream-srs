@@ -307,7 +307,7 @@ function renderOverview(): void {
                 const src = isOn && o.videoEncoding === 'copy' ? p.input : null;
                 outputRows += `<tr class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(st === 'error', st === 'warn')}>
                     <td><span class="opacity-40 text-xs">${p.name} ·</span> ${o.name}</td>
-                    <td>${badge}${o.retries > 0 ? ` <span class="font-mono text-xs opacity-60">↺${o.retries}</span>` : ''}</td>
+                    <td>${badge}</td>
                     ${td(formatBitrate(o.bitrateKbps))}
                     ${td(isOn ? o.videoEncoding : null)}
                     ${td(src?.video?.codec)}
@@ -437,11 +437,6 @@ function renderOutputCard(o: OutputView, inputLive: boolean): string {
     if (uptimeMs !== null) {
         badges.push(
             `<span class="font-mono text-xs opacity-60 whitespace-nowrap">${formatUptime(uptimeMs)}</span>`,
-        );
-    }
-    if (o.retries > 0) {
-        badges.push(
-            `<span class="badge badge-sm badge-warning whitespace-nowrap" title="Retry attempts">↺ ${o.retries}</span>`,
         );
     }
     if (isRunning && o.bitrateKbps !== null) {

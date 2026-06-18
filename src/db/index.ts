@@ -68,6 +68,11 @@ export function createDb(dbPath?: string): Db {
     // are cheaper and simpler than maintaining targeted per-entity queries.
     const stmtLoadPipelines = sqlite.prepare(`${PIPELINE_SELECT} ORDER BY p.id`);
     const stmtLoadOutputs = sqlite.prepare('SELECT * FROM outputs ORDER BY pipeline_id, seq');
+    // Lightweight id/pipeline map for the 5s health poll — avoids loading every
+    // output row and all its sinks just to group output ids by pipeline.
+    const stmtLoadOutputIds = sqlite.prepare(
+        'SELECT id, pipeline_id FROM outputs ORDER BY pipeline_id, seq',
+    );
     const stmtLoadSinks = sqlite.prepare(
         'SELECT output_id, seq, url, audio_encoding FROM output_sinks ORDER BY output_id, seq',
     );
@@ -335,6 +340,13 @@ export function createDb(dbPath?: string): Db {
 
         listOutputs(): Output[] {
             return loadAllOutputs();
+        },
+
+        listOutputIds(): { id: string; pipelineId: number }[] {
+            return (stmtLoadOutputIds.all() as Record<string, unknown>[]).map((r) => ({
+                id: r.id as string,
+                pipelineId: r.pipeline_id as number,
+            }));
         },
 
         listOutputsForPipeline(pipelineId: number): Output[] {

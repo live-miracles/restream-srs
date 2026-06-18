@@ -32,6 +32,9 @@ const outputService = createOutputService(db);
 const healthService = createHealthService(db, outputService);
 const previewService = createPreviewService(db);
 
+// Outputs only start ffmpeg when the input is live and SRS is reachable.
+outputService.setInputReadyCheck(healthService.isInputReady);
+
 // Unauthenticated routes
 registerSrsHooks(app, db);
 registerAuthApi(app, db);
