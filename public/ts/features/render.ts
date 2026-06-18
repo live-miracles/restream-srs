@@ -421,14 +421,14 @@ function renderOutputCard(o: OutputView, inputLive: boolean): string {
     const isStopped = o.desiredState === 'stopped';
     const isRunning = o.status === 'running';
     const st = outStatus(o, inputLive);
-    const statusClass =
+    const statusHex =
         st === 'good'
-            ? 'status-success'
+            ? '#22c55e'
             : st === 'warn'
-              ? 'status-warning'
+              ? '#eab308'
               : st === 'error'
-                ? 'status-error'
-                : 'status-neutral';
+                ? '#ef4444'
+                : '#6b7280';
     const uptimeMs = st === 'good' && o.startedAtMs !== null ? Date.now() - o.startedAtMs : null;
     const badges = [
         `<span class="badge badge-sm whitespace-nowrap">${o.videoEncoding}</span>`,
@@ -494,7 +494,7 @@ function renderOutputCard(o: OutputView, inputLive: boolean): string {
         <div class="min-w-0 flex-1 space-y-0.5">
             <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <div class="flex items-center gap-2 shrink-0 font-semibold">
-                    <div aria-label="status" class="status status-lg ${statusClass} mx-1"></div>
+                    <div aria-label="status" class="status status-lg mx-1" style="background-color: ${statusHex}"></div>
                     <button class="btn btn-xs ${isStopped ? 'btn-accent' : 'btn-accent btn-outline'}"
                         data-action="${isStopped ? 'start' : 'stop'}" data-out-id="${o.id}"${isPending ? ' disabled' : ''}>
                         ${isStopped ? 'Start' : 'Stop'}
