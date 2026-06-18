@@ -24,14 +24,6 @@ export interface SinkInput {
     audioEncoding?: string;
 }
 
-export interface OutputLog {
-    id: number;
-    outputId: string;
-    ts: number;
-    event: string;
-    message: string;
-}
-
 export interface PipelineLog {
     id: number;
     pipelineId: number;
@@ -49,6 +41,7 @@ export interface Output {
     videoEncoding: string;
     pullMethod: PullMethod;
     sinks: OutputSink[];
+    lastError: string | null;
 }
 
 export interface Db {
@@ -73,7 +66,7 @@ export interface Db {
     }): Output;
     getOutput(id: string): Output | null;
     listOutputs(): Output[];
-    listOutputIds(): { id: string; pipelineId: number }[];
+    listOutputIds(): { id: string; pipelineId: number; lastError: string | null }[];
     listOutputsForPipeline(pipelineId: number): Output[];
     updateOutput(
         id: string,
@@ -87,8 +80,8 @@ export interface Db {
     setOutputDesiredState(id: string, desiredState: 'running' | 'stopped'): Output | null;
     deleteOutput(id: string): boolean;
 
-    appendOutputLog(outputId: string, event: string, message: string): void;
-    getOutputLogsForPipeline(pipelineId: number, limit?: number): OutputLog[];
+    setOutputLastError(id: string, message: string): void;
+    clearOutputLastError(id: string): void;
 
     appendPipelineLog(pipelineId: number, event: string, message: string): void;
     getPipelineLogs(pipelineId: number, limit?: number): PipelineLog[];

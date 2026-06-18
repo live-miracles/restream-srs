@@ -5,7 +5,6 @@ import { setupDatabaseSchema } from './schema.js';
 import type {
     Pipeline,
     Output,
-    OutputLog,
     PipelineLog,
     OutputSink,
     PullMethod,
@@ -21,9 +20,8 @@ const PIPELINE_SELECT = `
 `;
 
 const STREAM_KEY_SLOTS = 99;
-// Fetch limit only — output_logs has no storage cap (see appendOutputLog).
-const LOG_RETENTION_LIMIT = 100;
 const PIPELINE_LOG_CAP = 100;
+const LOG_RETENTION_LIMIT = 100;
 
 function rowToPipeline(row: Record<string, unknown>): Pipeline {
     return {
@@ -36,15 +34,6 @@ function rowToPipeline(row: Record<string, unknown>): Pipeline {
 
 function rowToStreamKey(row: Record<string, unknown>): StreamKey {
     return { id: row.id as number, slot: row.slot as number, key: row.key as string };
-}
-
-function lastLine(s: string): string {
-    const lines = s.split('\n');
-    for (let i = lines.length - 1; i >= 0; i--) {
-        const l = lines[i].trim();
-        if (l) return l;
-    }
-    return s.trim();
 }
 
 export function createDb(dbPath?: string): Db {
@@ -71,7 +60,7 @@ export function createDb(dbPath?: string): Db {
     // Lightweight id/pipeline map for the 5s health poll — avoids loading every
     // output row just to group output ids by pipeline.
     const stmtLoadOutputIds = sqlite.prepare(
-        'SELECT id, pipeline_id FROM outputs ORDER BY pipeline_id, seq',
+        'SELECT id, pipeline_id, last_error FROM outputs ORDER BY pipeline_id, seq',
     );
     // Extra sinks only — primary sink (seq=1) is inlined on the outputs row.
     const stmtLoadExtraSinks = sqlite.prepare(
@@ -115,20 +104,8 @@ export function createDb(dbPath?: string): Db {
     const stmtInsertSink = sqlite.prepare(
         'INSERT INTO output_sinks (id, output_id, seq, url, audio_encoding) VALUES (?, ?, ?, ?, ?)',
     );
-    const stmtInsertOutputLog = sqlite.prepare(
-        'INSERT INTO output_logs (output_id, ts, event, message) VALUES (?, ?, ?, ?)',
-    );
-    const stmtGetLastOutputLog = sqlite.prepare(
-        'SELECT event, message FROM output_logs WHERE output_id = ? ORDER BY id DESC LIMIT 1',
-    );
-    const stmtGetOutputLogsByPipeline = sqlite.prepare(
-        `SELECT ol.id, ol.output_id, ol.ts, ol.event, ol.message
-         FROM output_logs ol
-         JOIN outputs o ON ol.output_id = o.id
-         WHERE o.pipeline_id = ?
-         ORDER BY ol.id DESC
-         LIMIT ?`,
-    );
+    const stmtSetLastError = sqlite.prepare('UPDATE outputs SET last_error = ? WHERE id = ?');
+    const stmtClearLastError = sqlite.prepare('UPDATE outputs SET last_error = NULL WHERE id = ?');
     const stmtInsertPipelineLog = sqlite.prepare(
         'INSERT INTO pipeline_logs (pipeline_id, ts, event, message) VALUES (?, ?, ?, ?)',
     );
@@ -164,9 +141,7 @@ export function createDb(dbPath?: string): Db {
             if (!extraSinksMap.has(id)) extraSinksMap.set(id, []);
             extraSinksMap.get(id)!.push(r);
         }
-        return outputRows.map((row) =>
-            rowToOutput(row, extraSinksMap.get(row.id as string) ?? []),
-        );
+        return outputRows.map((row) => rowToOutput(row, extraSinksMap.get(row.id as string) ?? []));
     }
 
     function loadAllOutputs(): Output[] {
@@ -180,9 +155,7 @@ export function createDb(dbPath?: string): Db {
             extraSinksMap.get(id)!.push(r);
         }
 
-        return outputRows.map((row) =>
-            rowToOutput(row, extraSinksMap.get(row.id as string) ?? []),
-        );
+        return outputRows.map((row) => rowToOutput(row, extraSinksMap.get(row.id as string) ?? []));
     }
 
     // Builds an Output from an outputs row plus any extra sink rows (seq >= 2).
@@ -216,6 +189,7 @@ export function createDb(dbPath?: string): Db {
             videoEncoding: (row.encoding as string) || 'copy',
             pullMethod: (row.pull_method as PullMethod) || 'rtmp',
             sinks,
+            lastError: (row.last_error as string | null) ?? null,
         };
     }
 
@@ -233,7 +207,13 @@ export function createDb(dbPath?: string): Db {
         }
         sinks.slice(1).forEach((s, i) => {
             const seq = i + 2;
-            stmtInsertSink.run(`${outputId}:${seq}`, outputId, seq, s.url, s.audioEncoding ?? 'copy');
+            stmtInsertSink.run(
+                `${outputId}:${seq}`,
+                outputId,
+                seq,
+                s.url,
+                s.audioEncoding ?? 'copy',
+            );
         });
     }
 
@@ -348,10 +328,11 @@ export function createDb(dbPath?: string): Db {
             return loadAllOutputs();
         },
 
-        listOutputIds(): { id: string; pipelineId: number }[] {
+        listOutputIds(): { id: string; pipelineId: number; lastError: string | null }[] {
             return (stmtLoadOutputIds.all() as Record<string, unknown>[]).map((r) => ({
                 id: r.id as string,
                 pipelineId: r.pipeline_id as number,
+                lastError: (r.last_error as string | null) ?? null,
             }));
         },
 
@@ -384,30 +365,12 @@ export function createDb(dbPath?: string): Db {
             return result.changes > 0;
         },
 
-        // No storage cap on output_logs, by design:
-        // - Capping would require a per-output prune query on every insert. With
-        //   hundreds of outputs failing and retrying simultaneously that adds up fast.
-        // - Outputs are short-lived (typically deleted after 1–2 days), and the
-        //   ON DELETE CASCADE on output_id cleans up all their logs automatically.
-        appendOutputLog(outputId: string, event: string, message: string): void {
-            const last = stmtGetLastOutputLog.get(outputId) as
-                | { event: string; message: string }
-                | undefined;
-            if (last && last.event === event && lastLine(last.message) === lastLine(message))
-                return;
-            stmtInsertOutputLog.run(outputId, Date.now(), event, message);
+        setOutputLastError(id: string, message: string): void {
+            stmtSetLastError.run(`${Date.now()}\n${message}`, id);
         },
 
-        getOutputLogsForPipeline(pipelineId: number, limit = LOG_RETENTION_LIMIT): OutputLog[] {
-            return (
-                stmtGetOutputLogsByPipeline.all(pipelineId, limit) as Record<string, unknown>[]
-            ).map((r) => ({
-                id: r.id as number,
-                outputId: r.output_id as string,
-                ts: r.ts as number,
-                event: r.event as string,
-                message: r.message as string,
-            }));
+        clearOutputLastError(id: string): void {
+            stmtClearLastError.run(id);
         },
 
         appendPipelineLog(pipelineId: number, event: string, message: string): void {

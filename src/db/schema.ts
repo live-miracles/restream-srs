@@ -24,6 +24,8 @@ export function setupDatabaseSchema(db: Database.Database): void {
     // inline on this row; extra sinks for the rare multi-audio-remap case live
     // in output_sinks. pull_method selects how the input is pulled from SRS
     // (rtmp collapses to one audio track; srt preserves all).
+    // last_error stores the most recent ffmpeg failure as "<ts_ms>\n<message>".
+    // Cleared when the user explicitly starts the output.
     db.prepare(
         `CREATE TABLE IF NOT EXISTS outputs (
             id              TEXT PRIMARY KEY,
@@ -35,6 +37,7 @@ export function setupDatabaseSchema(db: Database.Database): void {
             pull_method     TEXT NOT NULL DEFAULT 'rtmp',
             url             TEXT,
             audio_encoding  TEXT NOT NULL DEFAULT 'copy',
+            last_error      TEXT,
             FOREIGN KEY(pipeline_id) REFERENCES pipelines(id) ON DELETE CASCADE
         )`,
     ).run();
@@ -63,21 +66,6 @@ export function setupDatabaseSchema(db: Database.Database): void {
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
         )`,
-    ).run();
-
-    db.prepare(
-        `CREATE TABLE IF NOT EXISTS output_logs (
-            id        INTEGER PRIMARY KEY AUTOINCREMENT,
-            output_id TEXT NOT NULL,
-            ts        INTEGER NOT NULL,
-            event     TEXT NOT NULL,
-            message   TEXT NOT NULL,
-            FOREIGN KEY(output_id) REFERENCES outputs(id) ON DELETE CASCADE
-        )`,
-    ).run();
-
-    db.prepare(
-        `CREATE INDEX IF NOT EXISTS idx_output_logs_output ON output_logs(output_id, id DESC)`,
     ).run();
 
     db.prepare(

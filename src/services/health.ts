@@ -46,6 +46,7 @@ interface PipelineHealth {
             pid: number | null;
             bitrateKbps: number | null;
             startedAtMs: number | null;
+            lastError: string | null;
         }
     >;
 }
@@ -220,10 +221,12 @@ export function createHealthService(db: Db, outputService: OutputService) {
     async function doPoll(): Promise<void> {
         const pipelines = db.listPipelines();
         const outputsByPipeline = new Map<number, string[]>();
+        const lastErrorById = new Map<string, string | null>();
         for (const o of db.listOutputIds()) {
             const ids = outputsByPipeline.get(o.pipelineId);
             if (ids) ids.push(o.id);
             else outputsByPipeline.set(o.pipelineId, [o.id]);
+            lastErrorById.set(o.id, o.lastError);
         }
 
         let streams: SrsStream[] = [];
@@ -316,7 +319,10 @@ export function createHealthService(db: Db, outputService: OutputService) {
                 }
             > = {};
             for (const outId of outputsByPipeline.get(pipeline.id) ?? []) {
-                outputsHealth[outId] = outputService.getStats(outId);
+                outputsHealth[outId] = {
+                    ...outputService.getStats(outId),
+                    lastError: lastErrorById.get(outId) ?? null,
+                };
             }
 
             const srtStream = nowLive && s?.tcUrl?.startsWith('srt://');

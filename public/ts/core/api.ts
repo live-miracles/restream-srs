@@ -1,7 +1,6 @@
 import type {
     ConfigData,
     HealthData,
-    OutputLog,
     PipelineLog,
     OutputPayload,
     SystemMetrics,
@@ -82,8 +81,6 @@ async function apiRequest<T>(
 export const getConfig = () => apiRequest<ConfigData>('/api/config');
 export const getHealth = () => apiRequest<HealthData>('/api/health');
 export const getSystemMetrics = () => apiRequest<SystemMetrics>('/api/metrics/system');
-export const getOutputLogsForPipeline = (pipelineId: string) =>
-    apiRequest<OutputLog[]>(`/api/pipelines/${pipelineId}/output-logs`);
 
 export const updateSettings = (name: string, srtPassphrase: string | null, publicHost: string) =>
     apiRequest('/api/settings', { method: 'POST', body: { name, srtPassphrase, publicHost } });

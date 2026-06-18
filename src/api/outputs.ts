@@ -108,12 +108,8 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
 
         try {
             db.setOutputDesiredState(outId, 'running');
+            db.clearOutputLastError(outId);
             await outputService.start(outId);
-            try {
-                db.appendOutputLog(outId, 'start', 'User started output');
-            } catch {
-                /* non-critical */
-            }
             return res.json({ ok: true, status: outputService.getStats(outId) });
         } catch (err) {
             try {
@@ -134,19 +130,6 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
 
         db.setOutputDesiredState(outId, 'stopped');
         outputService.stop(outId);
-        try {
-            db.appendOutputLog(outId, 'stop', 'User stopped output');
-        } catch {
-            /* non-critical */
-        }
         return res.json({ ok: true });
-    });
-
-    app.get('/api/pipelines/:pipelineId/output-logs', (req, res) => {
-        const pipelineId = parseInt(req.params.pipelineId);
-        if (isNaN(pipelineId)) return res.status(400).json({ error: 'invalid pipelineId' });
-        if (!db.getPipeline(pipelineId))
-            return res.status(404).json({ error: 'Pipeline not found' });
-        return res.json(db.getOutputLogsForPipeline(pipelineId));
     });
 }

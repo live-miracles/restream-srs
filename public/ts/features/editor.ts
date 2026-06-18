@@ -596,55 +596,33 @@ export async function showPipelineLogs(pipelineId: string): Promise<void> {
         .join('');
 }
 
-export async function showOutputLogs(pipelineId: string, outId: string): Promise<void> {
+export function showOutputError(pipelineId: string, outId: string): void {
     const modal = document.getElementById('logs-modal') as HTMLDialogElement | null;
     const titleEl = document.getElementById('logs-modal-title');
     const contentEl = document.getElementById('logs-modal-content');
     if (!modal || !contentEl) return;
 
     const pipeline = state.pipelines.find((p) => p.id === pipelineId);
-    const outputName = pipeline?.outs.find((o) => o.id === outId)?.name ?? outId;
-    if (titleEl) titleEl.textContent = `Logs — ${outputName}`;
-    contentEl.textContent = 'Loading…';
-    modal.showModal();
+    const output = pipeline?.outs.find((o) => o.id === outId);
+    if (titleEl) titleEl.textContent = `Error — ${output?.name ?? outId}`;
 
-    const allLogs = await api.getOutputLogsForPipeline(pipelineId);
-    const logs = allLogs?.filter((l) => l.outputId === outId) ?? null;
-    if (!logs || logs.length === 0) {
-        contentEl.innerHTML = '<p class="opacity-50 text-sm">No logs recorded yet.</p>';
+    if (!output?.lastError) {
+        contentEl.innerHTML = '<p class="opacity-50 text-sm">No error recorded.</p>';
+        modal.showModal();
         return;
     }
 
-    const fmtTs = (ts: number) => new Date(ts).toLocaleString();
-    const eventClass = (event: string) =>
-        event === 'error'
-            ? 'text-error'
-            : event === 'reconnect'
-              ? 'text-info'
-              : 'text-base-content';
-    const badgeClass = (event: string) =>
-        event === 'error'
-            ? 'badge-error'
-            : event === 'start'
-              ? 'badge-success'
-              : event === 'stop'
-                ? 'badge-neutral'
-                : 'badge-info';
-
-    contentEl.innerHTML = logs
-        .map(
-            (
-                l,
-                i,
-            ) => `<div class="border-b border-base-200 pb-2 mb-2 last:border-0 last:mb-0 last:pb-0">
-                <div class="flex items-center gap-2 mb-1">
-                    <span class="badge badge-xs leading-none ${badgeClass(l.event)} uppercase">${l.event}</span>
-                    <span class="text-xs opacity-50">${fmtTs(l.ts)}</span>
-                </div>
-                <pre class="text-xs ${eventClass(l.event)} opacity-80 whitespace-pre-wrap break-all overflow-x-auto${i === 0 ? '' : ' max-h-48'}">${l.message.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
-            </div>`,
-        )
-        .join('');
+    const ts = output.lastErrorAt
+        ? new Date(output.lastErrorAt).toLocaleString(undefined, { hour12: false })
+        : '';
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    contentEl.innerHTML = `
+        <div class="flex items-center gap-2 mb-2">
+            <span class="badge badge-xs badge-error uppercase">error</span>
+            <span class="text-xs opacity-50">${ts}</span>
+        </div>
+        <pre class="text-xs text-error opacity-80 whitespace-pre-wrap break-all overflow-x-auto">${esc(output.lastError)}</pre>`;
+    modal.showModal();
 }
 
 export async function showSrsLogs(): Promise<void> {

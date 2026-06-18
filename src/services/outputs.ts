@@ -217,24 +217,9 @@ export function createOutputService(db: Db): OutputService {
 
             if (!wasStop) {
                 try {
-                    if (code !== 0 && stderrTail) {
-                        db.appendOutputLog(
-                            output.id,
-                            'error',
-                            `exit=${code ?? signal}\n${stderrTail.trim()}`,
-                        );
-                    } else if (code === 0) {
-                        // FFmpeg exited cleanly without being asked to stop.
-                        // This typically means the destination closed the connection
-                        // (e.g. wrong stream key). Log a concise error so the UI
-                        // shows red instead of silently cycling through retries.
-                        const detail = stderrTail.trim();
-                        db.appendOutputLog(
-                            output.id,
-                            'error',
-                            detail ? `exit=0 (unexpected)\n${detail}` : 'exit=0 (unexpected)',
-                        );
-                    }
+                    const detail = stderrTail.trim();
+                    const exitStr = `exit=${code ?? signal}`;
+                    db.setOutputLastError(output.id, detail ? `${exitStr}\n${detail}` : exitStr);
                 } catch {
                     /* non-critical */
                 }
@@ -302,11 +287,6 @@ export function createOutputService(db: Db): OutputService {
                 if (statuses.get(output.id)?.status === 'running') {
                     startTimes.set(output.id, Date.now());
                     continue;
-                }
-                try {
-                    db.appendOutputLog(output.id, 'reconnect', 'Pipeline input reconnected');
-                } catch {
-                    /* non-critical */
                 }
                 const r = getRetry(output.id);
                 r.failures = 0;

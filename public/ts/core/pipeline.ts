@@ -1,11 +1,4 @@
-import type {
-    ConfigData,
-    HealthData,
-    InputHealth,
-    OutputLog,
-    PipelineView,
-    OutputView,
-} from '../types.js';
+import type { ConfigData, HealthData, InputHealth, PipelineView, OutputView } from '../types.js';
 
 const EMPTY_INPUT: InputHealth = {
     live: false,
@@ -19,30 +12,22 @@ const EMPTY_INPUT: InputHealth = {
     audioTracks: [],
 };
 
-// Scan recent logs newest-first to find the current error state for an output.
-// 'stop' clears the error; 'error' sets it; 'start'/'reconnect' are skipped so
-// a restart with a wrong key keeps showing the previous failure until it stops.
-function deriveLastError(
-    logs: OutputLog[],
-    outputId: string,
-): { message: string; ts: number } | null {
-    for (const log of logs) {
-        if (log.outputId !== outputId) continue;
-        if (log.event === 'stop') return null;
-        if (log.event === 'error') return { message: log.message, ts: log.ts };
-    }
-    return null;
+// last_error is stored as "<ts_ms>\n<message>". Parse both parts.
+function parseLastError(raw: string | null): { message: string; ts: number } | null {
+    if (!raw) return null;
+    const nl = raw.indexOf('\n');
+    if (nl === -1) return { message: raw, ts: 0 };
+    const ts = parseInt(raw.slice(0, nl), 10);
+    return { message: raw.slice(nl + 1), ts: isNaN(ts) ? 0 : ts };
 }
 
 export function parsePipelines(
     config: Partial<ConfigData>,
     health: Partial<HealthData>,
-    outputLogs?: OutputLog[],
 ): PipelineView[] {
     const pipelines = config.pipelines ?? [];
     const outputs = config.outputs ?? [];
     const pipelinesHealth = health.pipelines ?? {};
-    const logs = outputLogs ?? [];
 
     return pipelines.map((p) => {
         const ph = pipelinesHealth[String(p.id)];
@@ -51,7 +36,10 @@ export function parsePipelines(
         const pipelineOutputs = outputs.filter((o) => String(o.pipelineId) === String(p.id));
         const outs: OutputView[] = pipelineOutputs.map((o) => {
             const oh = ph?.outputs?.[o.id];
-            const err = deriveLastError(logs, o.id);
+            // Health carries the live lastError (polled every 5s); fall back to
+            // config's value only on initial load before the first health response.
+            const rawError = oh !== undefined ? oh.lastError : (o.lastError ?? null);
+            const err = parseLastError(rawError);
             return {
                 ...o,
                 status: oh?.status ?? 'stopped',

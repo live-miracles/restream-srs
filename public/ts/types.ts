@@ -30,6 +30,7 @@ export interface Output {
     videoEncoding: string;
     pullMethod: PullMethod;
     sinks: OutputSink[];
+    lastError: string | null;
 }
 
 export interface SinkPayload {
@@ -75,6 +76,7 @@ export interface OutputStatus {
     pid: number | null;
     bitrateKbps: number | null;
     startedAtMs: number | null;
+    lastError: string | null;
 }
 
 export interface SrsLogEvent {
@@ -86,14 +88,6 @@ export interface SrsLogEvent {
 export interface SrsLogsData {
     events: SrsLogEvent[];
     logTail: string[];
-}
-
-export interface OutputLog {
-    id: number;
-    outputId: string;
-    ts: number;
-    event: string;
-    message: string;
 }
 
 export interface PipelineLog {
