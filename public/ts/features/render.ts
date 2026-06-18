@@ -19,7 +19,7 @@ declare global {
 
 type OutStatus = 'good' | 'warn' | 'error' | 'off';
 
-const pendingOutputs = new Set<string>();
+const pendingOutputs = new Map<string, 'start' | 'stop'>();
 
 function outStatus(o: OutputView, inputLive: boolean): OutStatus {
     if (o.desiredState === 'stopped') return 'off';
@@ -444,22 +444,31 @@ function renderOutputCard(o: OutputView, inputLive: boolean): string {
             `<span class="badge badge-sm whitespace-nowrap">${formatBitrate(o.bitrateKbps)}</span>`,
         );
     }
-    const sinksHtml = o.sinks
-        .map((s) => {
-            const trackBadge =
-                s.audioEncoding !== 'copy'
-                    ? ` <span class="badge badge-xs badge-info whitespace-nowrap">${s.audioEncoding
-                          .split(',')
-                          .map((t) => `A${parseInt(t) + 1}`)
-                          .join('+')}</span>`
-                    : '';
-            const display =
-                s.url.length > 27 ? s.url.slice(0, 25) + '...' + s.url.slice(-2) : s.url;
-            return `<div class="flex items-center gap-1 min-w-0">
-                <code class="text-xs font-normal opacity-60" title="${s.url}">${display}</code>${trackBadge}
-            </div>`;
-        })
-        .join('');
+    const fmtSink = (s: (typeof o.sinks)[0]) => {
+        const trackBadge =
+            s.audioEncoding !== 'copy'
+                ? ` <span class="badge badge-xs badge-info whitespace-nowrap">${s.audioEncoding
+                      .split(',')
+                      .map((t) => `A${parseInt(t) + 1}`)
+                      .join('+')}</span>`
+                : '';
+        const display = s.url.length > 27 ? s.url.slice(0, 25) + '...' + s.url.slice(-2) : s.url;
+        return { display, trackBadge };
+    };
+
+    let inlineSink = '';
+    let belowSinks = '';
+    if (o.sinks.length === 1) {
+        const { display, trackBadge } = fmtSink(o.sinks[0]);
+        inlineSink = `<code class="text-xs font-normal opacity-60 whitespace-nowrap" title="${o.sinks[0].url}">${display}</code>${trackBadge}`;
+    } else if (o.sinks.length > 1) {
+        belowSinks = `<div class="space-y-0.5 pl-2">${o.sinks
+            .map((s) => {
+                const { display, trackBadge } = fmtSink(s);
+                return `<div class="flex items-center gap-1 min-w-0"><code class="text-xs font-normal opacity-60" title="${s.url}">${display}</code>${trackBadge}</div>`;
+            })
+            .join('')}</div>`;
+    }
 
     const lastErrorLine = o.lastError
         ? (o.lastError
@@ -481,7 +490,7 @@ function renderOutputCard(o: OutputView, inputLive: boolean): string {
 
     const isPending = pendingOutputs.has(o.id);
     return `
-    <div class="bg-base-100 px-3 py-1 border-b border-base-200 w-full flex gap-2 items-start">
+    <div class="bg-base-100 px-3 py-2 border border-base-content/10 rounded-xl w-full flex gap-2 items-start">
         <div class="min-w-0 flex-1 space-y-0.5">
             <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <div class="flex items-center gap-2 shrink-0 font-semibold">
@@ -493,8 +502,9 @@ function renderOutputCard(o: OutputView, inputLive: boolean): string {
                     <span>${o.name}</span>
                 </div>
                 ${badges.join('')}
+                ${inlineSink}
             </div>
-            <div class="space-y-0.5 pl-2">${sinksHtml}</div>
+            ${belowSinks}
             ${lastErrorHtml}
         </div>
         <div class="flex items-center gap-1 shrink-0">
@@ -517,14 +527,15 @@ function renderOutputsList(pipeline: PipelineView): void {
     // Clear pending state once the output's actual status has settled into the
     // desired state (or for outputs that no longer exist, e.g. deleted).
     const presentIds = new Set(pipeline.outs.map((o) => o.id));
-    for (const id of pendingOutputs) {
+    for (const id of pendingOutputs.keys()) {
         if (!presentIds.has(id)) pendingOutputs.delete(id);
     }
     for (const o of pipeline.outs) {
-        if (!pendingOutputs.has(o.id)) continue;
+        const action = pendingOutputs.get(o.id);
+        if (!action) continue;
         const settled =
-            (o.desiredState === 'running' && (o.status === 'running' || o.status === 'failed')) ||
-            (o.desiredState === 'stopped' && o.status === 'stopped');
+            (action === 'start' && o.desiredState === 'running') ||
+            (action === 'stop' && o.desiredState === 'stopped');
         if (settled) pendingOutputs.delete(o.id);
     }
 
@@ -536,7 +547,7 @@ function renderOutputsList(pipeline: PipelineView): void {
         const outId = btn.dataset.outId!;
         const action = btn.dataset.action!;
         if (action === 'start' || action === 'stop') {
-            pendingOutputs.add(outId);
+            pendingOutputs.set(outId, action);
             btn.disabled = true;
         }
         void import('../features/editor.js').then((ed) => {
