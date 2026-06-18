@@ -32,12 +32,12 @@ chown -R "$SERVICE_USER:$SERVICE_USER" "$APP_DIR"
 
 echo
 echo "=== Ensure runtime paths ==="
-mkdir -p "$DATA_DIR" "$CONF_DIR"
+mkdir -p "$DATA_DIR" "$DATA_DIR/objs" "$CONF_DIR"
 touch "$DATA_DIR/db.sqlite"
 if [[ ! -f "$CONF_DIR/srs.conf" ]]; then
     cp "$APP_DIR/srs.conf" "$CONF_DIR/srs.conf"
 fi
-chown "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR" "$CONF_DIR" "$DATA_DIR/db.sqlite" "$CONF_DIR/srs.conf"
+chown "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR" "$DATA_DIR/objs" "$CONF_DIR" "$DATA_DIR/db.sqlite" "$CONF_DIR/srs.conf"
 
 echo
 echo "=== Restart services ==="

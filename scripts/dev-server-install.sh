@@ -53,8 +53,8 @@ verify_sha256() {
 
 mkdir -p "$REPO_DIR/objs"
 
-# Already installed and correct version
-if [[ -x "$SRS_OUT" ]] && "$SRS_OUT" -v 2>&1 | grep -q "$SRS_VERSION"; then
+VERSION_MARKER="$REPO_DIR/objs/.srs-version"
+if [[ -x "$SRS_OUT" && -f "$VERSION_MARKER" && "$(cat "$VERSION_MARKER")" == "$SRS_VERSION" ]]; then
     echo "SRS $SRS_VERSION already installed at $SRS_OUT"
     exit 0
 fi
@@ -89,6 +89,7 @@ if [[ -z "$SRS_BIN" ]]; then
     exit 1
 fi
 install -m 755 "$SRS_BIN" "$SRS_OUT"
+echo "$SRS_VERSION" > "$VERSION_MARKER"
 
 echo "Installed: $("$SRS_OUT" -v 2>&1 | head -1)"
 echo ""

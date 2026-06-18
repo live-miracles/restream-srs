@@ -102,8 +102,9 @@ else
     echo "Installed: $(/usr/local/bin/ffmpeg -version 2>&1 | head -1)"
 fi
 
+SRS_VERSION_MARKER=/usr/local/bin/.srs-version
 step "4/9 SRS $SRS_VERSION"
-if /usr/local/bin/srs -v 2>&1 | grep -q "$SRS_VERSION"; then
+if [[ -x /usr/local/bin/srs && -f "$SRS_VERSION_MARKER" && "$(cat "$SRS_VERSION_MARKER")" == "$SRS_VERSION" ]]; then
     echo "SRS $SRS_VERSION already installed."
 else
     echo "Downloading $SRS_ZIP..."
@@ -119,6 +120,7 @@ else
         exit 1
     fi
     install -m 755 "$SRS_BIN" /usr/local/bin/srs
+    echo "$SRS_VERSION" > "$SRS_VERSION_MARKER"
     echo "Installed: $(/usr/local/bin/srs -v 2>&1 | head -1)"
 fi
 
@@ -129,8 +131,8 @@ if ! id "$SERVICE_USER" &>/dev/null; then
 else
     echo "User $SERVICE_USER already exists."
 fi
-mkdir -p "$APP_DIR" "$DATA_DIR" "$LOG_DIR" "$CONF_DIR"
-chown "$SERVICE_USER:$SERVICE_USER" "$APP_DIR" "$DATA_DIR" "$LOG_DIR" "$CONF_DIR"
+mkdir -p "$APP_DIR" "$DATA_DIR" "$DATA_DIR/objs" "$LOG_DIR" "$CONF_DIR"
+chown "$SERVICE_USER:$SERVICE_USER" "$APP_DIR" "$DATA_DIR" "$DATA_DIR/objs" "$LOG_DIR" "$CONF_DIR"
 
 step "6/9 Application"
 if [[ ! -d "$APP_DIR/.git" ]]; then
@@ -217,7 +219,7 @@ Environment=NODE_ENV=production
 Environment=PORT=8080
 Environment=DB_PATH=$DATA_DIR/db.sqlite
 Environment=SRS_CONF_PATH=$CONF_DIR/srs.conf
-Environment=SRS_LOG_PATH=$LOG_DIR/srs.log
+Environment=SRS_LOG_PATH=$DATA_DIR/objs/srs.log
 Environment=SRS_API_URL=http://127.0.0.1:1985
 Environment=SRS_RTMP_HOST=127.0.0.1
 Environment=SRS_RTMP_PORT=1935
