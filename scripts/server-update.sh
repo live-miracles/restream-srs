@@ -25,9 +25,13 @@ sudo -u "$SERVICE_USER" git -C "$APP_DIR" reset --hard '@{u}'
 
 echo
 echo "=== Rebuild ==="
-npm ci
-npm run build
-npm prune --omit=dev
+# Build as the service user (matching the git steps above) so the tree never ends
+# up with root-owned files and npm lifecycle scripts don't run as root. -H gives
+# npm/node a writable HOME ($APP_DIR) for their cache. A final chown stays as a
+# cheap safety net in case an earlier run left anything root-owned.
+sudo -u "$SERVICE_USER" -H npm ci
+sudo -u "$SERVICE_USER" -H npm run build
+sudo -u "$SERVICE_USER" -H npm prune --omit=dev
 chown -R "$SERVICE_USER:$SERVICE_USER" "$APP_DIR"
 
 echo

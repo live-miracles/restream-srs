@@ -153,17 +153,34 @@ if [[ ! -f "$CONF_DIR/srs.conf" ]]; then
     cp "$APP_DIR/srs.conf" "$CONF_DIR/srs.conf"
     sed -i "s|srs_log_file.*|srs_log_file        $LOG_DIR/srs.log;|" "$CONF_DIR/srs.conf"
 fi
-# Intentionally wipe the database on (re)install. We don't do data migrations, so
-# if the schema changed in a past update, an old db.sqlite could be incompatible
-# and cause hard-to-debug issues. Starting fresh avoids that — the app re-seeds
-# defaults (stream keys, 'admin' password) on first boot. Use server-update.sh
-# (which preserves the DB) for normal upgrades; this destructive reset is the
-# install-time behaviour by design.
-rm -f "$DATA_DIR/db.sqlite"
-touch "$DATA_DIR/db.sqlite"
-chown "$SERVICE_USER:$SERVICE_USER" "$CONF_DIR/srs.conf" "$DATA_DIR/db.sqlite"
+# Database. We don't run data migrations, so a db.sqlite left over from an older
+# version could be schema-incompatible and cause hard-to-debug issues.
+DB_FILE="$DATA_DIR/db.sqlite"
+fresh_db=yes
+if [[ -s "$DB_FILE" ]]; then
+    wipe_db=no
+    case "${WIPE_DB:-}" in
+        y | Y) wipe_db=yes ;;
+        n | N) wipe_db=no ;;
+        *)
+            if [[ -t 0 ]]; then
+                read -rp "Existing database found at $DB_FILE. Wipe it and start fresh? [y/N] " reply
+                [[ "$reply" == "y" || "$reply" == "Y" ]] && wipe_db=yes
+            fi
+            ;;
+    esac
+    if [[ "$wipe_db" == "yes" ]]; then
+        rm -f "$DB_FILE"
+        echo "Database wiped; defaults will be re-seeded on first boot."
+    else
+        fresh_db=no
+        echo "Keeping existing database."
+    fi
+fi
+touch "$DB_FILE"
+chown "$SERVICE_USER:$SERVICE_USER" "$CONF_DIR/srs.conf" "$DB_FILE"
 echo "Config: $CONF_DIR/srs.conf"
-echo "Data:   $DATA_DIR/db.sqlite"
+echo "Data:   $DB_FILE"
 
 step "8/9 Logrotate"
 cat > /etc/logrotate.d/restream-srs <<EOF
@@ -219,10 +236,11 @@ Environment=NODE_ENV=production
 Environment=PORT=8080
 Environment=DB_PATH=$DATA_DIR/db.sqlite
 Environment=SRS_CONF_PATH=$CONF_DIR/srs.conf
-Environment=SRS_LOG_PATH=$DATA_DIR/objs/srs.log
+Environment=SRS_LOG_PATH=$LOG_DIR/srs.log
 Environment=SRS_API_URL=http://127.0.0.1:1985
 Environment=SRS_RTMP_HOST=127.0.0.1
 Environment=SRS_RTMP_PORT=1935
+Environment=SRS_SRT_PORT=10080
 Environment=FFMPEG_PATH=/usr/local/bin/ffmpeg
 Environment=FFPROBE_PATH=/usr/local/bin/ffprobe
 ExecStart=/usr/bin/node $APP_DIR/dist/index.js
@@ -257,7 +275,12 @@ echo "=============================="
 echo " Setup complete"
 echo "=============================="
 echo "Dashboard: http://<server-ip>:8080/"
-echo "  Default password: admin"
+if [[ "$fresh_db" == "yes" ]]; then
+    echo "  Default password: admin"
+else
+    echo "  Password: unchanged (kept existing database)"
+    echo "  Forgot it? Run scripts/server-reset-password.sh"
+fi
 echo "  Set your public host in Settings → Public Host"
 echo "Config:    $CONF_DIR/srs.conf"
 echo "Data:      $DATA_DIR/db.sqlite"
