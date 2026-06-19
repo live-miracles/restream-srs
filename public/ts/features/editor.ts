@@ -215,6 +215,7 @@ const SERVERS = [
 
 const INSTAGRAM_RTMP_IDX = 2;
 const CUSTOM_RTMP_IDX = 3;
+const CUSTOM_SRT_IDX = 4;
 const RESTREAM_RTMP_IDX = 5;
 const RESTREAM_SRT_IDX = 6;
 
@@ -480,6 +481,13 @@ export function openEditOutput(pipelineId: string, outId: string): void {
     modal.showModal();
 }
 
+function isValidSinkUrl(serverIdx: number, url: string): boolean {
+    if (serverIdx === CUSTOM_RTMP_IDX)
+        return url.startsWith('rtmp://') || url.startsWith('rtmps://');
+    if (serverIdx === CUSTOM_SRT_IDX) return url.startsWith('srt://');
+    return true;
+}
+
 export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
     const pipelineId = (
         document.getElementById('out-pipe-id-input') as HTMLInputElement
@@ -530,6 +538,11 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
                 continue;
             }
             url = SERVERS[serverIdx].prefix + key;
+            if (!isValidSinkUrl(serverIdx, url)) {
+                if (keyEl instanceof HTMLInputElement) keyEl.classList.add('input-error');
+                sinksValid = false;
+                continue;
+            }
         }
         sinks.push({ url, audioEncoding });
     }

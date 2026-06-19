@@ -413,6 +413,7 @@ function renderPipelineInfo(selectedId: string | null): void {
 const ICON_PENCIL = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>`;
 const ICON_TRASH = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>`;
 const ICON_INFO = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>`;
+const ICON_WARN = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>`;
 
 function escHtml(s: string): string {
     return s
@@ -422,7 +423,28 @@ function escHtml(s: string): string {
         .replace(/"/g, '&quot;');
 }
 
-function renderOutputCard(o: OutputView, inputLive: boolean): string {
+type DupRef = { pipelineName: string; outputName: string };
+
+function showDupWarning(url: string, refs: DupRef[]): void {
+    const modal = document.getElementById('dup-warn-modal') as HTMLDialogElement | null;
+    const urlEl = document.getElementById('dup-warn-url');
+    const listEl = document.getElementById('dup-warn-list');
+    if (!modal || !urlEl || !listEl) return;
+    urlEl.textContent = url;
+    listEl.innerHTML = refs
+        .map(
+            (r) =>
+                `<li><span class="font-semibold">${escHtml(r.pipelineName)}</span> → ${escHtml(r.outputName)}</li>`,
+        )
+        .join('');
+    modal.showModal();
+}
+
+function renderOutputCard(
+    o: OutputView,
+    inputLive: boolean,
+    dupUrls: Map<string, DupRef[]>,
+): string {
     const isStopped = o.desiredState === 'stopped';
     const isRunning = o.status === 'running';
     const st = outStatus(o, inputLive);
@@ -458,19 +480,29 @@ function renderOutputCard(o: OutputView, inputLive: boolean): string {
                       .join('+')}</span>`
                 : '';
         const display = s.url.length > 27 ? s.url.slice(0, 25) + '...' + s.url.slice(-2) : s.url;
-        return { display, trackBadge };
+        const dupRefs = dupUrls.get(s.url);
+        const dupWarnBtn = dupRefs
+            ? `<button class="btn btn-xs btn-ghost text-warning p-0 leading-none shrink-0" data-action="dup-warn" data-dup-url="${escHtml(s.url)}" data-dup-info="${escHtml(JSON.stringify(dupRefs))}" title="Duplicate destination — click for details">${ICON_WARN}</button>`
+            : '';
+        return { display, trackBadge, dupRefs, dupWarnBtn };
     };
 
     let inlineSink = '';
     let belowSinks = '';
     if (o.sinks.length === 1) {
-        const { display, trackBadge } = fmtSink(o.sinks[0]);
-        inlineSink = `<code class="text-xs font-normal opacity-60 whitespace-nowrap" title="${o.sinks[0].url}">${display}</code>${trackBadge}`;
+        const { display, trackBadge, dupRefs, dupWarnBtn } = fmtSink(o.sinks[0]);
+        const codeClass = dupRefs
+            ? 'text-xs font-normal text-warning whitespace-nowrap'
+            : 'text-xs font-normal opacity-60 whitespace-nowrap';
+        inlineSink = `<code class="${codeClass}" title="${escHtml(o.sinks[0].url)}">${display}</code>${dupWarnBtn}${trackBadge}`;
     } else if (o.sinks.length > 1) {
         belowSinks = `<div class="space-y-0.5 pl-2">${o.sinks
             .map((s) => {
-                const { display, trackBadge } = fmtSink(s);
-                return `<div class="flex items-center gap-1 min-w-0"><code class="text-xs font-normal opacity-60" title="${s.url}">${display}</code>${trackBadge}</div>`;
+                const { display, trackBadge, dupRefs, dupWarnBtn } = fmtSink(s);
+                const codeClass = dupRefs
+                    ? 'text-xs font-normal text-warning'
+                    : 'text-xs font-normal opacity-60';
+                return `<div class="flex items-center gap-1 min-w-0"><code class="${codeClass}" title="${escHtml(s.url)}">${display}</code>${dupWarnBtn}${trackBadge}</div>`;
             })
             .join('')}</div>`;
     }
@@ -544,13 +576,37 @@ function renderOutputsList(pipeline: PipelineView): void {
         if (settled) pendingOutputs.delete(o.id);
     }
 
-    listEl.innerHTML = pipeline.outs.map((o) => renderOutputCard(o, pipeline.input.live)).join('');
+    // Build a URL → [{pipelineName, outputName}] map across all pipelines to detect duplicates.
+    const urlRefs = new Map<string, DupRef[]>();
+    for (const p of state.pipelines) {
+        for (const o of p.outs) {
+            for (const s of o.sinks) {
+                if (!s.url) continue;
+                const list = urlRefs.get(s.url) ?? [];
+                list.push({ pipelineName: p.name, outputName: o.name });
+                urlRefs.set(s.url, list);
+            }
+        }
+    }
+    const dupUrls = new Map<string, DupRef[]>();
+    for (const [url, refs] of urlRefs) {
+        if (refs.length > 1) dupUrls.set(url, refs);
+    }
+
+    listEl.innerHTML = pipeline.outs
+        .map((o) => renderOutputCard(o, pipeline.input.live, dupUrls))
+        .join('');
 
     listEl.onclick = (e) => {
         const btn = (e.target as Element).closest('[data-action]') as HTMLButtonElement | null;
         if (!btn || btn.disabled || btn.classList.contains('btn-disabled')) return;
-        const outId = btn.dataset.outId!;
         const action = btn.dataset.action!;
+        if (action === 'dup-warn') {
+            const refs = JSON.parse(btn.dataset.dupInfo ?? '[]') as DupRef[];
+            showDupWarning(btn.dataset.dupUrl ?? '', refs);
+            return;
+        }
+        const outId = btn.dataset.outId!;
         if (action === 'start' || action === 'stop') {
             pendingOutputs.set(outId, action);
             btn.disabled = true;
