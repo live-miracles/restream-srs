@@ -387,26 +387,136 @@
 
         <!-- Preview -->
         <div id="preview-section" class="mb-4 hidden">
-          <div class="border-base-content/10 bg-base-100/50 rounded-xl border p-3">
+          <div id="preview-card" class="border-base-content/10 bg-base-100/50 rounded-xl border p-3">
             <div class="mb-2 flex items-center justify-between">
               <span class="text-xs font-semibold opacity-60">PREVIEW</span>
               <div class="flex items-center gap-2">
                 <select id="preview-audio-select" class="select select-xs hidden max-w-44" onchange="previewTrackChange()"></select>
-                <button id="preview-play-btn" class="btn btn-xs btn-accent btn-outline" onclick="previewPlayBtn()">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                <button id="preview-stop-btn" class="btn btn-xs btn-ghost" onclick="previewToggleBtn()">
+                  <svg
+                    id="preview-btn-play-icon"
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    stroke="none">
                     <polygon points="5 3 19 12 5 21 5 3" />
                   </svg>
-                  Preview
-                </button>
-                <button id="preview-stop-btn" class="btn btn-xs btn-ghost hidden" onclick="previewStopBtn()">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                  <svg
+                    id="preview-btn-stop-icon"
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    stroke="none"
+                    class="hidden">
                     <rect width="14" height="14" x="5" y="5" rx="2" />
                   </svg>
-                  Stop
+                  <span id="preview-btn-spinner" class="loading loading-spinner loading-xs hidden"></span>
+                  <span id="preview-btn-label">Preview</span>
+                </button>
+                <!-- Mute / unmute -->
+                <button id="preview-mute-btn" title="Unmute" onclick="previewMuteBtn()" class="btn btn-square btn-ghost btn-xs" disabled>
+                  <svg
+                    id="preview-icon-muted"
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                    <line x1="23" y1="9" x2="17" y2="15" />
+                    <line x1="17" y1="9" x2="23" y2="15" />
+                  </svg>
+                  <svg
+                    id="preview-icon-unmuted"
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="hidden">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                  </svg>
+                </button>
+                <!-- Reload -->
+                <button id="preview-reload-btn" title="Reload" onclick="previewReloadBtn()" class="btn btn-square btn-ghost btn-xs" disabled>
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round">
+                    <polyline points="23 4 23 10 17 10" />
+                    <polyline points="1 20 1 14 7 14" />
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                  </svg>
+                </button>
+                <!-- Maximize / restore (page-level modal) -->
+                <button id="preview-maximize-btn" title="Maximize" onclick="previewMaximizeBtn()" class="btn btn-square btn-ghost btn-xs" disabled>
+                  <svg
+                    id="preview-icon-expand"
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round">
+                    <polyline points="15 3 21 3 21 9" />
+                    <polyline points="9 21 3 21 3 15" />
+                    <line x1="21" y1="3" x2="14" y2="10" />
+                    <line x1="3" y1="21" x2="10" y2="14" />
+                  </svg>
+                  <svg
+                    id="preview-icon-compress"
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="hidden">
+                    <polyline points="4 14 10 14 10 20" />
+                    <polyline points="20 10 14 10 14 4" />
+                    <line x1="10" y1="14" x2="3" y2="21" />
+                    <line x1="21" y1="3" x2="14" y2="10" />
+                  </svg>
                 </button>
               </div>
             </div>
-            <video id="preview-video" class="hidden w-full rounded-lg" controls muted playsinline></video>
+            <div id="preview-stage-host">
+              <div id="preview-stage" class="flex items-stretch gap-1">
+                <div id="preview-player" class="hidden min-w-0 flex-1">
+                  <video id="preview-video" class="max-h-[88vh] w-full rounded-lg bg-black object-contain" muted playsinline></video>
+                </div>
+                <canvas
+                  id="preview-meter"
+                  class="hidden max-h-[88vh] rounded-sm"
+                  style="width: 10px; flex-shrink: 0; background: rgba(0, 0, 0, 0.3)"></canvas>
+              </div>
+            </div>
           </div>
         </div>
 

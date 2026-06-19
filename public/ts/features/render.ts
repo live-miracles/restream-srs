@@ -9,7 +9,12 @@ import {
 } from '../core/utils.js';
 import { state } from '../core/state.js';
 import type { InputHealth, PipelineView, OutputView } from '../types.js';
-import { stopCurrentPreview, populatePreviewTrackSelect, getPreviewPipelineId } from './preview.js';
+import {
+    stopCurrentPreview,
+    populatePreviewTrackSelect,
+    getPreviewPipelineId,
+    syncPreviewControls,
+} from './preview.js';
 
 declare global {
     interface Window {
@@ -579,9 +584,7 @@ function renderPreview(pipeline: PipelineView): void {
 
     populatePreviewTrackSelect(pipeline);
 
-    const isActive = getPreviewPipelineId() === pipeline.id;
-    document.getElementById('preview-play-btn')?.classList.toggle('hidden', isActive);
-    document.getElementById('preview-stop-btn')?.classList.toggle('hidden', !isActive);
+    syncPreviewControls(getPreviewPipelineId() === pipeline.id);
 }
 
 // ── Metrics (navbar) ──────────────────────────────────

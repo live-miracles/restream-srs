@@ -1,4 +1,5 @@
 import { getUrlParam, setUrlParam, copyText } from '../core/utils.js';
+import { state } from '../core/state.js';
 import { refreshDashboard, refreshAfterMutation } from './dashboard.js';
 import {
     openSettings,
@@ -39,9 +40,11 @@ declare global {
         outSinkServerChange: (select: HTMLSelectElement) => void;
         outPullMethodChange: () => void;
         copyText: (text: string) => Promise<void>;
-        previewPlayBtn: () => Promise<void>;
-        previewStopBtn: () => void;
+        previewToggleBtn: () => Promise<void>;
         previewTrackChange: () => void;
+        previewMuteBtn: () => void;
+        previewReloadBtn: () => void;
+        previewMaximizeBtn: () => void;
         reloadConfigBtn: () => Promise<void>;
     }
 }
@@ -96,21 +99,44 @@ window.outPullMethodChange = () => onPullMethodChange();
 
 window.copyText = copyText;
 
-window.previewPlayBtn = async () => {
+window.previewToggleBtn = async () => {
+    const {
+        getPreviewPipelineId,
+        stopCurrentPreview,
+        attachHls,
+        setPreviewStarting,
+        syncPreviewControls,
+    } = await import('./preview.js');
+    if (getPreviewPipelineId()) {
+        stopCurrentPreview();
+        return;
+    }
     const id = getUrlParam('p');
     if (!id) return;
-    const [{ startPreview }, { attachHls, selectedPreviewTrack }] = await Promise.all([
-        import('../core/api.js'),
-        import('./preview.js'),
-    ]);
-    const result = await startPreview(id, selectedPreviewTrack());
-    if (result?.hlsUrl) attachHls(id, result.hlsUrl);
-};
-
-window.previewStopBtn = () => {
-    void import('./preview.js').then(({ stopCurrentPreview }) => stopCurrentPreview());
+    setPreviewStarting();
+    const { startPreview } = await import('../core/api.js');
+    const pipeline = state.pipelines.find((p) => p.id === id);
+    const audioTrackCount = Math.max(1, pipeline?.input.audioTracks.length ?? 1);
+    const result = await startPreview(id, audioTrackCount);
+    if (result?.hlsUrl) {
+        attachHls(id, result.hlsUrl);
+    } else {
+        syncPreviewControls(false);
+    }
 };
 
 window.previewTrackChange = () => {
     void import('./preview.js').then(({ previewTrackChange }) => previewTrackChange());
+};
+
+window.previewMuteBtn = () => {
+    void import('./preview.js').then(({ togglePreviewMute }) => togglePreviewMute());
+};
+
+window.previewReloadBtn = () => {
+    void import('./preview.js').then(({ reloadPreview }) => reloadPreview());
+};
+
+window.previewMaximizeBtn = () => {
+    void import('./preview.js').then(({ togglePreviewMaximize }) => togglePreviewMaximize());
 };

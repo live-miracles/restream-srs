@@ -29,7 +29,7 @@ async function waitForPlaylist(m3u8Path: string, timeoutMs: number): Promise<voi
 }
 
 export interface PreviewService {
-    start(pipelineId: number, audioTrack?: number | null): Promise<{ hlsUrl: string }>;
+    start(pipelineId: number, audioTrackCount?: number): Promise<{ hlsUrl: string }>;
     stop(pipelineId: number): void;
     shutdown(): void;
     baseDir: string;
@@ -47,11 +47,10 @@ export function createPreviewService(db: Db): PreviewService {
         console.log(`[preview] ${pipelineId} stopping`);
     }
 
-    async function start(
-        pipelineId: number,
-        audioTrack: number | null = null,
-    ): Promise<{ hlsUrl: string }> {
-        if (procs.has(pipelineId)) return { hlsUrl: `/hls/${pipelineId}/index.m3u8` };
+    async function start(pipelineId: number, audioTrackCount = 1): Promise<{ hlsUrl: string }> {
+        const playlistName = audioTrackCount > 1 ? 'master.m3u8' : 'index.m3u8';
+        const hlsUrl = `/hls/${pipelineId}/${playlistName}`;
+        if (procs.has(pipelineId)) return { hlsUrl };
 
         const pipeline = db.getPipeline(pipelineId);
         if (!pipeline) throw new Error('Pipeline not found');
@@ -59,21 +58,18 @@ export function createPreviewService(db: Db): PreviewService {
         const outDir = path.join(baseDir, String(pipelineId));
         fs.mkdirSync(outDir, { recursive: true });
 
-        const m3u8Path = path.join(outDir, 'index.m3u8');
-
-        // To address a specific track we must pull via SRT (RTMP/FLV only exposes
-        // the first audio track). Default preview uses the cheaper RTMP pull.
-        const selectTrack = audioTrack !== null && audioTrack >= 0;
-        const inputUrl = selectTrack
+        // RTMP/FLV only carries the first audio track, so a source with multiple audio
+        // tracks must be pulled via SRT to expose them all. The SRT pull is a raw
+        // MPEG-TS that often starts mid-GOP, so stream-copying video yields keyframe-
+        // misaligned HLS segments that stall the player — transcode with forced 2 s
+        // keyframes on that path only. Single-track sources take the cheap RTMP copy
+        // path with no extra encoding.
+        const multiTrack = audioTrackCount > 1;
+        const inputUrl = multiTrack
             ? srtPullUrl(pipeline.streamKey)
             : rtmpPullUrl(pipeline.streamKey);
-        const audioMap = selectTrack ? `0:a:${audioTrack}?` : '0:a:0?';
 
-        // The SRT pull arrives as a raw MPEG-TS that often starts mid-GOP, so video
-        // stream-copy yields HLS segments that aren't keyframe-aligned and the player
-        // stalls after a few seconds. Transcode video with forced 2s keyframes on the
-        // SRT (track-select) path; the cheap RTMP single-track path can still copy.
-        const videoArgs = selectTrack
+        const videoArgs = multiTrack
             ? [
                   '-c:v',
                   'libx264',
@@ -94,55 +90,95 @@ export function createPreviewService(db: Db): PreviewService {
               ]
             : ['-c:v', 'copy'];
 
-        const proc = spawn(
-            FFMPEG_CMD,
-            [
-                '-fflags',
-                '+genpts',
-                '-i',
-                inputUrl,
-                // Always transcode audio to AAC stereo. The source may carry a codec
-                // MPEG-TS/HLS can't stream-copy (PCM, Opus, FLAC, multitrack PCM),
-                // which would otherwise kill ffmpeg on the first audio packet.
+        // SRT/MPEG-TS sources — including anything SRS remuxes from SRT to RTMP via
+        // srt_to_rtmp — deliver audio with jittery, occasionally discontinuous
+        // timestamps (PCR rounding + SRT packet-loss gaps). Re-encoding those 1:1
+        // yields gaps and crackle ("breaking" audio). aresample=async=1 fills small
+        // gaps with silence and soft-compensates drift so the AAC output stays
+        // continuous. Clean RTMP inputs have well-behaved timestamps, so it's a no-op
+        // for them — safe to apply on every preview.
+        const audioArgs = ['-af', 'aresample=async=1', '-c:a', 'aac', '-ac', '2', '-ar', '48000'];
+        const hlsCommon = [
+            '-f',
+            'hls',
+            '-hls_time',
+            '2',
+            '-hls_list_size',
+            '10',
+            '-hls_flags',
+            'delete_segments+independent_segments',
+        ];
+
+        // The playlist whose appearance means the stream is live, and the URL the
+        // browser loads. For multi-track we emit a master playlist that exposes each
+        // audio track as a switchable EXT-X-MEDIA rendition (hls.js will not surface
+        // audio tracks that are merely muxed into a single media playlist), so the
+        // browser switches tracks natively. Single-track stays a plain media playlist.
+        let outputArgs: string[];
+        let readyPlaylist: string;
+        if (multiTrack) {
+            const audioMaps = Array.from({ length: audioTrackCount }, (_, i) => [
+                '-map',
+                `0:a:${i}`,
+            ]).flat();
+            const varStreamMap = [
+                'v:0,agroup:aud',
+                ...Array.from(
+                    { length: audioTrackCount },
+                    (_, i) =>
+                        `a:${i},agroup:aud,name:track${i + 1}${i === 0 ? ',default:yes' : ''}`,
+                ),
+            ].join(' ');
+            outputArgs = [
+                '-map',
+                '0:v:0?',
+                ...audioMaps,
+                ...videoArgs,
+                ...audioArgs,
+                ...hlsCommon,
+                '-hls_segment_filename',
+                path.join(outDir, 'v%v_%d.ts'),
+                '-master_pl_name',
+                'master.m3u8',
+                '-var_stream_map',
+                varStreamMap,
+                path.join(outDir, 'v%v.m3u8'),
+            ];
+            readyPlaylist = path.join(outDir, 'v0.m3u8');
+        } else {
+            outputArgs = [
                 '-map',
                 '0:v:0?',
                 '-map',
-                audioMap,
+                '0:a:0?',
                 ...videoArgs,
-                '-c:a',
-                'aac',
-                '-ac',
-                '2',
-                '-ar',
-                '48000',
-                '-f',
-                'hls',
-                '-hls_time',
-                '2',
-                '-hls_list_size',
-                '10',
-                '-hls_flags',
-                'delete_segments+independent_segments',
-                m3u8Path,
-            ],
-            { stdio: ['ignore', 'ignore', 'pipe'], env: process.env },
-        );
+                ...audioArgs,
+                ...hlsCommon,
+                path.join(outDir, 'index.m3u8'),
+            ];
+            readyPlaylist = path.join(outDir, 'index.m3u8');
+        }
+
+        const proc = spawn(FFMPEG_CMD, ['-fflags', '+genpts', '-i', inputUrl, ...outputArgs], {
+            stdio: ['ignore', 'ignore', 'pipe'],
+            env: process.env,
+        });
 
         procs.set(pipelineId, proc);
-        console.log(`[preview] ${pipelineId} started pid=${proc.pid}`);
+        console.log(
+            `[preview] ${pipelineId} started pid=${proc.pid} multiTrack=${multiTrack} tracks=${audioTrackCount}`,
+        );
 
-        // Keep the tail of ffmpeg stderr so a failed preview reports why.
         let stderrTail = '';
         proc.stderr?.on('data', (d: Buffer) => {
             stderrTail = (stderrTail + d.toString()).slice(-STDERR_TAIL_BYTES);
         });
 
         proc.on('exit', (code, signal) => {
-            // Only tear down if this proc is still the active one. A quick restart
-            // (e.g. switching audio track) may have already replaced it; clobbering
-            // the map/dir here would kill the new preview's freshly written segments.
-            if (procs.get(pipelineId) === proc) {
-                procs.delete(pipelineId);
+            if (procs.get(pipelineId) === proc) procs.delete(pipelineId);
+            // Clean up this pipeline's HLS dir unless a newer preview now owns it
+            // (covers both a user stop, which clears the map entry first, and a crash).
+            if (!procs.has(pipelineId)) {
                 fs.rm(outDir, { recursive: true, force: true }, () => {});
             }
             if (code && code !== 0 && signal !== 'SIGTERM' && signal !== 'SIGKILL') {
@@ -155,13 +191,13 @@ export function createPreviewService(db: Db): PreviewService {
         });
 
         try {
-            await waitForPlaylist(m3u8Path, 10_000);
+            await waitForPlaylist(readyPlaylist, 10_000);
         } catch (err) {
             doStop(pipelineId);
             throw err;
         }
 
-        return { hlsUrl: `/hls/${pipelineId}/index.m3u8` };
+        return { hlsUrl };
     }
 
     function shutdown(): void {

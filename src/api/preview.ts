@@ -5,15 +5,15 @@ export function registerPreviewApi(app: Express, previewService: PreviewService)
     app.post('/api/pipelines/:id/preview/start', async (req, res) => {
         const id = parseInt(req.params.id);
         if (isNaN(id)) return res.status(400).json({ error: 'invalid id' });
-        const rawTrack = req.body?.audioTrack;
-        const audioTrack =
-            typeof rawTrack === 'number' && Number.isInteger(rawTrack) && rawTrack >= 0
-                ? rawTrack
-                : typeof rawTrack === 'string' && /^\d+$/.test(rawTrack)
-                  ? parseInt(rawTrack)
-                  : null;
+
+        const rawCount = req.body?.audioTrackCount;
+        const audioTrackCount =
+            typeof rawCount === 'number' && Number.isInteger(rawCount) && rawCount >= 1
+                ? rawCount
+                : 1;
+
         try {
-            return res.json(await previewService.start(id, audioTrack));
+            return res.json(await previewService.start(id, audioTrackCount));
         } catch (err) {
             return res.status(500).json({ error: String(err) });
         }

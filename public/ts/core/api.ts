@@ -49,7 +49,7 @@ const isMutating = (method: string) => !['GET', 'HEAD', 'OPTIONS'].includes(meth
 
 async function apiRequest<T>(
     url: string,
-    opts: { method?: string; body?: unknown } = {},
+    opts: { method?: string; body?: unknown; silent?: boolean } = {},
 ): Promise<T | null> {
     const method = opts.method?.toUpperCase() || 'GET';
     const fetchOpts: RequestInit = { method };
@@ -57,7 +57,8 @@ async function apiRequest<T>(
         fetchOpts.headers = { 'Content-Type': 'application/json' };
         fetchOpts.body = JSON.stringify(opts.body);
     }
-    if (isMutating(method)) setLoading(true);
+    const showLoading = isMutating(method) && !opts.silent;
+    if (showLoading) setLoading(true);
     try {
         const res = await fetch(url, fetchOpts);
         if (res.status === 401) {
@@ -75,7 +76,7 @@ async function apiRequest<T>(
         setConnectionBanner(true);
         return null;
     } finally {
-        if (isMutating(method)) setLoading(false);
+        if (showLoading) setLoading(false);
     }
 }
 
@@ -112,14 +113,15 @@ export const startOutput = (pipelineId: string, outId: string) =>
 export const stopOutput = (pipelineId: string, outId: string) =>
     apiRequest(`/api/pipelines/${pipelineId}/outputs/${outId}/stop`, { method: 'POST' });
 
-export const startPreview = (pipelineId: string, audioTrack?: number | null) =>
+export const startPreview = (pipelineId: string, audioTrackCount?: number) =>
     apiRequest<{ hlsUrl: string }>(`/api/pipelines/${pipelineId}/preview/start`, {
         method: 'POST',
-        body: { audioTrack: audioTrack ?? null },
+        body: { audioTrackCount: audioTrackCount ?? 1 },
+        silent: true,
     });
 
 export const stopPreview = (pipelineId: string) =>
-    apiRequest(`/api/pipelines/${pipelineId}/preview/stop`, { method: 'POST' });
+    apiRequest(`/api/pipelines/${pipelineId}/preview/stop`, { method: 'POST', silent: true });
 
 export const logout = () => apiRequest<{ ok: boolean }>('/api/auth/logout', { method: 'POST' });
 

@@ -214,6 +214,7 @@ const SERVERS = [
 ] as const;
 
 const INSTAGRAM_RTMP_IDX = 2;
+const CUSTOM_RTMP_IDX = 3;
 const RESTREAM_RTMP_IDX = 5;
 const RESTREAM_SRT_IDX = 6;
 
@@ -328,7 +329,7 @@ function audioOptionsHtml(tracks: AudioTrackInfo[], selected: string): string {
 }
 
 function sinkRowHtml(tracks: AudioTrackInfo[], url = '', audioEncoding = 'copy'): string {
-    const { idx, key } = url ? detectServer(url) : { idx: 0, key: '' };
+    const { idx, key } = url ? detectServer(url) : { idx: CUSTOM_RTMP_IDX, key: '' };
     const serverOpts =
         '<option value="" disabled>Server</option>' +
         SERVERS.map(
