@@ -1,4 +1,3 @@
-// Video-only; audio is handled per-sink by buildAudioCodecArgs().
 export const ENCODINGS: Record<string, string[]> = {
     copy: ['-c:v', 'copy'],
     '720p': ['-vf', 'scale=1280:720', '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '3000k'],
@@ -13,23 +12,16 @@ export const ENCODINGS: Record<string, string[]> = {
     ],
 };
 
-// aresample=async=1000 compensates SRT/MPEG-TS timestamp jitter; async=1 is too
-// weak and leaves audible gaps. Safe no-op for clean RTMP inputs.
-const FLV_AUDIO_ARGS = [
-    '-af',
-    'aresample=async=1000:first_pts=0',
-    '-c:a',
-    'aac',
-    '-b:a',
-    '128k',
-    '-ac',
-    '2',
-    '-ar',
-    '48000',
-];
-
-function buildAudioCodecArgs(isSrt: boolean): string[] {
-    return isSrt ? ['-c:a', 'copy'] : FLV_AUDIO_ARGS;
+// SRT input has clean timestamps from raw MPEG-TS; aresample=async=1 tracks the
+// real clock by adding/dropping samples to absorb drift without inventing new PTS.
+// RTMP input goes through SRS's srt_to_rtmp which emits bursty timestamps (60 ms
+// gaps between 21 ms packets); asetpts recomputes PTS from the decoded sample
+// count instead, since the timestamps themselves can't be trusted.
+function flvAudioArgs(inputUrl: string): string[] {
+    const af = inputUrl.startsWith('srt://')
+        ? 'aresample=async=1:first_pts=0'
+        : 'asetpts=STARTPTS+N/SR/TB';
+    return ['-af', af, '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '48000'];
 }
 
 // Explicit map for FLV: ffmpeg's default picks the highest-channel stream, which
@@ -100,37 +92,24 @@ export function buildFfmpegArgs(
         '3',
         '-rw_timeout',
         String(INPUT_TIMEOUT_US),
-        // When joining a live SRT/MPEG-TS stream mid-GOP, H264 P-frames arrive
-        // before the first IDR carrying SPS/PPS. Without this flag those packets
-        // are forwarded to the FLV muxer as-is, producing a malformed AVC stream
-        // that the RTMP server rejects. With discardcorrupt, the bitstream parser
-        // drops them and waits for the next clean IDR before writing any video.
-        // +genpts regenerates missing/non-monotonic timestamps from SRS's
-        // srt_to_rtmp remux so the muxer and aresample have a sane clock to work
-        // against (the preview path uses the same flag).
-        '-fflags',
-        '+genpts+discardcorrupt',
         '-i',
         inputUrl,
         '-progress',
         'pipe:1',
     ];
 
+    const firstSinkIsSrt = sinks[0].url.startsWith('srt://');
     const useTee =
         videoEncoding !== 'copy' &&
         sinks.length > 1 &&
-        sinks.every((s) => s.audioEncoding === sinks[0].audioEncoding);
+        sinks.every((s) => s.audioEncoding === sinks[0].audioEncoding) &&
+        sinks.every((s) => s.url.startsWith('srt://') === firstSinkIsSrt);
 
     if (useTee) {
-        // Audio is encoded once before the tee and fanned out, so it must use a
-        // codec valid for every sink. AAC works in both flv and mpegts; only fall
-        // back to copy when every sink is SRT (preserving multitrack passthrough).
-        const allSrt = sinks.every((s) => s.url.startsWith('srt://'));
-        const mapArgs = buildSinkMapArgs(sinks[0].audioEncoding, allSrt);
-        const audioArgs = buildAudioCodecArgs(allSrt);
-        const teeSpec = sinks
-            .map((s) => `[f=${s.url.startsWith('srt://') ? 'mpegts' : 'flv'}]${s.url}`)
-            .join('|');
+        const mapArgs = buildSinkMapArgs(sinks[0].audioEncoding, firstSinkIsSrt);
+        const audioArgs = firstSinkIsSrt ? (['-c:a', 'copy'] as const) : flvAudioArgs(inputUrl);
+        const fmt = firstSinkIsSrt ? 'mpegts' : 'flv';
+        const teeSpec = sinks.map((s) => `[f=${fmt}]${s.url}`).join('|');
         args.push(...mapArgs, ...encArgs, ...audioArgs, '-f', 'tee', teeSpec);
         return args;
     }
@@ -138,7 +117,7 @@ export function buildFfmpegArgs(
     for (const sink of sinks) {
         const isSrt = sink.url.startsWith('srt://');
         const mapArgs = buildSinkMapArgs(sink.audioEncoding, isSrt);
-        const audioArgs = buildAudioCodecArgs(isSrt);
+        const audioArgs = isSrt ? (['-c:a', 'copy'] as const) : flvAudioArgs(inputUrl);
         const fmt = isSrt ? ['-f', 'mpegts'] : ['-f', 'flv'];
         args.push(...mapArgs, ...encArgs, ...audioArgs, ...fmt, sink.url);
     }

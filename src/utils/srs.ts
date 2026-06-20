@@ -97,8 +97,15 @@ export function srsHlsPlaylistUrl(streamKey: string): string {
     return `${SRS_HLS_BASE}/${streamKey}.m3u8`;
 }
 
+// latency/transtype are required, not optional tuning. Without an explicit
+// receiver latency, ffmpeg's libsrt default is too tight for SRS's TSBPD send
+// timing: the SRT link tears down ("Timer expired" / SRTS_BROKEN) before any
+// payload arrives, so the pull reads 0 bytes. A 200 ms receiver buffer (with
+// transtype=live) lets the stream flow. This pulls the raw MPEG-TS untouched,
+// so every audio track survives (RTMP/srt_to_rtmp would collapse to one) and
+// the timestamps stay clean (no srt_to_rtmp jitter — ffmpeg demuxes the TS).
 export function srtPullUrl(streamKey: string): string {
-    return `srt://${SRS_RTMP_HOST}:${SRS_SRT_PORT}?streamid=#!::r=live/${streamKey},m=request`;
+    return `srt://${SRS_RTMP_HOST}:${SRS_SRT_PORT}?streamid=#!::r=live/${streamKey},m=request&latency=200000&transtype=live`;
 }
 
 export function rtmpPublishUrl(streamKey: string, host: string): string {

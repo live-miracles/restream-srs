@@ -146,7 +146,8 @@
               class="input w-full"
               minlength="10"
               maxlength="79"
-              placeholder="Blank disables SRT encryption" />
+              placeholder="Blank disables SRT encryption"
+              oninput="this.classList.remove('input-error')" />
             <p class="fieldset-label text-xs opacity-50">Optional. Must be 10-79 characters when enabled.</p>
           </fieldset>
 

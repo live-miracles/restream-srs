@@ -13,7 +13,9 @@ export function openSettings(): void {
     (document.getElementById('settings-server-name-input') as HTMLInputElement).value = current;
     (document.getElementById('settings-public-host-input') as HTMLInputElement).value =
         state.config.publicHost ?? '';
-    (document.getElementById('srt-passphrase-input') as HTMLInputElement).value = passphrase;
+    const passphraseEl = document.getElementById('srt-passphrase-input') as HTMLInputElement;
+    passphraseEl.value = passphrase;
+    passphraseEl.classList.remove('input-error');
     (document.getElementById('current-password-input') as HTMLInputElement).value = '';
     (document.getElementById('new-password-input') as HTMLInputElement).value = '';
     (document.getElementById('confirm-password-input') as HTMLInputElement).value = '';
@@ -52,7 +54,9 @@ export async function submitSettingsForm(btn?: HTMLButtonElement): Promise<void>
     const publicHost = (
         document.getElementById('settings-public-host-input') as HTMLInputElement
     ).value.trim();
+    const passphraseInput = document.getElementById('srt-passphrase-input') as HTMLInputElement;
     const passphrase = getSrtPassphrase();
+    passphraseInput.classList.toggle('input-error', passphrase === undefined);
     if (!name || passphrase === undefined) return;
 
     const currentPw = (document.getElementById('current-password-input') as HTMLInputElement).value;
@@ -247,8 +251,8 @@ function restreamSrtUrl(streamKey: string): string {
 
 function detectServer(url: string): { idx: number; key: string } {
     for (const p of state.config.pipelines ?? []) {
-        if (url === restreamRtmpUrl(p.streamKey)) return { idx: RESTREAM_RTMP_IDX, key: p.id };
-        if (url === restreamSrtUrl(p.streamKey)) return { idx: RESTREAM_SRT_IDX, key: p.id };
+        if (url === restreamRtmpUrl(p.streamKey)) return { idx: RESTREAM_RTMP_IDX, key: String(p.id) };
+        if (url === restreamSrtUrl(p.streamKey)) return { idx: RESTREAM_SRT_IDX, key: String(p.id) };
     }
     const instagramKey = detectInstagramKey(url);
     if (instagramKey !== null) return { idx: INSTAGRAM_RTMP_IDX, key: instagramKey };
@@ -412,6 +416,7 @@ export function removeSinkRow(btn: HTMLElement): void {
 }
 
 export function onSinkServerChange(select: HTMLSelectElement): void {
+    select.classList.remove('select-error');
     const row = select.closest('.js-sink-row');
     if (!row) return;
     const idx = parseInt(select.value);
@@ -443,7 +448,10 @@ export function openAddOutput(pipelineId: string): void {
     const nameEl = document.getElementById('out-name-input') as HTMLInputElement;
     nameEl.value = `Output ${existingCount + 1}`;
     nameEl.classList.remove('input-error');
-    (document.getElementById('out-pull-method-input') as HTMLSelectElement).value = 'rtmp';
+    const pipelineIsSrt = state.pipelines.find((p) => p.id === pipelineId)?.input.isSrt ?? false;
+    (document.getElementById('out-pull-method-input') as HTMLSelectElement).value = pipelineIsSrt
+        ? 'srt'
+        : 'rtmp';
     (document.getElementById('out-video-encoding-input') as HTMLSelectElement).innerHTML =
         outVideoEncodingOptions('copy');
     populateSinks(pipelineTracks(pipelineId), []);
@@ -545,6 +553,19 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
             }
         }
         sinks.push({ url, audioEncoding });
+    }
+
+    if (sinksValid && sinks.length > 0) {
+        const hasSrt = sinks.some((s) => s.url.startsWith('srt://'));
+        const hasRtmp = sinks.some((s) => !s.url.startsWith('srt://'));
+        if (hasSrt && hasRtmp) {
+            for (const row of rows) {
+                (row.querySelector('.js-sink-server') as HTMLSelectElement).classList.add(
+                    'select-error',
+                );
+            }
+            sinksValid = false;
+        }
     }
 
     if (!name || !sinksValid || sinks.length === 0) return;

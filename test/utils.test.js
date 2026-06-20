@@ -48,26 +48,37 @@ describe('buildFfmpegArgs', () => {
         assert.equal(args[args.indexOf('-c:v') + 1], 'copy');
     });
 
-    test('FLV sink re-encodes audio to AAC with aresample to fix SRT timestamp jitter', () => {
-        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')], 'copy');
-        assert.equal(args[args.indexOf('-c:a') + 1], 'aac');
-        assert.equal(args[args.indexOf('-af') + 1], 'aresample=async=1000:first_pts=0');
-        assert.ok(!args.includes('copy') || args[args.indexOf('-c:a') + 1] !== 'copy');
+    test('FLV sinks normalize audio timestamps (asetpts+aac), SRT sinks copy', () => {
+        const flv = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')], 'copy');
+        const srt = buildFfmpegArgs('rtmp://in', [sink('srt://host:10080')], 'copy');
+        // FLV: re-encode with timestamp normalization
+        assert.ok(flv.includes('-af'));
+        assert.ok(flv.some((a) => String(a).includes('asetpts')));
+        assert.equal(flv[flv.indexOf('-c:a') + 1], 'aac');
+        // SRT: copy (mpegts handles jitter without re-encoding)
+        assert.ok(!srt.includes('-af'));
+        assert.equal(srt[srt.indexOf('-c:a') + 1], 'copy');
     });
 
-    test('SRT sink copies audio to preserve multitrack passthrough', () => {
-        const args = buildFfmpegArgs('rtmp://in', [sink('srt://host:10080')], 'copy');
-        assert.equal(args[args.indexOf('-c:a') + 1], 'copy');
-        assert.ok(!args.includes('-af'));
-    });
-
-    test('tee path re-encodes audio to AAC when any sink is FLV', () => {
-        const args = buildFfmpegArgs(
+    test('tee path normalizes audio for FLV sinks', () => {
+        const mixed = buildFfmpegArgs(
             'rtmp://in',
             [sink('rtmp://out1'), sink('srt://out2:10080')],
             '720p',
         );
-        assert.equal(args[args.indexOf('-c:a') + 1], 'aac');
+        // has FLV sink → normalize
+        assert.ok(mixed.some((a) => String(a).includes('asetpts')));
+        assert.equal(mixed[mixed.indexOf('-c:a') + 1], 'aac');
+    });
+
+    test('tee path copies audio when all sinks are SRT', () => {
+        const args = buildFfmpegArgs(
+            'rtmp://in',
+            [sink('srt://out1:10080'), sink('srt://out2:10080')],
+            '720p',
+        );
+        assert.ok(!args.includes('-af'));
+        assert.equal(args[args.indexOf('-c:a') + 1], 'copy');
     });
 
     test('RTMP sink uses -f flv', () => {
