@@ -2,7 +2,7 @@ import { spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { rtmpPullUrl, srtPullUrl, srsHlsPlaylistUrl } from '../utils/srs.js';
+import { rtmpPullUrl, srtPullUrl } from '../utils/srs.js';
 import type { Db } from '../types.js';
 
 const FFMPEG_CMD = process.env.FFMPEG_PATH || 'ffmpeg';
@@ -28,28 +28,6 @@ async function waitForPlaylist(m3u8Path: string, timeoutMs: number): Promise<voi
     throw new Error('Preview timed out — no active input stream on this pipeline');
 }
 
-// Poll SRS's native HLS playlist over HTTP until it lists a segment. SRS only
-// generates HLS while a stream is published, so a timeout here means the
-// pipeline has no active input.
-async function waitForSrsPlaylist(url: string, timeoutMs: number): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-        try {
-            const r = await fetch(url, { signal: AbortSignal.timeout(2000) });
-            // 200 = stream is publishing (SRS returns a master playlist, not segments,
-            // so .ts is never in the response — r.ok is the right liveness check).
-            if (r.ok) {
-                await r.body?.cancel();
-                return;
-            }
-        } catch {
-            /* not ready yet */
-        }
-        await new Promise((r) => setTimeout(r, STOP_WAIT_MS));
-    }
-    throw new Error('Preview timed out — no active input stream on this pipeline');
-}
-
 export interface PreviewService {
     start(pipelineId: number, audioTrackCount?: number): Promise<{ hlsUrl: string }>;
     stop(pipelineId: number): void;
@@ -57,7 +35,10 @@ export interface PreviewService {
     baseDir: string;
 }
 
-export function createPreviewService(db: Db): PreviewService {
+export function createPreviewService(
+    db: Db,
+    getInputProtocol: (pipelineId: number) => 'srt' | 'rtmp' | null,
+): PreviewService {
     const baseDir = resolveBaseDir();
     const procs = new Map<number, ChildProcess>();
 
@@ -73,33 +54,27 @@ export function createPreviewService(db: Db): PreviewService {
         const pipeline = db.getPipeline(pipelineId);
         if (!pipeline) throw new Error('Pipeline not found');
 
-        // Single-track preview uses SRS's native HLS (AAC passthrough, no transcode).
-        if (audioTrackCount <= 1) {
-            await waitForSrsPlaylist(srsHlsPlaylistUrl(pipeline.streamKey), 12_000);
-            return { hlsUrl: `/api/preview/hls/${pipeline.streamKey}.m3u8` };
-        }
+        // Pull the input back over its own protocol: an SRT input only exists over
+        // SRT (and exposes every audio track), an RTMP input only over RTMP.
+        // Default to RTMP until the protocol is known.
+        const isSrt = getInputProtocol(pipelineId) === 'srt';
+        const inputUrl = isSrt ? srtPullUrl(pipeline.streamKey) : rtmpPullUrl(pipeline.streamKey);
 
-        // Multi-track preview keeps the ffmpeg path: SRS HLS exposes only one
-        // audio track, so switchable renditions still require transcoding here.
-        const playlistName = 'master.m3u8';
+        // Multiple audio tracks (only possible on an SRT input) become switchable
+        // HLS renditions via a master playlist; otherwise a single media playlist.
+        const multiTrack = audioTrackCount > 1;
+        const playlistName = multiTrack ? 'master.m3u8' : 'index.m3u8';
         const hlsUrl = `/hls/${pipelineId}/${playlistName}`;
         if (procs.has(pipelineId)) return { hlsUrl };
 
         const outDir = path.join(baseDir, String(pipelineId));
         fs.mkdirSync(outDir, { recursive: true });
 
-        // RTMP/FLV only carries the first audio track, so a source with multiple audio
-        // tracks must be pulled via SRT to expose them all. The SRT pull is a raw
-        // MPEG-TS that often starts mid-GOP, so stream-copying video yields keyframe-
-        // misaligned HLS segments that stall the player — transcode with forced 2 s
-        // keyframes on that path only. Single-track sources take the cheap RTMP copy
-        // path with no extra encoding.
-        const multiTrack = audioTrackCount > 1;
-        const inputUrl = multiTrack
-            ? srtPullUrl(pipeline.streamKey)
-            : rtmpPullUrl(pipeline.streamKey);
-
-        const videoArgs = multiTrack
+        // An SRT pull is raw MPEG-TS that often starts mid-GOP, so stream-copying
+        // video yields keyframe-misaligned HLS segments that stall the player —
+        // transcode with forced 2 s keyframes on that path. RTMP inputs arrive
+        // GOP-aligned with clean timestamps, so they take the cheap copy path.
+        const videoArgs = isSrt
             ? [
                   '-c:v',
                   'libx264',
@@ -120,13 +95,12 @@ export function createPreviewService(db: Db): PreviewService {
               ]
             : ['-c:v', 'copy'];
 
-        // SRT/MPEG-TS sources — including anything SRS remuxes from SRT to RTMP via
-        // srt_to_rtmp — deliver audio with jittery, occasionally discontinuous
+        // SRT/MPEG-TS sources deliver audio with jittery, occasionally discontinuous
         // timestamps (PCR rounding + SRT packet-loss gaps). Re-encoding those 1:1
         // yields gaps and crackle ("breaking" audio). aresample fills gaps with
         // silence and soft-compensates drift so the AAC output stays continuous.
         // async=1000 lets it correct up to 1000 samples/sec; async=1 is far too
-        // weak to absorb SRS's jitter, so audio still breaks with it. Clean RTMP
+        // weak to absorb the jitter, so audio still breaks with it. Clean RTMP
         // inputs have well-behaved timestamps, so it's a near no-op for them.
         const audioArgs = [
             '-af',
@@ -206,7 +180,7 @@ export function createPreviewService(db: Db): PreviewService {
 
         procs.set(pipelineId, proc);
         console.log(
-            `[preview] ${pipelineId} started pid=${proc.pid} multiTrack=${multiTrack} tracks=${audioTrackCount}`,
+            `[preview] ${pipelineId} started pid=${proc.pid} ${isSrt ? 'srt' : 'rtmp'} multiTrack=${multiTrack} tracks=${audioTrackCount}`,
         );
 
         let stderrTail = '';

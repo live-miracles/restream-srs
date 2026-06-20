@@ -12,11 +12,11 @@ export const ENCODINGS: Record<string, string[]> = {
     ],
 };
 
-// SRT input has clean timestamps from raw MPEG-TS; aresample=async=1 tracks the
-// real clock by adding/dropping samples to absorb drift without inventing new PTS.
-// RTMP input goes through SRS's srt_to_rtmp which emits bursty timestamps (60 ms
-// gaps between 21 ms packets); asetpts recomputes PTS from the decoded sample
-// count instead, since the timestamps themselves can't be trusted.
+// SRT input is raw MPEG-TS whose audio timestamps jitter (PCR rounding, SRT
+// packet-loss gaps); aresample=async=1 tracks the real clock by adding/dropping
+// samples to absorb drift without inventing new PTS. A native RTMP input has
+// well-behaved timestamps, so asetpts simply recomputes a contiguous PTS from the
+// decoded sample count — a near no-op that keeps the FLV audio clean.
 function flvAudioArgs(inputUrl: string): string[] {
     const af = inputUrl.startsWith('srt://')
         ? 'aresample=async=1:first_pts=0'

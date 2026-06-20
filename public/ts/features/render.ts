@@ -457,10 +457,7 @@ function renderOutputCard(
                 ? '#ef4444'
                 : '#6b7280';
     const uptimeMs = st === 'good' && o.startedAtMs !== null ? Date.now() - o.startedAtMs : null;
-    const badges = [
-        `<span class="badge badge-sm whitespace-nowrap">${o.videoEncoding}</span>`,
-        `<span class="badge badge-sm badge-ghost whitespace-nowrap" title="Input pull method">${o.pullMethod.toUpperCase()}</span>`,
-    ];
+    const badges = [`<span class="badge badge-sm whitespace-nowrap">${o.videoEncoding}</span>`];
     if (uptimeMs !== null) {
         badges.push(
             `<span class="font-mono text-xs opacity-60 whitespace-nowrap">${formatUptime(uptimeMs)}</span>`,

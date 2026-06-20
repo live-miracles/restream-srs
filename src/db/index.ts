@@ -7,7 +7,6 @@ import type {
     Output,
     PipelineLog,
     OutputSink,
-    PullMethod,
     SinkInput,
     StreamKey,
     Db,
@@ -187,7 +186,6 @@ export function createDb(dbPath?: string): Db {
             name: row.name as string,
             desiredState: row.desired_state as 'running' | 'stopped',
             videoEncoding: (row.encoding as string) || 'copy',
-            pullMethod: (row.pull_method as PullMethod) || 'rtmp',
             sinks,
             lastError: (row.last_error as string | null) ?? null,
         };
@@ -324,13 +322,7 @@ export function createDb(dbPath?: string): Db {
             return result.changes > 0;
         },
 
-        createOutput({
-            pipelineId,
-            name,
-            videoEncoding = 'copy',
-            pullMethod = 'rtmp',
-            sinks,
-        }): Output {
+        createOutput({ pipelineId, name, videoEncoding = 'copy', sinks }): Output {
             const seqRow = sqlite
                 .prepare(
                     'SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM outputs WHERE pipeline_id = ?',
@@ -341,9 +333,9 @@ export function createDb(dbPath?: string): Db {
             sqlite.transaction(() => {
                 sqlite
                     .prepare(
-                        'INSERT INTO outputs (id, pipeline_id, seq, name, desired_state, encoding, pull_method) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        'INSERT INTO outputs (id, pipeline_id, seq, name, desired_state, encoding) VALUES (?, ?, ?, ?, ?, ?)',
                     )
-                    .run(id, pipelineId, seq, name, 'stopped', videoEncoding, pullMethod);
+                    .run(id, pipelineId, seq, name, 'stopped', videoEncoding);
                 insertSinks(id, sinks);
             })();
             bumpConfigRev();
@@ -370,13 +362,11 @@ export function createDb(dbPath?: string): Db {
             return getOutputsByPipeline(pipelineId);
         },
 
-        updateOutput(id: string, { name, videoEncoding, pullMethod, sinks }): Output | null {
+        updateOutput(id: string, { name, videoEncoding, sinks }): Output | null {
             sqlite.transaction(() => {
                 sqlite
-                    .prepare(
-                        'UPDATE outputs SET name = ?, encoding = ?, pull_method = ? WHERE id = ?',
-                    )
-                    .run(name, videoEncoding, pullMethod, id);
+                    .prepare('UPDATE outputs SET name = ?, encoding = ? WHERE id = ?')
+                    .run(name, videoEncoding, id);
                 stmtDeleteExtraSinks.run(id);
                 insertSinks(id, sinks);
             })();

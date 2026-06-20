@@ -111,7 +111,6 @@ describe('Output CRUD', () => {
         assert.equal(got?.sinks[0].audioEncoding, 'copy');
         assert.equal(got?.desiredState, 'stopped');
         assert.equal(got?.videoEncoding, 'copy');
-        assert.equal(got?.pullMethod, 'rtmp');
     });
 
     test('createOutput persists multiple sinks with per-sink audio encoding', () => {
@@ -120,14 +119,12 @@ describe('Output CRUD', () => {
         const o = db.createOutput({
             pipelineId: p.id,
             name: 'Split',
-            pullMethod: 'srt',
             sinks: [
                 { url: 'rtmp://en', audioEncoding: '0' },
                 { url: 'rtmp://fr', audioEncoding: '1' },
             ],
         });
         const got = db.listOutputs().find((out) => out.id === o.id);
-        assert.equal(got?.pullMethod, 'srt');
         assert.equal(got?.sinks.length, 2);
         assert.deepEqual(
             got?.sinks.map((s) => [s.url, s.audioEncoding]),
@@ -166,7 +163,7 @@ describe('Output CRUD', () => {
         assert.equal(db.listOutputs().find((out) => out.id === o.id)?.desiredState, 'running');
     });
 
-    test('updateOutput persists name, encoding, pullMethod, and sink changes', () => {
+    test('updateOutput persists name, encoding, and sink changes', () => {
         const db = makeDb();
         const p = db.createPipeline();
         const o = db.createOutput({
@@ -177,13 +174,11 @@ describe('Output CRUD', () => {
         db.updateOutput(o.id, {
             name: 'New',
             videoEncoding: '720p',
-            pullMethod: 'srt',
             sinks: [{ url: 'rtmp://new', audioEncoding: '2' }],
         });
         const got = db.listOutputs().find((out) => out.id === o.id);
         assert.equal(got?.name, 'New');
         assert.equal(got?.videoEncoding, '720p');
-        assert.equal(got?.pullMethod, 'srt');
         assert.equal(got?.sinks.length, 1);
         assert.equal(got?.sinks[0].url, 'rtmp://new');
         assert.equal(got?.sinks[0].audioEncoding, '2');
@@ -200,7 +195,6 @@ describe('Output CRUD', () => {
         db.updateOutput(o.id, {
             name: 'X',
             videoEncoding: 'copy',
-            pullMethod: 'rtmp',
             sinks: [{ url: 'rtmp://only' }],
         });
         assert.equal(db.listOutputs().find((out) => out.id === o.id)?.sinks.length, 1);

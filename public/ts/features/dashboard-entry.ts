@@ -17,7 +17,6 @@ import {
     addSinkRow,
     removeSinkRow,
     onSinkServerChange,
-    onPullMethodChange,
 } from './editor.js';
 
 declare global {
@@ -38,7 +37,6 @@ declare global {
         outAddSink: () => void;
         outRemoveSink: (btn: HTMLElement) => void;
         outSinkServerChange: (select: HTMLSelectElement) => void;
-        outPullMethodChange: () => void;
         copyText: (text: string) => Promise<void>;
         previewToggleBtn: () => Promise<void>;
         previewTrackChange: () => void;
@@ -95,7 +93,6 @@ window.outFormBtn = (btn) => submitOutputForm(btn);
 window.outAddSink = () => addSinkRow();
 window.outRemoveSink = (btn) => removeSinkRow(btn);
 window.outSinkServerChange = (select) => onSinkServerChange(select);
-window.outPullMethodChange = () => onPullMethodChange();
 
 window.copyText = copyText;
 

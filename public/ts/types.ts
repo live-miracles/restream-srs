@@ -13,8 +13,6 @@ export interface Pipeline {
     srtPublishUrl: string;
 }
 
-export type PullMethod = 'rtmp' | 'srt';
-
 export interface OutputSink {
     seq: number;
     url: string;
@@ -28,7 +26,6 @@ export interface Output {
     name: string;
     desiredState: 'running' | 'stopped';
     videoEncoding: string;
-    pullMethod: PullMethod;
     sinks: OutputSink[];
     lastError: string | null;
 }
@@ -41,7 +38,6 @@ export interface SinkPayload {
 export interface OutputPayload {
     name: string;
     videoEncoding: string;
-    pullMethod: PullMethod;
     sinks: SinkPayload[];
 }
 

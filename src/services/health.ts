@@ -164,6 +164,12 @@ export function createHealthService(db: Db, outputService: OutputService) {
     }
 
     const inputLive = new Map<number, boolean>();
+    // Protocol the live input is currently published with, detected from the SRS
+    // stream's tcUrl. Consumed by the output and preview services to decide
+    // whether to pull the input back via SRT or RTMP (with srt_to_rtmp off an SRT
+    // input only exists over SRT and an RTMP input only over RTMP). Set while the
+    // input is live, cleared when it drops.
+    const inputProtocol = new Map<number, 'srt' | 'rtmp'>();
     const inputLiveStartMs = new Map<number, number>();
     const ffprobeResults = new Map<number, ProbeResult>();
     const ffprobeRetries = new Map<number, { timer: NodeJS.Timeout | null; attempt: number }>();
@@ -209,6 +215,12 @@ export function createHealthService(db: Db, outputService: OutputService) {
     // input is live — otherwise ffmpeg would just hang or churn against a dead input.
     function isInputReady(pipelineId: number): boolean {
         return lastSrsReachable && (inputLive.get(pipelineId) ?? false);
+    }
+
+    // Pull protocol for the pipeline's currently-live input, or null if not live
+    // / not yet detected. Callers fall back to RTMP when null.
+    function getInputProtocol(pipelineId: number): 'srt' | 'rtmp' | null {
+        return inputProtocol.get(pipelineId) ?? null;
     }
 
     let pollInProgress = false;
@@ -276,6 +288,11 @@ export function createHealthService(db: Db, outputService: OutputService) {
 
             if (srsReachable) {
                 inputLive.set(pipeline.id, nowLive);
+                if (nowLive && s) {
+                    inputProtocol.set(pipeline.id, s.tcUrl?.startsWith('srt://') ? 'srt' : 'rtmp');
+                } else if (!nowLive) {
+                    inputProtocol.delete(pipeline.id);
+                }
 
                 if (!prevLive && nowLive) {
                     inputLiveStartMs.set(pipeline.id, Date.now());
@@ -366,6 +383,7 @@ export function createHealthService(db: Db, outputService: OutputService) {
         start,
         registerRoutes,
         isInputReady,
+        getInputProtocol,
         getSrsEvents: (): SrsEvent[] => [...srsEvents],
     };
 }

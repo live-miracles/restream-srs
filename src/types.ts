@@ -11,8 +11,6 @@ export interface Pipeline {
     streamKeyId: number;
 }
 
-export type PullMethod = 'rtmp' | 'srt';
-
 export interface OutputSink {
     seq: number;
     url: string;
@@ -39,7 +37,6 @@ export interface Output {
     name: string;
     desiredState: 'running' | 'stopped';
     videoEncoding: string;
-    pullMethod: PullMethod;
     sinks: OutputSink[];
     lastError: string | null;
 }
@@ -63,7 +60,6 @@ export interface Db {
         pipelineId: number;
         name: string;
         videoEncoding?: string;
-        pullMethod?: PullMethod;
         sinks: SinkInput[];
     }): Output;
     getOutput(id: string): Output | null;
@@ -75,7 +71,6 @@ export interface Db {
         params: {
             name: string;
             videoEncoding: string;
-            pullMethod: PullMethod;
             sinks: SinkInput[];
         },
     ): Output | null;

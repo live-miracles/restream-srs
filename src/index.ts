@@ -35,10 +35,13 @@ initializePassword(db);
 
 const outputService = createOutputService(db);
 const healthService = createHealthService(db, outputService);
-const previewService = createPreviewService(db);
+const previewService = createPreviewService(db, healthService.getInputProtocol);
 
 // Outputs only start ffmpeg when the input is live and SRS is reachable.
 outputService.setInputReadyCheck(healthService.isInputReady);
+// Outputs and the preview pull the input over whatever protocol it was published
+// with, detected by the health service.
+outputService.setInputProtocolGetter(healthService.getInputProtocol);
 
 // Unauthenticated routes
 registerSrsHooks(app, db);

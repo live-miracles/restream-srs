@@ -33,6 +33,7 @@ export interface OutputService {
     restartPipelineOutputs(pipelineId: number, staggerBase?: number): number;
     clearRetryState(outputId: string): void;
     setInputReadyCheck(fn: (pipelineId: number) => boolean): void;
+    setInputProtocolGetter(fn: (pipelineId: number) => 'srt' | 'rtmp' | null): void;
     shutdown(): void;
 }
 
@@ -52,6 +53,12 @@ export function createOutputService(db: Db): OutputService {
     // construction (the health service that knows this is created later). Defaults
     // to "ready" so behaviour is safe before wiring and in tests.
     let isInputReady: (pipelineId: number) => boolean = () => true;
+
+    // How the pipeline's live input is published, so we pull it back the same way
+    // (SRT input -> SRT pull, RTMP input -> RTMP pull). Wired up after
+    // construction. Defaults to RTMP when unknown — an output only starts once its
+    // input is live, by which point the health service has detected the protocol.
+    let getInputProtocol: (pipelineId: number) => 'srt' | 'rtmp' | null = () => null;
 
     function getStats(outputId: string): OutputStats {
         const s = statuses.get(outputId) ?? { status: 'stopped' as const, pid: null };
@@ -162,10 +169,11 @@ export function createOutputService(db: Db): OutputService {
 
         const pipeline = db.getPipeline(output.pipelineId);
         if (!pipeline) throw new Error('Pipeline not found');
-        // Pull the input over the configured protocol. SRT preserves every audio
-        // track from a multitrack source; RTMP/FLV collapses to a single track.
+        // Pull the input back the same way it was published: an SRT input only
+        // exists over SRT (and preserves every audio track), an RTMP input only
+        // over RTMP. Default to RTMP if the protocol isn't known yet.
         const inputUrl =
-            output.pullMethod === 'srt'
+            getInputProtocol(output.pipelineId) === 'srt'
                 ? srtPullUrl(pipeline.streamKey)
                 : rtmpPullUrl(pipeline.streamKey);
         const args = buildFfmpegArgs(inputUrl, output.sinks, output.videoEncoding);
@@ -306,6 +314,9 @@ export function createOutputService(db: Db): OutputService {
 
         clearRetryState: clearRetry,
 
+        setInputProtocolGetter(fn: (pipelineId: number) => 'srt' | 'rtmp' | null): void {
+            getInputProtocol = fn;
+        },
         setInputReadyCheck(fn: (pipelineId: number) => boolean): void {
             isInputReady = fn;
         },

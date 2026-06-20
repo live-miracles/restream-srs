@@ -1,11 +1,7 @@
 import type { Express } from 'express';
 import { validateOutputUrl, validateAudioEncoding, ENCODINGS } from '../utils/ffmpeg.js';
-import type { Db, PullMethod, SinkInput } from '../types.js';
+import type { Db, SinkInput } from '../types.js';
 import type { OutputService } from '../services/outputs.js';
-
-function parsePullMethod(value: unknown): PullMethod {
-    return value === 'srt' ? 'srt' : 'rtmp';
-}
 
 // Validate the sinks array from the request body. Each sink needs a valid URL
 // and audio track selection; multiple tracks are only valid for SRT sinks since
@@ -41,7 +37,6 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
 
         const name = (req.body?.name as string | undefined)?.trim();
         const videoEncoding = (req.body?.videoEncoding as string | undefined)?.trim() || 'copy';
-        const pullMethod = parsePullMethod(req.body?.pullMethod);
         const parsed = parseSinks(req.body?.sinks);
 
         if (!name) return res.status(400).json({ error: 'name is required' });
@@ -53,7 +48,6 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
             pipelineId,
             name,
             videoEncoding,
-            pullMethod,
             sinks: parsed.sinks,
         });
         return res.status(201).json(output);
@@ -69,7 +63,6 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
         const name = (req.body?.name as string | undefined)?.trim() ?? output.name;
         const videoEncoding =
             (req.body?.videoEncoding as string | undefined)?.trim() ?? output.videoEncoding;
-        const pullMethod = parsePullMethod(req.body?.pullMethod ?? output.pullMethod);
         const parsed = parseSinks(req.body?.sinks);
 
         if (!name) return res.status(400).json({ error: 'name is required' });
@@ -80,7 +73,6 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
         const updated = db.updateOutput(outId, {
             name,
             videoEncoding,
-            pullMethod,
             sinks: parsed.sinks,
         });
         return res.json(updated);

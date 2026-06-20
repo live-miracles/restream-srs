@@ -22,8 +22,9 @@ export function setupDatabaseSchema(db: Database.Database): void {
     // One output = one ffmpeg process that pulls the input once and fans out to
     // one or more sinks. The primary (and almost always only) sink is stored
     // inline on this row; extra sinks for the rare multi-audio-remap case live
-    // in output_sinks. pull_method selects how the input is pulled from SRS
-    // (rtmp collapses to one audio track; srt preserves all).
+    // in output_sinks. The pull protocol isn't stored — it's derived at runtime
+    // from how the input is currently published (SRT input -> SRT pull, RTMP
+    // input -> RTMP pull).
     // last_error stores the most recent ffmpeg failure as "<ts_ms>\n<message>".
     // Cleared when the user explicitly starts the output.
     db.prepare(
@@ -34,7 +35,6 @@ export function setupDatabaseSchema(db: Database.Database): void {
             name            TEXT NOT NULL,
             desired_state   TEXT NOT NULL DEFAULT 'stopped',
             encoding        TEXT NOT NULL DEFAULT 'copy',
-            pull_method     TEXT NOT NULL DEFAULT 'rtmp',
             url             TEXT,
             audio_encoding  TEXT NOT NULL DEFAULT 'copy',
             last_error      TEXT,

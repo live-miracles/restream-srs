@@ -2,7 +2,7 @@ import * as api from '../core/api.js';
 import { state } from '../core/state.js';
 import { setUrlParam, maskStreamKey, withBusy } from '../core/utils.js';
 import { refreshAfterMutation } from './dashboard.js';
-import type { StreamKey, AudioTrackInfo, PullMethod } from '../types.js';
+import type { StreamKey, AudioTrackInfo } from '../types.js';
 
 // ── Settings ──────────────────────────────────────────
 
@@ -251,8 +251,10 @@ function restreamSrtUrl(streamKey: string): string {
 
 function detectServer(url: string): { idx: number; key: string } {
     for (const p of state.config.pipelines ?? []) {
-        if (url === restreamRtmpUrl(p.streamKey)) return { idx: RESTREAM_RTMP_IDX, key: String(p.id) };
-        if (url === restreamSrtUrl(p.streamKey)) return { idx: RESTREAM_SRT_IDX, key: String(p.id) };
+        if (url === restreamRtmpUrl(p.streamKey))
+            return { idx: RESTREAM_RTMP_IDX, key: String(p.id) };
+        if (url === restreamSrtUrl(p.streamKey))
+            return { idx: RESTREAM_SRT_IDX, key: String(p.id) };
     }
     const instagramKey = detectInstagramKey(url);
     if (instagramKey !== null) return { idx: INSTAGRAM_RTMP_IDX, key: instagramKey };
@@ -306,6 +308,10 @@ function escapeAttr(value: string): string {
 // Tracks for the pipeline whose output modal is currently open. Captured when the
 // modal opens so the global add-sink handler can build new rows with the same list.
 let currentSinkTracks: AudioTrackInfo[] = [];
+// Whether that pipeline's input is published over SRT. An RTMP input carries a
+// single audio track, so its sinks are locked to "copy"; an SRT input exposes
+// every track for per-sink selection. Captured when the modal opens.
+let currentInputIsSrt = false;
 
 // Build the audio-track <option>s for one sink. Always preserves the currently
 // selected track even when the input is offline / unprobed (so editing a saved
@@ -364,18 +370,14 @@ function updateSinkRemoveButtons(): void {
     });
 }
 
-function isRtmpPullMethod(): boolean {
-    return (
-        (document.getElementById('out-pull-method-input') as HTMLSelectElement)?.value === 'rtmp'
-    );
-}
-
-export function onPullMethodChange(): void {
-    const rtmp = isRtmpPullMethod();
+// Constrain each sink's audio-track selector to match the input. RTMP inputs are
+// single-track, so the selector is locked to "copy"; SRT inputs expose every
+// track for selection.
+function refreshSinkAudioMode(): void {
     document
         .querySelectorAll<HTMLSelectElement>('#out-sinks-container .js-sink-audio')
         .forEach((sel) => {
-            if (rtmp) {
+            if (!currentInputIsSrt) {
                 sel.innerHTML = '<option value="copy">copy</option>';
                 sel.value = 'copy';
                 sel.disabled = true;
@@ -397,7 +399,7 @@ function populateSinks(
     const rows = sinks.length ? sinks : [{ url: '', audioEncoding: 'copy' }];
     container.innerHTML = rows.map((s) => sinkRowHtml(tracks, s.url, s.audioEncoding)).join('');
     updateSinkRemoveButtons();
-    onPullMethodChange();
+    refreshSinkAudioMode();
 }
 
 export function addSinkRow(): void {
@@ -405,7 +407,7 @@ export function addSinkRow(): void {
     if (!container) return;
     container.insertAdjacentHTML('beforeend', sinkRowHtml(currentSinkTracks));
     updateSinkRemoveButtons();
-    onPullMethodChange();
+    refreshSinkAudioMode();
 }
 
 export function removeSinkRow(btn: HTMLElement): void {
@@ -448,10 +450,7 @@ export function openAddOutput(pipelineId: string): void {
     const nameEl = document.getElementById('out-name-input') as HTMLInputElement;
     nameEl.value = `Output ${existingCount + 1}`;
     nameEl.classList.remove('input-error');
-    const pipelineIsSrt = state.pipelines.find((p) => p.id === pipelineId)?.input.isSrt ?? false;
-    (document.getElementById('out-pull-method-input') as HTMLSelectElement).value = pipelineIsSrt
-        ? 'srt'
-        : 'rtmp';
+    currentInputIsSrt = state.pipelines.find((p) => p.id === pipelineId)?.input.isSrt ?? false;
     (document.getElementById('out-video-encoding-input') as HTMLSelectElement).innerHTML =
         outVideoEncodingOptions('copy');
     populateSinks(pipelineTracks(pipelineId), []);
@@ -472,8 +471,7 @@ export function openEditOutput(pipelineId: string, outId: string): void {
     const nameEl = document.getElementById('out-name-input') as HTMLInputElement;
     nameEl.value = output.name;
     nameEl.classList.remove('input-error');
-    (document.getElementById('out-pull-method-input') as HTMLSelectElement).value =
-        output.pullMethod;
+    currentInputIsSrt = state.pipelines.find((p) => p.id === pipelineId)?.input.isSrt ?? false;
     (document.getElementById('out-video-encoding-input') as HTMLSelectElement).innerHTML =
         outVideoEncodingOptions(output.videoEncoding);
     populateSinks(pipelineTracks(pipelineId), output.sinks);
@@ -507,8 +505,6 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
 
     const videoEncoding = (document.getElementById('out-video-encoding-input') as HTMLSelectElement)
         .value;
-    const pullMethod = (document.getElementById('out-pull-method-input') as HTMLSelectElement)
-        .value as PullMethod;
 
     const rows = Array.from(document.querySelectorAll('#out-sinks-container .js-sink-row'));
     const sinks: { url: string; audioEncoding: string }[] = [];
@@ -571,7 +567,7 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
     if (!name || !sinksValid || sinks.length === 0) return;
 
     await withBusy(btn, async () => {
-        const payload = { name, videoEncoding, pullMethod, sinks };
+        const payload = { name, videoEncoding, sinks };
         const result = outId
             ? await api.updateOutput(pipelineId, outId, payload)
             : await api.createOutput(pipelineId, payload);
