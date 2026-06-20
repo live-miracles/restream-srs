@@ -2,6 +2,9 @@ const SRS_API_URL = process.env.SRS_API_URL || 'http://localhost:1985';
 const SRS_RTMP_HOST = process.env.SRS_RTMP_HOST || 'localhost';
 const SRS_RTMP_PORT = parseInt(process.env.SRS_RTMP_PORT || '1935');
 const SRS_SRT_PORT = parseInt(process.env.SRS_SRT_PORT || '10080');
+// SRS's built-in http_server, which serves the natively remuxed HLS used for
+// single-track preview. Distinct from the app's own port (8080).
+const SRS_HTTP_PORT = parseInt(process.env.SRS_HTTP_PORT || '8088');
 const SRS_CLIENT_FETCH_TIMEOUT_MS = 3000;
 const SRS_STREAMS_FETCH_TIMEOUT_MS = 5000;
 
@@ -84,6 +87,14 @@ export async function fetchSrsStreams(): Promise<SrsStream[]> {
 
 export function rtmpPullUrl(streamKey: string): string {
     return `rtmp://${SRS_RTMP_HOST}:${SRS_RTMP_PORT}/live/${streamKey}`;
+}
+
+// Base URL of SRS's native HLS output (the `live` app). The preview proxy
+// fetches `${SRS_HLS_BASE}/<streamKey>.m3u8` and its `-<seq>.ts` segments.
+export const SRS_HLS_BASE = `http://${SRS_RTMP_HOST}:${SRS_HTTP_PORT}/live`;
+
+export function srsHlsPlaylistUrl(streamKey: string): string {
+    return `${SRS_HLS_BASE}/${streamKey}.m3u8`;
 }
 
 export function srtPullUrl(streamKey: string): string {

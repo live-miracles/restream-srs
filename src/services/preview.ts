@@ -2,7 +2,7 @@ import { spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { rtmpPullUrl, srtPullUrl } from '../utils/srs.js';
+import { rtmpPullUrl, srtPullUrl, srsHlsPlaylistUrl } from '../utils/srs.js';
 import type { Db } from '../types.js';
 
 const FFMPEG_CMD = process.env.FFMPEG_PATH || 'ffmpeg';
@@ -22,6 +22,28 @@ async function waitForPlaylist(m3u8Path: string, timeoutMs: number): Promise<voi
             if (content.includes('.ts')) return;
         } catch {
             /* not yet */
+        }
+        await new Promise((r) => setTimeout(r, STOP_WAIT_MS));
+    }
+    throw new Error('Preview timed out — no active input stream on this pipeline');
+}
+
+// Poll SRS's native HLS playlist over HTTP until it lists a segment. SRS only
+// generates HLS while a stream is published, so a timeout here means the
+// pipeline has no active input.
+async function waitForSrsPlaylist(url: string, timeoutMs: number): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        try {
+            const r = await fetch(url, { signal: AbortSignal.timeout(2000) });
+            // 200 = stream is publishing (SRS returns a master playlist, not segments,
+            // so .ts is never in the response — r.ok is the right liveness check).
+            if (r.ok) {
+                await r.body?.cancel();
+                return;
+            }
+        } catch {
+            /* not ready yet */
         }
         await new Promise((r) => setTimeout(r, STOP_WAIT_MS));
     }
@@ -48,12 +70,20 @@ export function createPreviewService(db: Db): PreviewService {
     }
 
     async function start(pipelineId: number, audioTrackCount = 1): Promise<{ hlsUrl: string }> {
-        const playlistName = audioTrackCount > 1 ? 'master.m3u8' : 'index.m3u8';
-        const hlsUrl = `/hls/${pipelineId}/${playlistName}`;
-        if (procs.has(pipelineId)) return { hlsUrl };
-
         const pipeline = db.getPipeline(pipelineId);
         if (!pipeline) throw new Error('Pipeline not found');
+
+        // Single-track preview uses SRS's native HLS (AAC passthrough, no transcode).
+        if (audioTrackCount <= 1) {
+            await waitForSrsPlaylist(srsHlsPlaylistUrl(pipeline.streamKey), 12_000);
+            return { hlsUrl: `/api/preview/hls/${pipeline.streamKey}.m3u8` };
+        }
+
+        // Multi-track preview keeps the ffmpeg path: SRS HLS exposes only one
+        // audio track, so switchable renditions still require transcoding here.
+        const playlistName = 'master.m3u8';
+        const hlsUrl = `/hls/${pipelineId}/${playlistName}`;
+        if (procs.has(pipelineId)) return { hlsUrl };
 
         const outDir = path.join(baseDir, String(pipelineId));
         fs.mkdirSync(outDir, { recursive: true });
@@ -93,11 +123,21 @@ export function createPreviewService(db: Db): PreviewService {
         // SRT/MPEG-TS sources — including anything SRS remuxes from SRT to RTMP via
         // srt_to_rtmp — deliver audio with jittery, occasionally discontinuous
         // timestamps (PCR rounding + SRT packet-loss gaps). Re-encoding those 1:1
-        // yields gaps and crackle ("breaking" audio). aresample=async=1 fills small
-        // gaps with silence and soft-compensates drift so the AAC output stays
-        // continuous. Clean RTMP inputs have well-behaved timestamps, so it's a no-op
-        // for them — safe to apply on every preview.
-        const audioArgs = ['-af', 'aresample=async=1', '-c:a', 'aac', '-ac', '2', '-ar', '48000'];
+        // yields gaps and crackle ("breaking" audio). aresample fills gaps with
+        // silence and soft-compensates drift so the AAC output stays continuous.
+        // async=1000 lets it correct up to 1000 samples/sec; async=1 is far too
+        // weak to absorb SRS's jitter, so audio still breaks with it. Clean RTMP
+        // inputs have well-behaved timestamps, so it's a near no-op for them.
+        const audioArgs = [
+            '-af',
+            'aresample=async=1000:first_pts=0',
+            '-c:a',
+            'aac',
+            '-ac',
+            '2',
+            '-ar',
+            '48000',
+        ];
         const hlsCommon = [
             '-f',
             'hls',

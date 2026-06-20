@@ -38,14 +38,36 @@ describe('buildFfmpegArgs', () => {
         assert.equal(args[args.indexOf('-i') + 1], 'rtmp://in');
     });
 
-    test('copy encoding uses -c copy', () => {
+    test('copy encoding copies video only (-c:v copy)', () => {
         const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')], 'copy');
-        assert.equal(args[args.indexOf('-c') + 1], 'copy');
+        assert.equal(args[args.indexOf('-c:v') + 1], 'copy');
     });
 
-    test('unknown encoding falls back to copy', () => {
+    test('unknown encoding falls back to video copy', () => {
         const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')], 'bogus');
-        assert.ok(args.includes('copy'));
+        assert.equal(args[args.indexOf('-c:v') + 1], 'copy');
+    });
+
+    test('FLV sink re-encodes audio to AAC with aresample to fix SRT timestamp jitter', () => {
+        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')], 'copy');
+        assert.equal(args[args.indexOf('-c:a') + 1], 'aac');
+        assert.equal(args[args.indexOf('-af') + 1], 'aresample=async=1000:first_pts=0');
+        assert.ok(!args.includes('copy') || args[args.indexOf('-c:a') + 1] !== 'copy');
+    });
+
+    test('SRT sink copies audio to preserve multitrack passthrough', () => {
+        const args = buildFfmpegArgs('rtmp://in', [sink('srt://host:10080')], 'copy');
+        assert.equal(args[args.indexOf('-c:a') + 1], 'copy');
+        assert.ok(!args.includes('-af'));
+    });
+
+    test('tee path re-encodes audio to AAC when any sink is FLV', () => {
+        const args = buildFfmpegArgs(
+            'rtmp://in',
+            [sink('rtmp://out1'), sink('srt://out2:10080')],
+            '720p',
+        );
+        assert.equal(args[args.indexOf('-c:a') + 1], 'aac');
     });
 
     test('RTMP sink uses -f flv', () => {
@@ -86,15 +108,21 @@ describe('buildFfmpegArgs', () => {
         assert.equal(args[args.indexOf('-loglevel') + 1], 'warning');
     });
 
-    test('copy audio adds no -map (ffmpeg default selection)', () => {
+    test('FLV copy audio maps track 0 explicitly (not ffmpeg default selection)', () => {
         const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out', 'copy')]);
+        const maps = args.filter((a, i) => args[i - 1] === '-map');
+        assert.deepEqual(maps, ['0:v:0?', '0:a:0?']);
+    });
+
+    test('SRT copy audio adds no -map (ffmpeg default selection)', () => {
+        const args = buildFfmpegArgs('rtmp://in', [sink('srt://out:10080', 'copy')]);
         assert.ok(!args.includes('-map'));
     });
 
-    test('selecting a track maps video + that audio stream', () => {
+    test('selecting a track on an FLV sink maps video + that audio stream', () => {
         const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out', '1')]);
         const maps = args.filter((a, i) => args[i - 1] === '-map');
-        assert.deepEqual(maps, ['0:v:0', '0:a:1']);
+        assert.deepEqual(maps, ['0:v:0?', '0:a:1?']);
     });
 
     test('fans out to multiple sinks in one command (copy encoding, per-output args)', () => {
@@ -110,9 +138,10 @@ describe('buildFfmpegArgs', () => {
         // one flv output and one mpegts output
         assert.equal(args.filter((a) => a === 'flv').length, 1);
         assert.equal(args.filter((a) => a === 'mpegts').length, 1);
+        // FLV sink maps a single track explicitly; SRT sink keeps its own map
         assert.deepEqual(
             args.filter((a, i) => args[i - 1] === '-map'),
-            ['0:v:0', '0:a:0', '0:v:0', '0:a:1'],
+            ['0:v:0?', '0:a:0?', '0:v:0', '0:a:1'],
         );
     });
 
