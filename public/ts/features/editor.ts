@@ -477,8 +477,7 @@ export function openEditOutput(pipelineId: string, outId: string): void {
     populateSinks(pipelineTracks(pipelineId), output.sinks);
     (document.getElementById('out-modal-title') as HTMLElement).textContent = 'Edit Output';
 
-    const pipeline = state.pipelines.find((p) => p.id === pipelineId);
-    const isRunning = pipeline?.outs.find((o) => o.id === outId)?.status === 'running';
+    const isRunning = output.desiredState === 'running';
     const saveBtn = document.getElementById('out-save-btn') as HTMLButtonElement;
     const hint = document.getElementById('out-running-hint') as HTMLElement;
     saveBtn.disabled = isRunning;
