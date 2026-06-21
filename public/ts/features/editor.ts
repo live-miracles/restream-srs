@@ -188,6 +188,13 @@ export async function confirmDeletePipeline(id: string, btn?: HTMLButtonElement)
 // ── Output modal ──────────────────────────────────────
 
 const SERVERS = [
+    { label: 'Custom RTMP', prefix: '', keyLabel: 'RTMP URL', placeholder: 'rtmp://...' },
+    {
+        label: 'Custom SRT',
+        prefix: '',
+        keyLabel: 'SRT URL',
+        placeholder: 'srt://host:port?streamid=...',
+    },
     {
         label: 'YouTube RTMP',
         prefix: 'rtmp://a.rtmp.youtube.com/live2/',
@@ -206,20 +213,13 @@ const SERVERS = [
         keyLabel: 'Stream Key',
         placeholder: '1234567890?s_bl=1&s_prp=xxx-1&...',
     },
-    { label: 'Custom RTMP', prefix: '', keyLabel: 'RTMP URL', placeholder: 'rtmp://...' },
-    {
-        label: 'Custom SRT',
-        prefix: '',
-        keyLabel: 'SRT URL',
-        placeholder: 'srt://host:port?streamid=...',
-    },
     { label: 'Restream RTMP', prefix: '', keyLabel: 'Pipeline', placeholder: '' },
     { label: 'Restream SRT', prefix: '', keyLabel: 'Pipeline', placeholder: '' },
 ] as const;
 
-const INSTAGRAM_RTMP_IDX = 2;
-const CUSTOM_RTMP_IDX = 3;
-const CUSTOM_SRT_IDX = 4;
+const CUSTOM_RTMP_IDX = 0;
+const CUSTOM_SRT_IDX = 1;
+const INSTAGRAM_RTMP_IDX = 4;
 const RESTREAM_RTMP_IDX = 5;
 const RESTREAM_SRT_IDX = 6;
 

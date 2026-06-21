@@ -402,7 +402,14 @@ function renderPipelineInfo(selectedId: string | null): void {
     if (srtEl) {
         srtEl.dataset.copy = pipeline.srtPublishUrl;
         srtEl.textContent = pipeline.srtPublishUrl.replace(pipeline.streamKey, masked);
-        srtEl.dataset.ip = pipeline.srtPublishUrl.slice(6, pipeline.srtPublishUrl.indexOf(':', 6));
+        const hostStart = 6;
+        const colonAfterHost = pipeline.srtPublishUrl.indexOf(':', hostStart);
+        srtEl.dataset.ip = pipeline.srtPublishUrl.slice(hostStart, colonAfterHost);
+        const portEnd = pipeline.srtPublishUrl.indexOf('?', colonAfterHost);
+        srtEl.dataset.port =
+            portEnd > -1
+                ? pipeline.srtPublishUrl.slice(colonAfterHost + 1, portEnd)
+                : pipeline.srtPublishUrl.slice(colonAfterHost + 1);
         srtEl.dataset.streamId = `#!::r=live/${pipeline.streamKey},m=publish`;
     }
 
