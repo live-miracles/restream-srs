@@ -46,6 +46,7 @@ interface OutputHealth {
     pid: number | null;
     bitrateKbps: number | null;
     startedAtMs: number | null;
+    failures: number;
     lastError: string | null;
 }
 
@@ -267,9 +268,7 @@ export function createHealthService(db: Db, outputService: OutputService) {
 
         const liveByPath = new Map<string, SrsStream>();
         for (const s of streams) {
-            const rtmpLive = s.publish?.active;
-            const srtLive = s.tcUrl?.startsWith('srt://') && (s.kbps?.recv_30s ?? 0) > 0;
-            if (rtmpLive || srtLive) {
+            if (s.publish?.active) {
                 liveByPath.set(`${s.app}/${s.name}`, s);
             }
         }
@@ -333,8 +332,15 @@ export function createHealthService(db: Db, outputService: OutputService) {
 
             const outputsHealth: Record<string, OutputHealth> = {};
             for (const outId of outputsByPipeline.get(pipeline.id) ?? []) {
+                const stats = outputService.getStats(outId);
                 outputsHealth[outId] = {
-                    ...outputService.getStats(outId),
+                    ...stats,
+                    // Bitrate from ffmpeg is meaningless when the input is offline
+                    // (ffmpeg may still be connected to the destination, draining
+                    // buffered data). Hide it so the UI doesn't show a high bitrate
+                    // alongside a red/error status.
+                    bitrateKbps: nowLive ? stats.bitrateKbps : null,
+                    failures: stats.failures,
                     lastError: lastErrorById.get(outId) ?? null,
                 };
             }

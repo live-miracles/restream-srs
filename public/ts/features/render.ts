@@ -295,6 +295,8 @@ function renderOverview(): void {
             for (const o of p.outs) {
                 const isRunning = o.status === 'running';
                 const st = outStatus(o, p.input.live);
+                const retryPrefix =
+                    st === 'error' && o.failures > 0 ? `${ICON_ITERATION_CW}${o.failures} ` : '';
                 const badge =
                     st === 'off'
                         ? `<span class="badge badge-sm badge-neutral">Stopped</span>`
@@ -305,8 +307,8 @@ function renderOverview(): void {
                                 ? `<span class="badge badge-sm badge-warning">No Output</span>`
                                 : `<span class="badge badge-sm badge-warning">Low Bitrate</span>`
                             : isRunning
-                              ? `<span class="badge badge-sm badge-error">No Input</span>`
-                              : `<span class="badge badge-sm badge-error">Failed</span>`;
+                              ? `<span class="badge badge-sm badge-error gap-1">${retryPrefix}No Input</span>`
+                              : `<span class="badge badge-sm badge-error gap-1">${retryPrefix}Failed</span>`;
 
                 const isOn = o.status === 'running';
                 const src = isOn && o.videoEncoding === 'copy' ? p.input : null;
@@ -413,6 +415,7 @@ function renderPipelineInfo(selectedId: string | null): void {
 const ICON_PENCIL = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>`;
 const ICON_TRASH = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>`;
 const ICON_INFO = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>`;
+const ICON_ITERATION_CW = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 3 3-3 3"/><path d="M15 5a9 9 0 1 1-3 16.9"/></svg>`;
 const ICON_WARN = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>`;
 
 function escHtml(s: string): string {
@@ -514,8 +517,13 @@ function renderOutputCard(
         ? new Date(o.lastErrorAt).toLocaleTimeString(undefined, { hour12: false })
         : '';
     const lastErrorColor = 'text-error';
+    const retryBadge =
+        o.failures > 0
+            ? `<span class="badge badge-sm badge-error gap-1 shrink-0" title="${o.failures} retr${o.failures === 1 ? 'y' : 'ies'}">${ICON_ITERATION_CW}${o.failures}</span>`
+            : '';
     const lastErrorHtml = lastErrorLine
-        ? `<div class="flex items-baseline gap-2 pl-2 mt-0.5 min-w-0">
+        ? `<div class="flex items-center gap-2 pl-2 mt-0.5 min-w-0">
+                ${retryBadge}
                 <span class="text-xs ${lastErrorColor} shrink-0">${lastErrorTs}</span>
                 <span class="text-xs ${lastErrorColor} truncate">${escHtml(lastErrorLine)}</span>
                 <button class="btn btn-xs btn-ghost p-0 leading-none shrink-0 ${lastErrorColor}" data-action="error-info" data-out-id="${o.id}" title="View full error">${ICON_INFO}</button>

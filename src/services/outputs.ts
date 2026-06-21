@@ -23,6 +23,7 @@ interface OutputStats {
     pid: number | null;
     bitrateKbps: number | null;
     startedAtMs: number | null;
+    failures: number;
 }
 
 export interface OutputService {
@@ -66,6 +67,7 @@ export function createOutputService(db: Db): OutputService {
             ...s,
             bitrateKbps: bitrates.get(outputId) ?? null,
             startedAtMs: startTimes.get(outputId) ?? null,
+            failures: retryState.get(outputId)?.failures ?? 0,
         };
     }
 
