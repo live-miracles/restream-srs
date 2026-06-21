@@ -289,7 +289,7 @@ function renderOverview(): void {
     // ── Outputs ───────────────────────────────────────────
     let outputRows = '';
     if (totalOuts === 0) {
-        outputRows = `<tr><td colspan="10" class="py-4 text-center opacity-50">No outputs yet.</td></tr>`;
+        outputRows = `<tr><td colspan="11" class="py-4 text-center opacity-50">No outputs yet.</td></tr>`;
     } else {
         for (const p of state.pipelines) {
             for (const o of p.outs) {
@@ -312,9 +312,12 @@ function renderOverview(): void {
 
                 const isOn = o.status === 'running';
                 const src = isOn && o.videoEncoding === 'copy' ? p.input : null;
+                const outUptimeMs =
+                    st === 'good' && o.startedAtMs !== null ? Date.now() - o.startedAtMs : null;
                 outputRows += `<tr class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(st === 'error', st === 'warn')}>
                     <td><span class="opacity-40 text-xs">${p.name} ·</span> ${o.name}</td>
                     <td>${badge}</td>
+                    <td class="font-mono text-xs">${outUptimeMs !== null ? formatUptime(outUptimeMs) : '—'}</td>
                     ${td(formatBitrate(o.bitrateKbps))}
                     ${td(isOn ? o.videoEncoding : null)}
                     ${td(src?.video?.codec)}
@@ -342,7 +345,7 @@ function renderOverview(): void {
         <h2 class="mb-2 text-lg font-bold">Outputs <span class="badge badge-neutral badge-sm ml-1">${totalOuts}</span></h2>
         <div class="overflow-x-auto">
             <table class="table table-sm">
-                ${thead(['Pipeline · Output', 'Status', 'Bitrate', 'Encoding', 'V.Codec', 'Resolution', 'FPS', 'A.Codec', 'Ch', 'Sample Rate'])}
+                ${thead(['Pipeline · Output', 'Status', 'Uptime', 'Bitrate', 'Encoding', 'V.Codec', 'Resolution', 'FPS', 'A.Codec', 'Ch', 'Sample Rate'])}
                 <tbody>${outputRows}</tbody>
             </table>
         </div>`;
