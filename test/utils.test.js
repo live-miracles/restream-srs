@@ -159,17 +159,17 @@ describe('buildFfmpegArgs', () => {
     test('multiple sinks with non-copy encoding and uniform audio use tee muxer', () => {
         const args = buildFfmpegArgs(
             'rtmp://in',
-            [sink('rtmp://out1'), sink('srt://out2:10080')],
+            [sink('rtmp://out1'), sink('rtmp://out2')],
             '720p',
         );
         // tee muxer: exactly one -f tee
         const fIndices = args.reduce((acc, a, i) => (a === '-f' ? [...acc, i] : acc), []);
         assert.equal(fIndices.length, 1);
         assert.equal(args[fIndices[0] + 1], 'tee');
-        // tee spec contains both URLs with correct formats
+        // tee spec contains both URLs with correct flv format
         const teeSpec = args[args.length - 1];
         assert.ok(teeSpec.includes('[f=flv]rtmp://out1'));
-        assert.ok(teeSpec.includes('[f=mpegts]srt://out2:10080'));
+        assert.ok(teeSpec.includes('[f=flv]rtmp://out2'));
         // encoding args appear only once
         assert.equal(args.filter((a) => a === 'libx264').length, 1);
         assert.ok(args.some((a) => String(a).includes('1280:720')));
@@ -224,7 +224,7 @@ describe('URL builders', () => {
     test('srtPullUrl uses default host and SRT port', () => {
         assert.equal(
             srtPullUrl('mykey'),
-            'srt://localhost:10080?streamid=#!::r=live/mykey,m=request',
+            'srt://localhost:10080?streamid=#!::r=live/mykey,m=request&latency=200000&transtype=live',
         );
     });
 

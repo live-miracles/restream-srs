@@ -25,6 +25,10 @@ function parseSinks(raw: unknown): { sinks: SinkInput[] } | { error: string } {
         }
         sinks.push({ url, audioEncoding });
     }
+    const firstIsSrt = sinks[0].url.startsWith('srt://');
+    if (!sinks.every((s) => s.url.startsWith('srt://') === firstIsSrt)) {
+        return { error: 'all sinks must be the same protocol (SRT or RTMP)' };
+    }
     return { sinks };
 }
 
