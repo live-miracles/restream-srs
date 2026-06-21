@@ -196,8 +196,14 @@ const SERVERS = [
         placeholder: 'srt://host:port?streamid=...',
     },
     {
-        label: 'YouTube RTMP',
+        label: 'YT RTMP',
         prefix: 'rtmp://a.rtmp.youtube.com/live2/',
+        keyLabel: 'Stream Key',
+        placeholder: 'xxxx-xxxx-xxxx-xxxx',
+    },
+    {
+        label: 'YT RTMP (Backup)',
+        prefix: 'rtmp://b.rtmp.youtube.com/live2?backup=1/',
         keyLabel: 'Stream Key',
         placeholder: 'xxxx-xxxx-xxxx-xxxx',
     },
@@ -219,9 +225,9 @@ const SERVERS = [
 
 const CUSTOM_RTMP_IDX = 0;
 const CUSTOM_SRT_IDX = 1;
-const INSTAGRAM_RTMP_IDX = 4;
-const RESTREAM_RTMP_IDX = 5;
-const RESTREAM_SRT_IDX = 6;
+const INSTAGRAM_RTMP_IDX = 5;
+const RESTREAM_RTMP_IDX = 6;
+const RESTREAM_SRT_IDX = 7;
 
 function isRestreamIdx(idx: number): boolean {
     return idx === RESTREAM_RTMP_IDX || idx === RESTREAM_SRT_IDX;
@@ -262,7 +268,7 @@ function detectServer(url: string): { idx: number; key: string } {
         const { prefix } = SERVERS[i];
         if (prefix && url.startsWith(prefix)) return { idx: i, key: url.slice(prefix.length) };
     }
-    return { idx: url.startsWith('srt://') ? 4 : 3, key: url };
+    return { idx: url.startsWith('srt://') ? CUSTOM_SRT_IDX : CUSTOM_RTMP_IDX, key: url };
 }
 
 function restreamPipelineOpts(selectedId: string): string {
