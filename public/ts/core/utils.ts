@@ -81,7 +81,17 @@ export async function withBusy(
 
 export async function copyText(text: string): Promise<void> {
     try {
-        await navigator.clipboard.writeText(text);
+        if (navigator.clipboard) {
+            await navigator.clipboard.writeText(text);
+        } else {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+        }
         const el = document.getElementById('copied-notification');
         el?.classList.remove('hidden');
         setTimeout(() => el?.classList.add('hidden'), 1500);
