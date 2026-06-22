@@ -152,9 +152,11 @@ step "7/9 Config and data"
 if [[ ! -f "$CONF_DIR/srs.conf" ]]; then
     cp "$APP_DIR/srs.conf" "$CONF_DIR/srs.conf"
 fi
-# Always enforce log settings in case the conf pre-dates these requirements.
-sed -i "s|srs_log_file.*|srs_log_file        $LOG_DIR/srs.log;|" "$CONF_DIR/srs.conf"
-sed -i "s|srs_log_tank.*|srs_log_tank        file;|" "$CONF_DIR/srs.conf"
+# Always enforce log settings. Delete existing directives (may be absent or
+# wrong) then re-insert after the global 'listen' line so they land in the
+# correct scope regardless of what the conf previously contained.
+sed -i '/^[[:space:]]*srs_log_tank[[:space:]]/d; /^[[:space:]]*srs_log_file[[:space:]]/d' "$CONF_DIR/srs.conf"
+sed -i "/^listen/a srs_log_tank        file;\nsrs_log_file        $LOG_DIR/srs.log;" "$CONF_DIR/srs.conf"
 # Database. We don't run data migrations, so a db.sqlite left over from an older
 # version could be schema-incompatible and cause hard-to-debug issues.
 DB_FILE="$DATA_DIR/db.sqlite"
