@@ -8,7 +8,7 @@ import {
     LOW_BITRATE_KBPS,
 } from '../core/utils.js';
 import { state } from '../core/state.js';
-import type { InputHealth, PipelineView, OutputView } from '../types.js';
+import type { InputHealth, PipelineView, OutputView, MetricSample } from '../types.js';
 import {
     stopCurrentPreview,
     populatePreviewTrackSelect,
@@ -212,6 +212,146 @@ function renderInputStats(input: InputHealth): string {
     `;
 }
 
+const CHART_WINDOW_MS = 30 * 60 * 1000;
+
+function roundUpNice(v: number): number {
+    if (v <= 0) return 1;
+    const exp = Math.pow(10, Math.floor(Math.log10(v)));
+    const f = v / exp;
+    return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * exp;
+}
+
+function drawChart(
+    id: string,
+    samples: MetricSample[],
+    extract: (s: MetricSample) => number,
+    maxHint: number,
+    color: string,
+    fmtY: (v: number) => string,
+): void {
+    const canvas = document.getElementById(id) as HTMLCanvasElement | null;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const displayW = canvas.clientWidth || 500;
+    const displayH = canvas.clientHeight || 160;
+    canvas.width = displayW * dpr;
+    canvas.height = displayH * dpr;
+    ctx.scale(dpr, dpr);
+
+    const W = displayW;
+    const H = displayH;
+    const mL = 50;
+    const mR = 8;
+    const mT = 6;
+    const mB = 22;
+    const cW = W - mL - mR;
+    const cH = H - mT - mB;
+
+    ctx.clearRect(0, 0, W, H);
+
+    // Theme-aware colours derived from the canvas's computed text colour
+    const base = getComputedStyle(canvas).color;
+    const toRgba = (c: string, a: number) =>
+        c.startsWith('rgb(')
+            ? c.replace('rgb(', 'rgba(').replace(')', `, ${a})`)
+            : `rgba(128,128,128,${a})`;
+    const gridColor = toRgba(base, 0.1);
+    const labelColor = toRgba(base, 0.45);
+
+    ctx.font = '10px ui-monospace, monospace';
+
+    const values = samples.length >= 2 ? samples.map(extract) : [];
+    const rawMax = values.length ? Math.max(maxHint, ...values, 0.001) : maxHint || 1;
+    const peak = roundUpNice(rawMax);
+
+    const cx = (i: number) => mL + (i / Math.max(samples.length - 1, 1)) * cW;
+    const cy = (v: number) => mT + cH - (v / peak) * cH;
+
+    // Y axis — 4 equal ticks
+    for (let i = 0; i <= 4; i++) {
+        const v = (peak / 4) * i;
+        const y = cy(v);
+        ctx.beginPath();
+        ctx.setLineDash([3, 4]);
+        ctx.moveTo(mL, y);
+        ctx.lineTo(W - mR, y);
+        ctx.strokeStyle = gridColor;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = labelColor;
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(fmtY(v), mL - 5, y);
+    }
+
+    if (values.length < 2) return;
+
+    // X axis — labels at round-minute boundaries
+    const firstTs = samples[0].ts;
+    const lastTs = samples[samples.length - 1].ts;
+    const spanMs = lastTs - firstTs;
+    const spanMin = spanMs / 60_000;
+    const stepMin = spanMin <= 10 ? 1 : spanMin <= 30 ? 5 : 10;
+    const stepMs = stepMin * 60_000;
+    const firstLabel = Math.ceil(firstTs / stepMs) * stepMs;
+
+    for (let ts = firstLabel; ts <= lastTs + 1; ts += stepMs) {
+        const frac = (ts - firstTs) / spanMs;
+        if (frac < 0 || frac > 1) continue;
+        const x = mL + frac * cW;
+        ctx.beginPath();
+        ctx.setLineDash([3, 4]);
+        ctx.moveTo(x, mT);
+        ctx.lineTo(x, H - mB);
+        ctx.strokeStyle = gridColor;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.setLineDash([]);
+        const d = new Date(ts);
+        ctx.fillStyle = labelColor;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText(
+            `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`,
+            x,
+            H - mB + 5,
+        );
+    }
+
+    // Fill under curve
+    ctx.beginPath();
+    ctx.moveTo(cx(0), cy(values[0]));
+    for (let i = 1; i < values.length; i++) ctx.lineTo(cx(i), cy(values[i]));
+    ctx.lineTo(cx(values.length - 1), H - mB);
+    ctx.lineTo(cx(0), H - mB);
+    ctx.closePath();
+    ctx.fillStyle = color + '28';
+    ctx.fill();
+
+    // Line
+    ctx.beginPath();
+    ctx.moveTo(cx(0), cy(values[0]));
+    for (let i = 1; i < values.length; i++) ctx.lineTo(cx(i), cy(values[i]));
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+}
+
+function chartCard(id: string, label: string, currentVal: string): string {
+    return `<div class="bg-base-300 rounded-xl p-3">
+        <div class="mb-2 flex items-center justify-between">
+            <span class="text-xs font-semibold opacity-60">${label}</span>
+            <span class="font-mono text-xs">${currentVal}</span>
+        </div>
+        <canvas id="${id}" style="width:100%;height:160px;display:block"></canvas>
+    </div>`;
+}
+
 function renderOverview(): void {
     const overviewEl = document.getElementById('overview-col');
     if (!overviewEl) return;
@@ -334,7 +474,20 @@ function renderOverview(): void {
     const thead = (cols: string[]) =>
         `<thead><tr>${cols.map((c) => `<th>${c}</th>`).join('')}</tr></thead>`;
 
+    const cutoff = Date.now() - CHART_WINDOW_MS;
+    const chartSamples = state.metricsHistory.filter((s) => s.ts >= cutoff);
+    const last = chartSamples[chartSamples.length - 1];
+    const fmtMbps = (bps: number) => `${((bps * 8) / 1_000_000).toFixed(1)} Mb/s`;
+
+    const chartsHtml = `<div class="mb-6 grid grid-cols-2 gap-4">
+        ${chartCard('chart-cpu', 'CPU', last ? `${last.cpu}%` : '—')}
+        ${chartCard('chart-ram', 'RAM', last ? `${Math.round((last.ramUsed / last.ramTotal) * 100)}%` : '—')}
+        ${chartCard('chart-rx', 'Downlink', last ? fmtMbps(last.rxBps) : '—')}
+        ${chartCard('chart-tx', 'Uplink', last ? fmtMbps(last.txBps) : '—')}
+    </div>`;
+
     overviewEl.innerHTML = `
+        ${chartsHtml}
         <h2 class="mb-2 text-lg font-bold">Inputs <span class="badge badge-neutral badge-sm ml-1">${state.pipelines.length}</span></h2>
         <div class="overflow-x-auto mb-6">
             <table class="table table-sm">
@@ -349,6 +502,20 @@ function renderOverview(): void {
                 <tbody>${outputRows}</tbody>
             </table>
         </div>`;
+
+    const fmtPct = (v: number) => `${Math.round(v)}%`;
+    const fmtMb = (v: number) => `${v >= 10 ? v.toFixed(0) : v.toFixed(1)}`;
+    drawChart('chart-cpu', chartSamples, (s) => s.cpu, 100, '#3b82f6', fmtPct);
+    drawChart(
+        'chart-ram',
+        chartSamples,
+        (s) => (s.ramUsed / s.ramTotal) * 100,
+        100,
+        '#a855f7',
+        fmtPct,
+    );
+    drawChart('chart-rx', chartSamples, (s) => (s.rxBps * 8) / 1_000_000, 0, '#22c55e', fmtMb);
+    drawChart('chart-tx', chartSamples, (s) => (s.txBps * 8) / 1_000_000, 0, '#f97316', fmtMb);
 
     overviewEl.onclick = (e) => {
         const row = (e.target as Element).closest('.js-overview-select') as HTMLElement | null;

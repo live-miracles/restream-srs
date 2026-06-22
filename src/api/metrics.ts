@@ -5,6 +5,8 @@ import type { Express } from 'express';
 
 const DISK_STATS_INTERVAL_MS = 30_000;
 const NET_STATS_INTERVAL_MS = 3_000;
+const SAMPLE_INTERVAL_MS = 10_000;
+const HISTORY_MAX = 720; // 2 hours at 10 s — client trims to desired window
 
 let prevCpu = os.cpus().map((c) => c.times);
 
@@ -89,20 +91,58 @@ function updateNetStats(): void {
     }
 }
 
+export interface MetricSample {
+    ts: number;
+    cpu: number;
+    ramUsed: number;
+    ramTotal: number;
+    rxBps: number;
+    txBps: number;
+}
+
+const metricsHistory: MetricSample[] = [];
+
+function sampleMetrics(): void {
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    metricsHistory.push({
+        ts: Date.now(),
+        cpu: getCpuPercent(),
+        ramUsed: totalMem - freeMem,
+        ramTotal: totalMem,
+        rxBps: netStats.rxBytesPerSec,
+        txBps: netStats.txBytesPerSec,
+    });
+    if (metricsHistory.length > HISTORY_MAX) metricsHistory.shift();
+}
+
 updateDiskStats();
 setInterval(updateDiskStats, DISK_STATS_INTERVAL_MS).unref();
 updateNetStats();
 setInterval(updateNetStats, NET_STATS_INTERVAL_MS).unref();
+sampleMetrics();
+setInterval(sampleMetrics, SAMPLE_INTERVAL_MS).unref();
 
 export function registerMetricsApi(app: Express): void {
     app.get('/api/metrics/system', (_req, res) => {
+        const s = metricsHistory[metricsHistory.length - 1];
         const totalMem = os.totalmem();
         const freeMem = os.freemem();
         res.json({
-            cpu: { cores: os.cpus().length, percent: getCpuPercent() },
-            ram: { usedBytes: totalMem - freeMem, totalBytes: totalMem },
+            cpu: { cores: os.cpus().length, percent: s?.cpu ?? 0 },
+            ram: {
+                usedBytes: s?.ramUsed ?? totalMem - freeMem,
+                totalBytes: s?.ramTotal ?? totalMem,
+            },
             disk: diskStats,
-            net: netStats,
+            net: {
+                rxBytesPerSec: s?.rxBps ?? 0,
+                txBytesPerSec: s?.txBps ?? 0,
+            },
         });
+    });
+
+    app.get('/api/metrics/history', (_req, res) => {
+        res.json(metricsHistory);
     });
 }

@@ -137,6 +137,15 @@ export interface SystemMetrics {
     net: { rxBytesPerSec: number; txBytesPerSec: number };
 }
 
+export interface MetricSample {
+    ts: number;
+    cpu: number;
+    ramUsed: number;
+    ramTotal: number;
+    rxBps: number;
+    txBps: number;
+}
+
 export interface PipelineView {
     id: string;
     name: string;
