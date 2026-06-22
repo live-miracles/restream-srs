@@ -697,8 +697,11 @@ export async function showSrsLogs(): Promise<void> {
     html +=
         '<p class="text-xs font-semibold uppercase opacity-50 mt-4 mb-2">SRS Output (last 200 lines)</p>';
     if (data.logTail.length === 0) {
-        html +=
-            '<p class="text-sm opacity-50">No SRS log file found. SRS may not have been started yet, or is still logging to console.</p>';
+        const msg =
+            data.logFileExists === false
+                ? 'SRS log file not found. SRS may not have been started yet.'
+                : 'SRS log file is empty — no log output yet.';
+        html += `<p class="text-sm opacity-50">${msg}</p>`;
     } else {
         html += `<pre class="opacity-70 whitespace-pre-wrap break-all">${data.logTail.map(esc).join('\n')}</pre>`;
     }

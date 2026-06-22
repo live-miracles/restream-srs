@@ -8,7 +8,7 @@ import type { SrsEvent } from '../services/health.js';
 const MAX_LOG_READ_BYTES = 100 * 1024;
 const MAX_LOG_TAIL_LINES = 200;
 
-function readLogFileTail(maxLines: number): string[] {
+function readLogFileTail(maxLines: number): { lines: string[]; fileExists: boolean } {
     try {
         const fd = fs.openSync(SRS_LOG_PATH, 'r');
         const { size } = fs.fstatSync(fd);
@@ -16,13 +16,17 @@ function readLogFileTail(maxLines: number): string[] {
         const buf = Buffer.alloc(readLen);
         fs.readSync(fd, buf, 0, readLen, size - readLen);
         fs.closeSync(fd);
-        return buf
-            .toString('utf8')
-            .split('\n')
-            .filter((l) => l.trim())
-            .slice(-maxLines);
-    } catch {
-        return [];
+        return {
+            fileExists: true,
+            lines: buf
+                .toString('utf8')
+                .split('\n')
+                .filter((l) => l.trim())
+                .slice(-maxLines),
+        };
+    } catch (err: unknown) {
+        const isNotFound = (err as NodeJS.ErrnoException).code === 'ENOENT';
+        return { fileExists: !isNotFound, lines: [] };
     }
 }
 
@@ -46,6 +50,7 @@ export function registerSrsHooks(app: Express, db: Db): void {
 
 export function registerSrsLogsApi(app: Express, getSrsEvents: () => SrsEvent[]): void {
     app.get('/api/srs-logs', (_req, res) => {
-        res.json({ events: getSrsEvents(), logTail: readLogFileTail(MAX_LOG_TAIL_LINES) });
+        const { lines, fileExists } = readLogFileTail(MAX_LOG_TAIL_LINES);
+        res.json({ events: getSrsEvents(), logTail: lines, logFileExists: fileExists });
     });
 }

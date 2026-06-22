@@ -85,6 +85,7 @@ export interface SrsLogEvent {
 export interface SrsLogsData {
     events: SrsLogEvent[];
     logTail: string[];
+    logFileExists?: boolean;
 }
 
 export interface PipelineLog {
