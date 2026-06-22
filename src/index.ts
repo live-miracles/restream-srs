@@ -73,6 +73,7 @@ const publicDir = path.join(__dirname, '..', 'public');
 
 const serveIndexOrRedirect = (req: express.Request, res: express.Response): void => {
     if (checkIsAuthenticated(req)) {
+        res.setHeader('Cache-Control', 'no-store');
         res.sendFile(path.join(publicDir, 'index.html'));
     } else {
         res.redirect('/login');
@@ -86,11 +87,21 @@ app.get('/login', (req, res) => {
     if (checkIsAuthenticated(req)) {
         res.redirect('/');
     } else {
+        res.setHeader('Cache-Control', 'no-store');
         res.sendFile(path.join(publicDir, 'login.html'));
     }
 });
 
-app.use('/', express.static(publicDir));
+app.use(
+    '/',
+    express.static(publicDir, {
+        setHeaders(res, filePath) {
+            if (filePath.endsWith('.js') || filePath.endsWith('.css')) {
+                res.setHeader('Cache-Control', 'no-cache');
+            }
+        },
+    }),
+);
 
 async function main(): Promise<void> {
     writeSrsConf(db.getSetting('srtPassphrase') || null);
