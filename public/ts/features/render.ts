@@ -258,8 +258,8 @@ function drawChart(
         c.startsWith('rgb(')
             ? c.replace('rgb(', 'rgba(').replace(')', `, ${a})`)
             : `rgba(128,128,128,${a})`;
-    const gridColor = toRgba(base, 0.1);
-    const labelColor = toRgba(base, 0.45);
+    const gridColor = toRgba(base, 0.35);
+    const labelColor = toRgba(base, 0.9);
 
     ctx.font = '10px ui-monospace, monospace';
 
