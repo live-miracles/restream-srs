@@ -703,7 +703,7 @@ export async function showSrsLogs(): Promise<void> {
                 : 'SRS log file is empty — no log output yet.';
         html += `<p class="text-sm opacity-50">${msg}</p>`;
     } else {
-        html += `<pre class="opacity-70 whitespace-pre-wrap break-all">${data.logTail.map(esc).join('\n')}</pre>`;
+        html += `<pre class="opacity-70 whitespace-pre-wrap break-all">${[...data.logTail].reverse().map(esc).join('\n')}</pre>`;
     }
 
     contentEl.innerHTML = html;

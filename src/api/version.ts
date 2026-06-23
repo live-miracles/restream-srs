@@ -51,8 +51,9 @@ export function registerVersionApi(app: Express): void {
     app.get('/api/version', async (_req, res) => {
         if (cached) return res.json(cached);
 
-        const [commitLine, srs, ffmpegOut] = await Promise.all([
+        const [commitLine, commitDate, srs, ffmpegOut] = await Promise.all([
             exec('git', ['log', '-1', '--format=%h %s']),
+            exec('git', ['log', '-1', '--format=%ci']),
             getSrsVersion(),
             exec('ffmpeg', ['-version']),
         ]);
@@ -60,8 +61,9 @@ export function registerVersionApi(app: Express): void {
         const ffmpegLine = ffmpegOut.split('\n')[0] ?? '';
         const ffmpeg = ffmpegLine.replace(/^ffmpeg version /, '').split(' ')[0] || 'unknown';
 
+        const date = commitDate.split(' ')[0] || '';
         cached = {
-            commit: commitLine || 'unknown',
+            commit: date ? `${date} ${commitLine}` : commitLine || 'unknown',
             srs: srs || 'unknown',
             ffmpeg,
             os: readOsRelease(),
