@@ -42,17 +42,13 @@ touch "$DATA_DIR/db.sqlite"
 if [[ ! -f "$CONF_DIR/srs.conf" ]]; then
     cp "$APP_DIR/srs.conf" "$CONF_DIR/srs.conf"
 fi
-# Always enforce log settings. Delete existing directives (may be absent or
-# wrong) then re-insert after the global 'listen' line so they land in the
-# correct scope regardless of what the conf previously contained.
+# Patch in server-specific log paths (not in the repo's srs.conf).
 sed -i '/^[[:space:]]*srs_log_tank[[:space:]]/d; /^[[:space:]]*srs_log_file[[:space:]]/d' "$CONF_DIR/srs.conf"
 sed -i "/^listen/a srs_log_tank        file;\nsrs_log_file        $LOG_DIR/srs.log;" "$CONF_DIR/srs.conf"
 chown "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR" "$DATA_DIR/objs" "$LOG_DIR" "$CONF_DIR" "$DATA_DIR/db.sqlite" "$CONF_DIR/srs.conf"
 
 echo
 echo "=== Restart services ==="
-# srs.conf only changes when the SRT passphrase changes, so there is no
-# start-order dependency between SRS and the app.
 systemctl restart srs.service restream-srs.service
 
 echo

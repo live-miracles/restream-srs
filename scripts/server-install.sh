@@ -149,12 +149,8 @@ chown -R "$SERVICE_USER:$SERVICE_USER" "$APP_DIR"
 echo "Build complete."
 
 step "7/9 Config and data"
-if [[ ! -f "$CONF_DIR/srs.conf" ]]; then
-    cp "$APP_DIR/srs.conf" "$CONF_DIR/srs.conf"
-fi
-# Always enforce log settings. Delete existing directives (may be absent or
-# wrong) then re-insert after the global 'listen' line so they land in the
-# correct scope regardless of what the conf previously contained.
+cp "$APP_DIR/srs.conf" "$CONF_DIR/srs.conf"
+# Patch in server-specific log paths (not in the repo's srs.conf).
 sed -i '/^[[:space:]]*srs_log_tank[[:space:]]/d; /^[[:space:]]*srs_log_file[[:space:]]/d' "$CONF_DIR/srs.conf"
 sed -i "/^listen/a srs_log_tank        file;\nsrs_log_file        $LOG_DIR/srs.log;" "$CONF_DIR/srs.conf"
 # Database. We don't run data migrations, so a db.sqlite left over from an older
@@ -270,8 +266,6 @@ EOF
 
 systemctl daemon-reload
 systemctl enable srs.service restream-srs.service
-# srs.conf was provisioned above (step 7) and is rewritten only when the SRT
-# passphrase changes, so SRS and the app have no start-order dependency.
 systemctl restart srs.service restream-srs.service
 
 echo
