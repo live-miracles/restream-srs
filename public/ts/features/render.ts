@@ -738,6 +738,15 @@ function renderOutputsList(pipeline: PipelineView): void {
     const listEl = document.getElementById('outputs-list');
     if (!listEl) return;
 
+    const hasActive = pipeline.outs.some((o) => o.desiredState !== 'stopped');
+    const pasteBtn = document.getElementById('outputs-paste-btn');
+    pasteBtn?.classList.toggle('btn-disabled', hasActive);
+    pasteBtn?.classList.toggle('opacity-40', hasActive);
+    if (pasteBtn)
+        pasteBtn.title = hasActive
+            ? 'Stop all outputs before pasting'
+            : 'Paste outputs from clipboard';
+
     if (pipeline.outs.length === 0) {
         listEl.innerHTML = '<p class="text-sm opacity-50">No outputs yet.</p>';
         return;

@@ -38,7 +38,7 @@ function setLoading(active: boolean): void {
     }
 }
 
-function showError(msg: unknown): void {
+export function showError(msg: unknown): void {
     const el = document.getElementById('error-msg');
     const alert = document.getElementById('error-alert');
     if (el) el.textContent = String(msg);

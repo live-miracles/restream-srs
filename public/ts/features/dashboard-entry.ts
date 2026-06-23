@@ -17,6 +17,8 @@ import {
     addSinkRow,
     removeSinkRow,
     onSinkServerChange,
+    copyOutputs,
+    pasteOutputs,
 } from './editor.js';
 
 declare global {
@@ -33,6 +35,8 @@ declare global {
         deletePipeBtn: (btn?: HTMLButtonElement) => Promise<void>;
         pipeHistoryBtn: () => Promise<void>;
         addOutBtn: () => void;
+        outputsCopyBtn: () => Promise<void>;
+        outputsPasteBtn: () => Promise<void>;
         outFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
         outAddSink: () => void;
         outRemoveSink: (btn: HTMLElement) => void;
@@ -87,6 +91,16 @@ window.pipeHistoryBtn = async () => {
 window.addOutBtn = () => {
     const id = getUrlParam('p');
     if (id) openAddOutput(id);
+};
+
+window.outputsCopyBtn = async () => {
+    const id = getUrlParam('p');
+    if (id) await copyOutputs(id);
+};
+
+window.outputsPasteBtn = async () => {
+    const id = getUrlParam('p');
+    if (id) await pasteOutputs(id);
 };
 
 window.outFormBtn = (btn) => submitOutputForm(btn);

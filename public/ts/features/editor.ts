@@ -1,6 +1,6 @@
 import * as api from '../core/api.js';
 import { state } from '../core/state.js';
-import { setUrlParam, maskStreamKey, withBusy } from '../core/utils.js';
+import { setUrlParam, maskStreamKey, withBusy, copyText } from '../core/utils.js';
 import { refreshAfterMutation } from './dashboard.js';
 import type { StreamKey, AudioTrackInfo } from '../types.js';
 
@@ -708,4 +708,117 @@ export async function showSrsLogs(): Promise<void> {
 
     contentEl.innerHTML = html;
     contentEl.scrollTop = 0;
+}
+
+// ── Output copy / paste ───────────────────────────────
+
+function parseOutputsPayload(
+    text: string,
+):
+    | { name: string; videoEncoding: string; sinks: { url: string; audioEncoding: string }[] }[]
+    | null {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(text);
+    } catch {
+        api.showError('Clipboard content is not valid JSON.');
+        return null;
+    }
+    if (!Array.isArray(parsed)) {
+        api.showError('Expected a JSON array of outputs.');
+        return null;
+    }
+    const outputs: {
+        name: string;
+        videoEncoding: string;
+        sinks: { url: string; audioEncoding: string }[];
+    }[] = [];
+    for (const item of parsed) {
+        if (!item || typeof item !== 'object') {
+            api.showError('Invalid output format in clipboard.');
+            return null;
+        }
+        const { name, videoEncoding, sinks } = item as Record<string, unknown>;
+        if (typeof name !== 'string' || !name.trim()) {
+            api.showError('Each output must have a non-empty name.');
+            return null;
+        }
+        if (typeof videoEncoding !== 'string') {
+            api.showError('Each output must have a videoEncoding.');
+            return null;
+        }
+        if (!Array.isArray(sinks) || sinks.length === 0) {
+            api.showError('Each output must have at least one sink.');
+            return null;
+        }
+        const validSinks: { url: string; audioEncoding: string }[] = [];
+        for (const sink of sinks) {
+            if (!sink || typeof sink !== 'object') {
+                api.showError('Invalid sink format in clipboard.');
+                return null;
+            }
+            const { url, audioEncoding } = sink as Record<string, unknown>;
+            if (typeof url !== 'string' || !url.trim()) {
+                api.showError('Each sink must have a non-empty url.');
+                return null;
+            }
+            if (typeof audioEncoding !== 'string') {
+                api.showError('Each sink must have an audioEncoding.');
+                return null;
+            }
+            validSinks.push({ url, audioEncoding });
+        }
+        outputs.push({ name: name.trim(), videoEncoding, sinks: validSinks });
+    }
+    if (outputs.length === 0) {
+        api.showError('No outputs found in clipboard.');
+        return null;
+    }
+    return outputs;
+}
+
+export async function copyOutputs(pipelineId: string): Promise<void> {
+    const outputs = (state.config.outputs ?? [])
+        .filter((o) => String(o.pipelineId) === pipelineId)
+        .map(({ name, videoEncoding, sinks }) => ({
+            name,
+            videoEncoding,
+            sinks: sinks.map(({ url, audioEncoding }) => ({ url, audioEncoding })),
+        }));
+    await copyText(JSON.stringify(outputs, null, 2));
+}
+
+export async function pasteOutputs(pipelineId: string): Promise<void> {
+    if (
+        !confirm(
+            'Replace all outputs for this pipeline with the clipboard contents? This cannot be undone.',
+        )
+    )
+        return;
+
+    let text: string;
+    try {
+        text = await navigator.clipboard.readText();
+    } catch {
+        api.showError('Could not read clipboard. Please allow clipboard access.');
+        return;
+    }
+
+    const outputs = parseOutputsPayload(text);
+    if (!outputs) return;
+
+    const existingOutputs = (state.config.outputs ?? []).filter(
+        (o) => String(o.pipelineId) === pipelineId,
+    );
+    for (const o of existingOutputs) {
+        const ok = await api.deleteOutput(pipelineId, o.id);
+        if (!ok) return;
+    }
+
+    for (const output of outputs) {
+        const ok = await api.createOutput(pipelineId, output);
+        if (!ok) return;
+    }
+
+    await refreshAfterMutation();
 }
