@@ -2,3 +2,8 @@
 @plugin 'daisyui' {
     themes: dim;
 }
+
+#overview-col .table th:first-child,
+#overview-col .table td:first-child {
+    min-width: 11rem;
+}

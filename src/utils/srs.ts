@@ -76,6 +76,7 @@ export async function kickSrsClientsByStream(app: string, stream: string): Promi
 export async function fetchSrsStreams(): Promise<SrsStream[]> {
     const res = await fetch(`${SRS_API_URL}/api/v1/streams/`, {
         signal: AbortSignal.timeout(SRS_STREAMS_FETCH_TIMEOUT_MS),
+        headers: { Connection: 'close' },
     });
     if (!res.ok) throw new Error(`SRS API ${res.status}`);
     const data = (await res.json()) as { code: number; streams: SrsStream[] };
