@@ -150,7 +150,28 @@ chown -R "$SERVICE_USER:$SERVICE_USER" "$APP_DIR"
 echo "Build complete."
 
 step "7/9 Config and data"
-cp "$APP_DIR/srs.conf" "$CONF_DIR/srs.conf"
+if [[ ! -f "$CONF_DIR/srs.conf" ]]; then
+    cp "$APP_DIR/srs.conf" "$CONF_DIR/srs.conf"
+    echo "Config: created $CONF_DIR/srs.conf"
+else
+    regen_conf=no
+    case "${REGEN_CONF:-}" in
+        y | Y) regen_conf=yes ;;
+        n | N) regen_conf=no ;;
+        *)
+            if [[ -t 0 ]]; then
+                read -rp "Existing srs.conf found. Regenerate from template? This resets SRT passphrase and other manual edits. [y/N] " reply
+                [[ "$reply" == "y" || "$reply" == "Y" ]] && regen_conf=yes
+            fi
+            ;;
+    esac
+    if [[ "$regen_conf" == "yes" ]]; then
+        cp "$APP_DIR/srs.conf" "$CONF_DIR/srs.conf"
+        echo "Config: regenerated $CONF_DIR/srs.conf from template"
+    else
+        echo "Config: keeping existing $CONF_DIR/srs.conf"
+    fi
+fi
 # Patch in server-specific log paths (not in the repo's srs.conf).
 sed -i '/^[[:space:]]*srs_log_tank[[:space:]]/d; /^[[:space:]]*srs_log_file[[:space:]]/d' "$CONF_DIR/srs.conf"
 sed -i "/^listen/a srs_log_tank        file;\nsrs_log_file        $LOG_DIR/srs.log;" "$CONF_DIR/srs.conf"
