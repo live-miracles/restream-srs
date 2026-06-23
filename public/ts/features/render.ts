@@ -842,7 +842,12 @@ export function renderMetrics(): void {
     const ram = m.ram ?? null;
     const disk = m.disk ?? null;
     const net = m.net ?? null;
+    const uptimeSecs = m.uptimeSeconds ?? null;
 
+    setInnerText(
+        'navbar-uptime',
+        uptimeSecs !== null ? `Up ${formatUptime(uptimeSecs * 1000)}` : 'Up —',
+    );
     setInnerText('navbar-cpu-value', cpu ? `${cpu.cores}c CPU: ${cpu.percent}%` : 'CPU —');
     setInnerText(
         'navbar-ram-value',

@@ -139,6 +139,7 @@ export function registerMetricsApi(app: Express): void {
                 rxBytesPerSec: s?.rxBps ?? 0,
                 txBytesPerSec: s?.txBps ?? 0,
             },
+            uptimeSeconds: process.uptime(),
         });
     });
 

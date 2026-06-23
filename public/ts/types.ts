@@ -136,6 +136,7 @@ export interface SystemMetrics {
     ram: { usedBytes: number; totalBytes: number };
     disk: { totalBytes: number; usedBytes: number } | null;
     net: { rxBytesPerSec: number; txBytesPerSec: number };
+    uptimeSeconds?: number;
 }
 
 export interface MetricSample {
