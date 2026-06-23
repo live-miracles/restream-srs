@@ -78,7 +78,7 @@ sudo bash /opt/restream-srs/scripts/server-install.sh
 
 **Update an installed server:**
 ```bash
-sudo bash /opt/restream-srs/scripts/server-update.sh
+sudo bash /opt/restream-srs/scripts/server-install.sh
 ```
 
 **Stop services:**

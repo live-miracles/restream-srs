@@ -138,8 +138,9 @@ step "6/9 Application"
 if [[ ! -d "$APP_DIR/.git" ]]; then
     git clone "$REPO_URL" "$APP_DIR"
 else
-    echo "Repository already present at $APP_DIR, skipping clone."
-    echo "(To pull and deploy newer code, use scripts/server-update.sh instead.)"
+    echo "Repository already present at $APP_DIR, pulling latest code."
+    sudo -u "$SERVICE_USER" git -C "$APP_DIR" fetch origin
+    sudo -u "$SERVICE_USER" git -C "$APP_DIR" reset --hard '@{u}'
 fi
 cd "$APP_DIR"
 npm ci
@@ -292,4 +293,4 @@ echo "  journalctl -u restream-srs.service -f"
 echo "  journalctl -u srs.service -f"
 echo ""
 echo "Update later:"
-echo "  sudo bash $APP_DIR/scripts/server-update.sh"
+echo "  sudo bash $APP_DIR/scripts/server-install.sh"
