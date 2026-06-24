@@ -76,6 +76,7 @@ export interface Db {
     ): Output | null;
     setOutputDesiredState(id: string, desiredState: 'running' | 'stopped'): Output | null;
     deleteOutput(id: string): boolean;
+    deleteOutputsForPipeline(pipelineId: number): void;
 
     setOutputLastError(id: string, message: string): void;
     clearOutputLastError(id: string): void;

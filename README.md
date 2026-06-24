@@ -206,8 +206,10 @@ RTMP input → RTMP pull), so there is no pull-method setting.
 | POST | `/api/pipelines/:id/preview/start` | Start an HLS preview `{ audioTrack? }` |
 | POST | `/api/pipelines/:id/preview/stop` | Stop the HLS preview |
 | POST | `/api/pipelines/:id/outputs` | Create output `{ name, videoEncoding, sinks: [{ url, audioEncoding }] }` |
+| POST | `/api/pipelines/:id/outputs/bulk` | Bulk create outputs `{ outputs: [{ name, videoEncoding, sinks }] }` — validates all before creating any |
+| DELETE | `/api/pipelines/:id/outputs` | Clear all outputs for the pipeline — returns 409 if any output is still running |
 | POST | `/api/pipelines/:id/outputs/:outId` | Update output (same body as create) |
-| DELETE | `/api/pipelines/:id/outputs/:outId` | Delete output |
+| DELETE | `/api/pipelines/:id/outputs/:outId` | Delete output (stops it first if running) |
 | POST | `/api/pipelines/:id/outputs/:outId/start` | Start output |
 | POST | `/api/pipelines/:id/outputs/:outId/stop` | Stop output |
 | POST | `/api/settings` | Update settings `{ name, srtPassphrase, publicHost }` |

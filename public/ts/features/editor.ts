@@ -788,7 +788,7 @@ export async function copyOutputs(pipelineId: string): Promise<void> {
     await copyText(JSON.stringify(outputs, null, 2));
 }
 
-export async function pasteOutputs(pipelineId: string): Promise<void> {
+export async function pasteOutputs(pipelineId: string, btn: HTMLButtonElement): Promise<void> {
     if (
         !confirm(
             'Replace all outputs for this pipeline with the clipboard contents? This cannot be undone.',
@@ -807,18 +807,13 @@ export async function pasteOutputs(pipelineId: string): Promise<void> {
     const outputs = parseOutputsPayload(text);
     if (!outputs) return;
 
-    const existingOutputs = (state.config.outputs ?? []).filter(
-        (o) => String(o.pipelineId) === pipelineId,
-    );
-    for (const o of existingOutputs) {
-        const ok = await api.deleteOutput(pipelineId, o.id);
-        if (!ok) return;
-    }
+    await withBusy(btn, async () => {
+        const cleared = await api.clearOutputs(pipelineId);
+        if (!cleared) return;
 
-    for (const output of outputs) {
-        const ok = await api.createOutput(pipelineId, output);
-        if (!ok) return;
-    }
+        const created = await api.createOutputsBulk(pipelineId, outputs);
+        if (!created) return;
 
-    await refreshAfterMutation();
+        await refreshAfterMutation();
+    });
 }

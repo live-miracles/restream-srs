@@ -57,6 +57,34 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
         return res.status(201).json(output);
     });
 
+    app.post('/api/pipelines/:pipelineId/outputs/bulk', (req, res) => {
+        const pipelineId = parseInt(req.params.pipelineId);
+        if (isNaN(pipelineId)) return res.status(400).json({ error: 'invalid pipelineId' });
+        if (!db.getPipeline(pipelineId))
+            return res.status(404).json({ error: 'Pipeline not found' });
+
+        const rawOutputs = req.body?.outputs;
+        if (!Array.isArray(rawOutputs) || rawOutputs.length === 0)
+            return res.status(400).json({ error: 'outputs array is required' });
+
+        const validated: { name: string; videoEncoding: string; sinks: SinkInput[] }[] = [];
+        for (const item of rawOutputs) {
+            const name = (item?.name as string | undefined)?.trim();
+            const videoEncoding = (item?.videoEncoding as string | undefined)?.trim() || 'copy';
+            const parsed = parseSinks(item?.sinks);
+
+            if (!name) return res.status(400).json({ error: 'each output must have a name' });
+            if (!ENCODINGS[videoEncoding])
+                return res.status(400).json({ error: `unknown videoEncoding: ${videoEncoding}` });
+            if ('error' in parsed) return res.status(400).json({ error: parsed.error });
+
+            validated.push({ name, videoEncoding, sinks: parsed.sinks });
+        }
+
+        const created = validated.map((v) => db.createOutput({ pipelineId, ...v }));
+        return res.status(201).json(created);
+    });
+
     app.post('/api/pipelines/:pipelineId/outputs/:outId', (req, res) => {
         const { pipelineId, outId } = req.params;
         const output = db.getOutput(outId);
@@ -80,6 +108,25 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
             sinks: parsed.sinks,
         });
         return res.json(updated);
+    });
+
+    app.delete('/api/pipelines/:pipelineId/outputs', (req, res) => {
+        const pipelineId = parseInt(req.params.pipelineId);
+        if (isNaN(pipelineId)) return res.status(400).json({ error: 'invalid pipelineId' });
+        if (!db.getPipeline(pipelineId))
+            return res.status(404).json({ error: 'Pipeline not found' });
+
+        const outputs = db.listOutputsForPipeline(pipelineId);
+        for (const o of outputs) {
+            if (o.desiredState !== 'stopped' || outputService.getStats(o.id).status === 'running') {
+                return res.status(409).json({
+                    error: `Output "${o.name}" is still running. Stop all outputs before clearing.`,
+                });
+            }
+        }
+
+        db.deleteOutputsForPipeline(pipelineId);
+        return res.json({ ok: true });
     });
 
     app.delete('/api/pipelines/:pipelineId/outputs/:outId', async (req, res) => {

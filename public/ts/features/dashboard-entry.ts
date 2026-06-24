@@ -100,7 +100,8 @@ window.outputsCopyBtn = async () => {
 
 window.outputsPasteBtn = async () => {
     const id = getUrlParam('p');
-    if (id) await pasteOutputs(id);
+    const btn = document.getElementById('outputs-paste-btn') as HTMLButtonElement | null;
+    if (id && btn) await pasteOutputs(id, btn);
 };
 
 window.outFormBtn = (btn) => submitOutputForm(btn);

@@ -103,6 +103,9 @@ export function createDb(dbPath?: string): Db {
     const stmtInsertSink = sqlite.prepare(
         'INSERT INTO output_sinks (id, output_id, seq, url, audio_encoding) VALUES (?, ?, ?, ?, ?)',
     );
+    const stmtDeleteOutputsForPipeline = sqlite.prepare(
+        'DELETE FROM outputs WHERE pipeline_id = ?',
+    );
     const stmtSetLastError = sqlite.prepare('UPDATE outputs SET last_error = ? WHERE id = ?');
     const stmtClearLastError = sqlite.prepare('UPDATE outputs SET last_error = NULL WHERE id = ?');
     const stmtInsertPipelineLog = sqlite.prepare(
@@ -386,6 +389,11 @@ export function createDb(dbPath?: string): Db {
             const result = sqlite.prepare('DELETE FROM outputs WHERE id = ?').run(id);
             if (result.changes > 0) bumpConfigRev();
             return result.changes > 0;
+        },
+
+        deleteOutputsForPipeline(pipelineId: number): void {
+            const result = stmtDeleteOutputsForPipeline.run(pipelineId);
+            if (result.changes > 0) bumpConfigRev();
         },
 
         setOutputLastError(id: string, message: string): void {

@@ -109,6 +109,12 @@ export const updateOutput = (pipelineId: string, outId: string, data: OutputPayl
 export const deleteOutput = (pipelineId: string, outId: string) =>
     apiRequest(`/api/pipelines/${pipelineId}/outputs/${outId}`, { method: 'DELETE' });
 
+export const clearOutputs = (pipelineId: string) =>
+    apiRequest(`/api/pipelines/${pipelineId}/outputs`, { method: 'DELETE' });
+
+export const createOutputsBulk = (pipelineId: string, outputs: OutputPayload[]) =>
+    apiRequest(`/api/pipelines/${pipelineId}/outputs/bulk`, { method: 'POST', body: { outputs } });
+
 export const startOutput = (pipelineId: string, outId: string) =>
     apiRequest(`/api/pipelines/${pipelineId}/outputs/${outId}/start`, { method: 'POST' });
 
