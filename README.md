@@ -210,6 +210,8 @@ RTMP input → RTMP pull), so there is no pull-method setting.
 | DELETE | `/api/pipelines/:id/outputs` | Clear all outputs for the pipeline — returns 409 if any output is still running |
 | POST | `/api/pipelines/:id/outputs/:outId` | Update output (same body as create) |
 | DELETE | `/api/pipelines/:id/outputs/:outId` | Delete output (stops it first if running) |
+| POST | `/api/pipelines/:id/outputs/start-all` | Start all outputs (staggered at 200 ms intervals, returns immediately) |
+| POST | `/api/pipelines/:id/outputs/stop-all` | Stop all outputs |
 | POST | `/api/pipelines/:id/outputs/:outId/start` | Start output |
 | POST | `/api/pipelines/:id/outputs/:outId/stop` | Stop output |
 | POST | `/api/settings` | Update settings `{ name, srtPassphrase, publicHost }` |

@@ -739,6 +739,11 @@ function renderOutputsList(pipeline: PipelineView): void {
     if (!listEl) return;
 
     const hasActive = pipeline.outs.some((o) => o.desiredState !== 'stopped');
+    const noStopped =
+        pipeline.outs.length === 0 || pipeline.outs.every((o) => o.desiredState !== 'stopped');
+    const allStopped =
+        pipeline.outs.length === 0 || pipeline.outs.every((o) => o.desiredState === 'stopped');
+
     const pasteBtn = document.getElementById('outputs-paste-btn') as HTMLButtonElement | null;
     pasteBtn?.classList.toggle('btn-disabled', hasActive);
     pasteBtn?.classList.toggle('opacity-40', hasActive);
@@ -748,6 +753,18 @@ function renderOutputsList(pipeline: PipelineView): void {
             ? 'Stop all outputs before pasting'
             : 'Paste outputs from clipboard';
     }
+
+    const startAllBtn = document.getElementById(
+        'outputs-start-all-btn',
+    ) as HTMLButtonElement | null;
+    startAllBtn?.classList.toggle('btn-disabled', noStopped);
+    startAllBtn?.classList.toggle('opacity-40', noStopped);
+    if (startAllBtn) startAllBtn.disabled = noStopped;
+
+    const stopAllBtn = document.getElementById('outputs-stop-all-btn') as HTMLButtonElement | null;
+    stopAllBtn?.classList.toggle('btn-disabled', allStopped);
+    stopAllBtn?.classList.toggle('opacity-40', allStopped);
+    if (stopAllBtn) stopAllBtn.disabled = allStopped;
 
     if (pipeline.outs.length === 0) {
         listEl.innerHTML = '<p class="text-sm opacity-50">No outputs yet.</p>';

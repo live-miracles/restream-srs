@@ -19,6 +19,8 @@ import {
     onSinkServerChange,
     copyOutputs,
     pasteOutputs,
+    startAllOutputs,
+    stopAllOutputs,
 } from './editor.js';
 
 declare global {
@@ -37,6 +39,8 @@ declare global {
         addOutBtn: () => void;
         outputsCopyBtn: () => Promise<void>;
         outputsPasteBtn: () => Promise<void>;
+        outputsStartAllBtn: () => Promise<void>;
+        outputsStopAllBtn: () => Promise<void>;
         outFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
         outAddSink: () => void;
         outRemoveSink: (btn: HTMLElement) => void;
@@ -102,6 +106,18 @@ window.outputsPasteBtn = async () => {
     const id = getUrlParam('p');
     const btn = document.getElementById('outputs-paste-btn') as HTMLButtonElement | null;
     if (id && btn) await pasteOutputs(id, btn);
+};
+
+window.outputsStartAllBtn = async () => {
+    const id = getUrlParam('p');
+    const btn = document.getElementById('outputs-start-all-btn') as HTMLButtonElement | null;
+    if (id && btn) await startAllOutputs(id, btn);
+};
+
+window.outputsStopAllBtn = async () => {
+    const id = getUrlParam('p');
+    const btn = document.getElementById('outputs-stop-all-btn') as HTMLButtonElement | null;
+    if (id && btn) await stopAllOutputs(id, btn);
 };
 
 window.outFormBtn = (btn) => submitOutputForm(btn);

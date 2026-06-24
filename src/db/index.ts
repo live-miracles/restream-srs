@@ -106,6 +106,12 @@ export function createDb(dbPath?: string): Db {
     const stmtDeleteOutputsForPipeline = sqlite.prepare(
         'DELETE FROM outputs WHERE pipeline_id = ?',
     );
+    const stmtSetDesiredStateForPipeline = sqlite.prepare(
+        'UPDATE outputs SET desired_state = ? WHERE pipeline_id = ?',
+    );
+    const stmtClearLastErrorsForPipeline = sqlite.prepare(
+        'UPDATE outputs SET last_error = NULL WHERE pipeline_id = ?',
+    );
     const stmtSetLastError = sqlite.prepare('UPDATE outputs SET last_error = ? WHERE id = ?');
     const stmtClearLastError = sqlite.prepare('UPDATE outputs SET last_error = NULL WHERE id = ?');
     const stmtInsertPipelineLog = sqlite.prepare(
@@ -394,6 +400,15 @@ export function createDb(dbPath?: string): Db {
         deleteOutputsForPipeline(pipelineId: number): void {
             const result = stmtDeleteOutputsForPipeline.run(pipelineId);
             if (result.changes > 0) bumpConfigRev();
+        },
+
+        setDesiredStateForPipeline(pipelineId: number, state: 'running' | 'stopped'): void {
+            const result = stmtSetDesiredStateForPipeline.run(state, pipelineId);
+            if (result.changes > 0) bumpConfigRev();
+        },
+
+        clearLastErrorsForPipeline(pipelineId: number): void {
+            stmtClearLastErrorsForPipeline.run(pipelineId);
         },
 
         setOutputLastError(id: string, message: string): void {

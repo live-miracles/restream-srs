@@ -777,6 +777,29 @@ function parseOutputsPayload(
     return outputs;
 }
 
+export async function startAllOutputs(pipelineId: string, btn: HTMLButtonElement): Promise<void> {
+    if (
+        !confirm(
+            'Start all outputs for this pipeline? They will start staggered to avoid overloading the server.',
+        )
+    )
+        return;
+    await withBusy(btn, async () => {
+        const ok = await api.startAllOutputs(pipelineId);
+        if (!ok) return;
+        await refreshAfterMutation();
+    });
+}
+
+export async function stopAllOutputs(pipelineId: string, btn: HTMLButtonElement): Promise<void> {
+    if (!confirm('Stop all outputs for this pipeline?')) return;
+    await withBusy(btn, async () => {
+        const ok = await api.stopAllOutputs(pipelineId);
+        if (!ok) return;
+        await refreshAfterMutation();
+    });
+}
+
 export async function copyOutputs(pipelineId: string): Promise<void> {
     const outputs = (state.config.outputs ?? [])
         .filter((o) => String(o.pipelineId) === pipelineId)

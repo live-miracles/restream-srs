@@ -115,6 +115,12 @@ export const clearOutputs = (pipelineId: string) =>
 export const createOutputsBulk = (pipelineId: string, outputs: OutputPayload[]) =>
     apiRequest(`/api/pipelines/${pipelineId}/outputs/bulk`, { method: 'POST', body: { outputs } });
 
+export const startAllOutputs = (pipelineId: string) =>
+    apiRequest(`/api/pipelines/${pipelineId}/outputs/start-all`, { method: 'POST' });
+
+export const stopAllOutputs = (pipelineId: string) =>
+    apiRequest(`/api/pipelines/${pipelineId}/outputs/stop-all`, { method: 'POST' });
+
 export const startOutput = (pipelineId: string, outId: string) =>
     apiRequest(`/api/pipelines/${pipelineId}/outputs/${outId}/start`, { method: 'POST' });
 

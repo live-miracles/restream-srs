@@ -85,6 +85,30 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
         return res.status(201).json(created);
     });
 
+    app.post('/api/pipelines/:pipelineId/outputs/start-all', (req, res) => {
+        const pipelineId = parseInt(req.params.pipelineId);
+        if (isNaN(pipelineId)) return res.status(400).json({ error: 'invalid pipelineId' });
+        if (!db.getPipeline(pipelineId))
+            return res.status(404).json({ error: 'Pipeline not found' });
+
+        db.setDesiredStateForPipeline(pipelineId, 'running');
+        db.clearLastErrorsForPipeline(pipelineId);
+        const scheduled = outputService.restartPipelineOutputs(pipelineId);
+        return res.json({ ok: true, scheduled });
+    });
+
+    app.post('/api/pipelines/:pipelineId/outputs/stop-all', (req, res) => {
+        const pipelineId = parseInt(req.params.pipelineId);
+        if (isNaN(pipelineId)) return res.status(400).json({ error: 'invalid pipelineId' });
+        if (!db.getPipeline(pipelineId))
+            return res.status(404).json({ error: 'Pipeline not found' });
+
+        const outputs = db.listOutputsForPipeline(pipelineId);
+        db.setDesiredStateForPipeline(pipelineId, 'stopped');
+        for (const o of outputs) outputService.stop(o.id);
+        return res.json({ ok: true });
+    });
+
     app.post('/api/pipelines/:pipelineId/outputs/:outId', (req, res) => {
         const { pipelineId, outId } = req.params;
         const output = db.getOutput(outId);
