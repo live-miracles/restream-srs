@@ -212,7 +212,8 @@ function renderInputStats(input: InputHealth): string {
     `;
 }
 
-const CHART_WINDOW_MS = 30 * 60 * 1000;
+const CHART_WINDOW_MS = 15 * 60 * 1000;
+const CHART_SCROLL_STEP_MS = 10 * 60 * 1000;
 
 function roundUpNice(v: number): number {
     if (v <= 0) return 1;
@@ -295,7 +296,7 @@ function drawChart(
     const lastTs = samples[samples.length - 1].ts;
     const spanMs = lastTs - firstTs;
     const spanMin = spanMs / 60_000;
-    const stepMin = spanMin <= 10 ? 1 : spanMin <= 30 ? 5 : 10;
+    const stepMin = spanMin <= 30 ? 1 : 5;
     const stepMs = stepMin * 60_000;
     const firstLabel = Math.ceil(firstTs / stepMs) * stepMs;
 
@@ -474,12 +475,37 @@ function renderOverview(): void {
     const thead = (cols: string[]) =>
         `<thead><tr>${cols.map((c) => `<th>${c}</th>`).join('')}</tr></thead>`;
 
-    const cutoff = Date.now() - CHART_WINDOW_MS;
-    const chartSamples = state.metricsHistory.filter((s) => s.ts >= cutoff);
+    const offset = state.chartOffsetMs;
+    const windowEnd = Date.now() - offset;
+    const windowStart = windowEnd - CHART_WINDOW_MS;
+    const chartSamples = state.metricsHistory.filter(
+        (s) => s.ts >= windowStart && s.ts <= windowEnd,
+    );
     const last = chartSamples[chartSamples.length - 1];
     const fmtMbps = (bps: number) => `${((bps * 8) / 1_000_000).toFixed(1)} Mb/s`;
 
-    const chartsHtml = `<div class="mb-6 grid grid-cols-2 gap-4">
+    const oldest = state.metricsHistory[0];
+    const maxOffset = oldest ? Math.max(0, Date.now() - oldest.ts - CHART_WINDOW_MS) : 0;
+    const atLive = offset === 0;
+    const atStart = offset >= maxOffset && maxOffset > 0;
+
+    const fmtTs = (ts: number) => {
+        const d = new Date(ts);
+        return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+    };
+    const rangeLabel = `<span class="inline-flex justify-center w-28">${
+        atLive
+            ? `<span class="badge badge-success badge-xs gap-1">LIVE</span>`
+            : `<span class="font-mono text-xs opacity-60">${fmtTs(windowStart)} – ${fmtTs(windowEnd)}</span>`
+    }</span>`;
+
+    const chartsHtml = `
+    <div class="mb-2 flex items-center justify-center gap-2 px-1">
+        <button id="chart-back" class="btn btn-xs btn-ghost" ${atStart || maxOffset === 0 ? 'disabled' : ''}>&#8592; 10 min</button>
+        ${rangeLabel}
+        <button id="chart-fwd" class="btn btn-xs btn-ghost" ${atLive ? 'disabled' : ''}>10 min &#8594;</button>
+    </div>
+    <div class="mb-6 grid grid-cols-2 gap-4">
         ${chartCard('chart-cpu', 'CPU', last ? `${last.cpu}%` : '—')}
         ${chartCard('chart-ram', 'RAM', last ? `${Math.round((last.ramUsed / last.ramTotal) * 100)}%` : '—')}
         ${chartCard('chart-rx', 'Downlink', last ? fmtMbps(last.rxBps) : '—')}
@@ -516,6 +542,15 @@ function renderOverview(): void {
     );
     drawChart('chart-rx', chartSamples, (s) => (s.rxBps * 8) / 1_000_000, 0, '#22c55e', fmtMb);
     drawChart('chart-tx', chartSamples, (s) => (s.txBps * 8) / 1_000_000, 0, '#f97316', fmtMb);
+
+    document.getElementById('chart-back')?.addEventListener('click', () => {
+        state.chartOffsetMs = Math.min(state.chartOffsetMs + CHART_SCROLL_STEP_MS, maxOffset);
+        renderOverview();
+    });
+    document.getElementById('chart-fwd')?.addEventListener('click', () => {
+        state.chartOffsetMs = Math.max(0, state.chartOffsetMs - CHART_SCROLL_STEP_MS);
+        renderOverview();
+    });
 
     overviewEl.onclick = (e) => {
         const row = (e.target as Element).closest('.js-overview-select') as HTMLElement | null;

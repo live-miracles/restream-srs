@@ -14,6 +14,7 @@ export interface AppState {
     metrics: Partial<SystemMetrics>;
     metricsHistory: MetricSample[];
     streamKeys: StreamKey[];
+    chartOffsetMs: number;
 }
 
 export const state: AppState = {
@@ -23,4 +24,5 @@ export const state: AppState = {
     metrics: {},
     metricsHistory: [],
     streamKeys: [],
+    chartOffsetMs: 0,
 };
