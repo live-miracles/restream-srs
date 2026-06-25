@@ -4,9 +4,6 @@
 #
 # Usage:
 #   bash scripts/dev-server-install.sh
-#
-# Override version:
-#   SRS_VERSION=6.0-r0 bash scripts/dev-server-install.sh
 set -euo pipefail
 
 if [[ "$(uname -m)" != "x86_64" ]]; then
@@ -15,18 +12,14 @@ if [[ "$(uname -m)" != "x86_64" ]]; then
 fi
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-SRS_VERSION="${SRS_VERSION:-6.0-r0}"
 SRS_OUT="$REPO_DIR/objs/srs"
 
-SRS_ZIP="SRS-CentOS7-x86_64-${SRS_VERSION}.zip"
-SRS_URL_OVERRIDDEN="${SRS_URL+yes}"
-SRS_URL="${SRS_URL:-https://github.com/ossrs/srs/releases/download/v${SRS_VERSION}/${SRS_ZIP}}"
-# Pinned SHA256 for the default SRS build. Cleared (checksum skipped) when a
-# custom SRS_VERSION or SRS_URL is supplied, since the hash would no longer match.
-SRS_SHA256=""
-if [[ "$SRS_VERSION" == "6.0-r0" && -z "$SRS_URL_OVERRIDDEN" ]]; then
-    SRS_SHA256="1eb20245a76643b2d32a1be85e71015079689a0733a10f79964f9a8189c21609"
-fi
+# Patched SRS binary — keep in sync with SRS_RELEASE_TAG and SRS_SHA256 in server-install.sh.
+SRS_VERSION=6.0-r0
+SRS_RELEASE_TAG="srs-v6.0-r0-2"
+SRS_FILENAME="srs"
+SRS_SHA256="dd39f98b8886c443aa1ccd501260ea6ef7120a4c52fa2030e6dc6e7e4613cc53"
+SRS_URL="https://github.com/live-miracles/restream-srs/releases/download/${SRS_RELEASE_TAG}/${SRS_FILENAME}"
 
 # Verify a downloaded file against an expected SHA256 (sha256sum on Linux,
 # shasum on macOS). An empty expected hash skips the check.
@@ -70,44 +63,28 @@ if [[ -n "${SRS_LOCAL_BIN:-}" ]]; then
     exit 0
 fi
 
-if [[ -x "$SRS_OUT" && -f "$VERSION_MARKER" && "$(cat "$VERSION_MARKER")" == "$SRS_VERSION" ]]; then
-    echo "SRS $SRS_VERSION already installed at $SRS_OUT"
+if [[ -x "$SRS_OUT" && -f "$VERSION_MARKER" && "$(cat "$VERSION_MARKER")" == "$SRS_RELEASE_TAG" ]]; then
+    echo "SRS $SRS_VERSION ($SRS_RELEASE_TAG) already installed at $SRS_OUT"
     exit 0
 fi
 
-if ! command -v curl &>/dev/null && ! command -v wget &>/dev/null; then
-    echo "ERROR: curl or wget is required" >&2
-    exit 1
-fi
-if ! command -v unzip &>/dev/null; then
-    echo "ERROR: unzip is required (apt install unzip)" >&2
+if ! command -v curl &>/dev/null; then
+    echo "ERROR: curl is required" >&2
     exit 1
 fi
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-echo "Downloading SRS $SRS_VERSION..."
-if command -v curl &>/dev/null; then
-    curl -fsSL "$SRS_URL" -o "$WORK/$SRS_ZIP"
-else
-    wget -q "$SRS_URL" -O "$WORK/$SRS_ZIP"
-fi
+echo "Downloading SRS $SRS_VERSION ($SRS_RELEASE_TAG)..."
+curl -fsSL "$SRS_URL" -o "$WORK/$SRS_FILENAME"
 
-verify_sha256 "$WORK/$SRS_ZIP" "$SRS_SHA256"
+verify_sha256 "$WORK/$SRS_FILENAME" "$SRS_SHA256"
 
-unzip -q "$WORK/$SRS_ZIP" -d "$WORK/srs"
-# The zip root contains an init wrapper script also named 'srs'; the real
-# ELF binary lives deeper at usr/local/srs/objs/srs (~30 MB).
-SRS_BIN="$(find "$WORK/srs" -type f -path '*/usr/local/srs/objs/srs' | head -1)"
-if [[ -z "$SRS_BIN" ]]; then
-    echo "ERROR: could not find SRS binary in $SRS_ZIP" >&2
-    exit 1
-fi
-install -m 755 "$SRS_BIN" "$SRS_OUT"
-echo "$SRS_VERSION" > "$VERSION_MARKER"
+install -m 755 "$WORK/$SRS_FILENAME" "$SRS_OUT"
+echo "$SRS_RELEASE_TAG" > "$VERSION_MARKER"
 
-echo "Installed: $("$SRS_OUT" -v 2>&1 | head -1)"
+echo "Installed: $("$SRS_OUT" -v 2>&1 | head -1) ($SRS_RELEASE_TAG)"
 echo ""
 echo "Run SRS:  npm run srs"
 echo "Run app:  npm run dev"

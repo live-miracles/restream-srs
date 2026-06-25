@@ -8,14 +8,7 @@
 #   bash scripts/build-srs.sh
 #
 # Output:
-#   ./build/srs   — patched SRS binary, ready to copy to the server
-#
-# Install on the same machine (after build):
-#   sudo SRS_LOCAL_BIN=./build/srs bash scripts/server-install.sh
-#
-# Install on a remote server (copy binary first):
-#   scp ./build/srs user@server:/tmp/srs-bonding
-#   sudo SRS_LOCAL_BIN=/tmp/srs-bonding bash /opt/restream-srs/scripts/server-install.sh
+#   ./build/srs   — patched SRS binary, ready to publish as a GitHub release asset
 #
 # Build dependencies (Ubuntu/Debian):
 #   sudo apt-get install -y build-essential cmake git automake pkg-config
@@ -66,7 +59,7 @@ echo "Patch applied."
 
 step "Configure (SRT enabled)"
 cd "$SRS_SRC/trunk"
-./configure --srt=on
+./configure --srt=on --sanitizer=off
 
 step "Build (using $(nproc) cores)"
 make -j"$(nproc)"
@@ -82,7 +75,7 @@ echo "Binary: $OUT"
 echo "Version: $("$OUT" -v 2>&1 | head -1)"
 echo
 echo "Next step: publish $OUT as a GitHub release asset, then update"
-echo "  SRS_RELEASE_TAG, SRS_FILENAME, and SRS_SHA256 in scripts/server-install.sh"
+echo "  SRS_RELEASE_TAG and SRS_SHA256 in scripts/server-install.sh and scripts/dev-server-install.sh"
 echo
 echo "SHA256:"
 echo "  $(sha256sum "$OUT" | awk '{print $1}')  $OUT"

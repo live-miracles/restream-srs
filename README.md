@@ -253,7 +253,7 @@ gh auth login
 bash scripts/build-srs.sh
 
 # 2. Upload to GitHub releases (bump the tag for each new build)
-gh release create srs-v6.0-r0-1 "./build/srs#srs-linux-x86_64" \
+gh release create srs-v6.0-r0-1 "./build/srs" \
   --repo live-miracles/restream-srs \
   --title "SRS v6.0-r0 patched (SRT bonding)" \
   --notes "Patched SRS v6.0-r0 with SRT bonding support."
