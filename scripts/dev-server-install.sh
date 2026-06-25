@@ -54,6 +54,22 @@ verify_sha256() {
 mkdir -p "$REPO_DIR/objs"
 
 VERSION_MARKER="$REPO_DIR/objs/.srs-version"
+
+if [[ -n "${SRS_LOCAL_BIN:-}" ]]; then
+    # Install from a locally-built binary (e.g. built with SRT bonding patch via build-srs.sh).
+    if [[ ! -x "$SRS_LOCAL_BIN" ]]; then
+        echo "ERROR: SRS_LOCAL_BIN=$SRS_LOCAL_BIN is not executable" >&2
+        exit 1
+    fi
+    install -m 755 "$SRS_LOCAL_BIN" "$SRS_OUT"
+    echo "srt-bonding-${SRS_VERSION}" > "$VERSION_MARKER"
+    echo "Installed from local build: $("$SRS_OUT" -v 2>&1 | head -1)"
+    echo ""
+    echo "Run SRS:  npm run srs"
+    echo "Run app:  npm run dev"
+    exit 0
+fi
+
 if [[ -x "$SRS_OUT" && -f "$VERSION_MARKER" && "$(cat "$VERSION_MARKER")" == "$SRS_VERSION" ]]; then
     echo "SRS $SRS_VERSION already installed at $SRS_OUT"
     exit 0

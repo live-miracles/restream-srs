@@ -1,8 +1,8 @@
 # restream-srs
 
-Minimal streaming server — takes RTMP/SRT inputs and restreams them to multiple RTMP/SRT outputs. Built on [SRS](https://github.com/ossrs/srs) for ingest and FFmpeg for outputs. Node.js + TypeScript backend.
+Minimal streaming server — takes RTMP/SRT inputs and restreams them to multiple RTMP/SRT outputs. Built on a patched [SRS](https://github.com/ossrs/srs) for ingest (with SRT bonding support) and FFmpeg for outputs. Node.js + TypeScript backend.
 
-Designed to handle tens of simultaneous pipelines (inputs) and hundreds of output forwards running continuously across long events. See [Server limitations](#server-limitations) for the tested envelope.
+Designed to handle tens of simultaneous pipelines (inputs) and hundreds of output forwards running continuously across long events. See [Capacity & Limits](#capacity--limits) for the tested envelope.
 
 ```
 OBS / ffmpeg  ──RTMP──►  SRS (1935)   ──FFmpeg──►  YouTube / Facebook / ...
@@ -15,7 +15,7 @@ OBS / ffmpeg  ──RTMP──►  SRS (1935)   ──FFmpeg──►  YouTube /
 
 | Component | Description |
 |-----------|-------------|
-| SRS | Ingest broker — accepts RTMP and SRT streams |
+| SRS | Ingest broker — accepts RTMP and SRT streams, including bonded SRT (path redundancy) |
 | Node.js app | REST API + dashboard on port 8080 |
 | FFmpeg | One process per output, spawned and managed by the app |
 | SQLite | Persistent state for pipelines, outputs, stream keys, settings |
@@ -69,6 +69,8 @@ This app now runs natively on Linux. The production setup uses two systemd servi
 |---------|---------|
 | `srs.service` | Native SRS binary, started as `/usr/local/bin/srs -c /etc/restream-srs/srs.conf` |
 | `restream-srs.service` | Node.js dashboard/API, started from `/opt/restream-srs/dist/index.js` |
+
+The installer downloads a pre-built patched SRS binary from this project's GitHub releases (compiled with SRT bonding support via `patches/srs-srt-bonding.patch`).
 
 **Production install:**
 ```bash
@@ -133,6 +135,8 @@ srt://YOUR_HOST:10080?streamid=#!::r=live/key01_<random>,m=publish
 ```
 
 When an SRT passphrase is configured, the dashboard appends `passphrase` and `pbkeylen=16` to the publish URL. Clients without the matching passphrase are rejected by SRS during the SRT handshake.
+
+**SRT bonding (path redundancy):** SRS is patched to support the libsrt group connection API. Encoders configured for SRT bonding should point all redundant paths to the same host and port — SRS accepts the group connection and libsrt handles deduplication internally before the stream reaches the application.
 
 ffmpeg test commands:
 
@@ -230,7 +234,31 @@ Prerequisites: Node.js 22+, FFmpeg.
 **1. Install dependencies and the SRS binary:**
 ```bash
 npm install
-npm run dev-install   # downloads SRS 6.0-r0 into ./objs/srs, no root required
+npm run dev-install   # downloads SRS into ./objs/srs, no root required
+```
+
+To use a locally-built patched SRS binary (see `scripts/build-srs.sh`):
+```bash
+SRS_LOCAL_BIN=./build/srs npm run dev-install
+```
+
+**Publishing a new patched SRS release** (requires `build-essential cmake git automake pkg-config gh`):
+
+```bash
+# Install gh CLI if needed
+sudo apt install -y gh
+gh auth login
+
+# 1. Build — outputs ./build/srs and prints its SHA256
+bash scripts/build-srs.sh
+
+# 2. Upload to GitHub releases (bump the tag for each new build)
+gh release create srs-v6.0-r0-1 "./build/srs#srs-linux-x86_64" \
+  --repo live-miracles/restream-srs \
+  --title "SRS v6.0-r0 patched (SRT bonding)" \
+  --notes "Patched SRS v6.0-r0 with SRT bonding support."
+
+# 3. Update SRS_RELEASE_TAG and SRS_SHA256 in scripts/server-install.sh
 ```
 
 **2. Start SRS** (terminal 1):

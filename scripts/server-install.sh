@@ -28,16 +28,14 @@ LOG_DIR=/var/log/restream-srs
 CONF_DIR=/etc/restream-srs
 SERVICE_USER=restream-srs
 
-SRS_VERSION="${SRS_VERSION:-6.0-r0}"
-SRS_ZIP="SRS-CentOS7-x86_64-${SRS_VERSION}.zip"
-SRS_URL_OVERRIDDEN="${SRS_URL+yes}"
-SRS_URL="${SRS_URL:-https://github.com/ossrs/srs/releases/download/v${SRS_VERSION}/${SRS_ZIP}}"
-# Pinned SHA256 for the default SRS build. Cleared (checksum skipped) when a
-# custom SRS_VERSION or SRS_URL is supplied, since the hash would no longer match.
-SRS_SHA256=""
-if [[ "$SRS_VERSION" == "6.0-r0" && -z "$SRS_URL_OVERRIDDEN" ]]; then
-    SRS_SHA256="1eb20245a76643b2d32a1be85e71015079689a0733a10f79964f9a8189c21609"
-fi
+# Patched SRS binary — pinned to a specific release of this project.
+# To update: run build-srs.sh, publish the binary as a GitHub release asset,
+# then update SRS_RELEASE_TAG and SRS_SHA256 below.
+SRS_VERSION=6.0-r0
+SRS_RELEASE_TAG="srs-v6.0-r0-1"
+SRS_FILENAME="srs-linux-x86_64"
+SRS_SHA256="28de823bf1d60395d36f836a503b887b4100c5ef0874a7e3e55a8bb87cf31fb1"  # set after publishing the release asset
+SRS_URL="https://github.com/live-miracles/restream-srs/releases/download/${SRS_RELEASE_TAG}/${SRS_FILENAME}"
 
 # FFmpeg is pinned to a specific immutable BtbN build (a month-end autobuild tag,
 # which BtbN retains for 2 years) instead of the floating "latest" tag, so installs
@@ -75,7 +73,7 @@ verify_sha256() {
 
 step "1/9 System packages"
 apt-get update -q
-apt-get install -y -q curl tar xz-utils unzip git ca-certificates
+apt-get install -y -q curl tar xz-utils git ca-certificates
 
 step "2/9 Node.js 22"
 if node --version 2>/dev/null | grep -q '^v22'; then
@@ -104,23 +102,14 @@ fi
 
 SRS_VERSION_MARKER=/usr/local/bin/.srs-version
 step "4/9 SRS $SRS_VERSION"
-if [[ -x /usr/local/bin/srs && -f "$SRS_VERSION_MARKER" && "$(cat "$SRS_VERSION_MARKER")" == "$SRS_VERSION" ]]; then
-    echo "SRS $SRS_VERSION already installed."
+if [[ -x /usr/local/bin/srs && -f "$SRS_VERSION_MARKER" && "$(cat "$SRS_VERSION_MARKER")" == "$SRS_RELEASE_TAG" ]]; then
+    echo "SRS $SRS_VERSION ($SRS_RELEASE_TAG) already installed."
 else
-    echo "Downloading $SRS_ZIP..."
-    curl -fsSL "$SRS_URL" -o "$WORK/$SRS_ZIP"
-    verify_sha256 "$WORK/$SRS_ZIP" "$SRS_SHA256"
-    unzip -q "$WORK/$SRS_ZIP" -d "$WORK/srs"
-    # The zip root contains an init wrapper script also named 'srs'; the real
-    # ELF binary lives deeper at usr/local/srs/objs/srs. Match it precisely so
-    # we never install the wrapper by mistake.
-    SRS_BIN="$(find "$WORK/srs" -type f -path '*/usr/local/srs/objs/srs' | head -1)"
-    if [[ -z "$SRS_BIN" ]]; then
-        echo "ERROR: could not find SRS binary in $SRS_ZIP" >&2
-        exit 1
-    fi
-    install -m 755 "$SRS_BIN" /usr/local/bin/srs
-    echo "$SRS_VERSION" > "$SRS_VERSION_MARKER"
+    echo "Downloading $SRS_FILENAME ($SRS_RELEASE_TAG)..."
+    curl -fsSL "$SRS_URL" -o "$WORK/$SRS_FILENAME"
+    verify_sha256 "$WORK/$SRS_FILENAME" "$SRS_SHA256"
+    install -m 755 "$WORK/$SRS_FILENAME" /usr/local/bin/srs
+    echo "$SRS_RELEASE_TAG" > "$SRS_VERSION_MARKER"
     echo "Installed: $(/usr/local/bin/srs -v 2>&1 | head -1)"
 fi
 

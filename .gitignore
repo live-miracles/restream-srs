@@ -10,6 +10,7 @@ data.db
 .env
 *.mp4
 objs/
+build/
 hls/
 *.wav
 *.mkv
