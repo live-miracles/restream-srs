@@ -15,10 +15,8 @@ fi
 
 echo "=== Stopping services ==="
 # Tolerate a missing/never-installed unit so the script doesn't abort under set -e.
-systemctl stop restream-srs.service || true
-echo "  restream-srs.service stopped"
-systemctl stop srs.service || true
-echo "  srs.service stopped"
+systemctl stop restream-srs.service && echo "  restream-srs.service stopped" || echo "  restream-srs.service was not running"
+systemctl stop srs.service && echo "  srs.service stopped" || echo "  srs.service was not running"
 
 echo
 echo "=== Status ==="
