@@ -16,9 +16,9 @@ SRS_OUT="$REPO_DIR/objs/srs"
 
 # Patched SRS binary — keep in sync with SRS_RELEASE_TAG and SRS_SHA256 in server-install.sh.
 SRS_VERSION=6.0-r0
-SRS_RELEASE_TAG="srs-v6.0-r0-2"
+SRS_RELEASE_TAG="srs-v6.0-r0-3"
 SRS_FILENAME="srs"
-SRS_SHA256="dd39f98b8886c443aa1ccd501260ea6ef7120a4c52fa2030e6dc6e7e4613cc53"
+SRS_SHA256="a13bf3e1cd75b64b7e4a72e35c73db11673e17f1c04b9ad73d2983980bd4a396"
 SRS_URL="https://github.com/live-miracles/restream-srs/releases/download/${SRS_RELEASE_TAG}/${SRS_FILENAME}"
 
 # Verify a downloaded file against an expected SHA256 (sha256sum on Linux,

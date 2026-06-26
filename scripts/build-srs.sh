@@ -1,38 +1,52 @@
 #!/usr/bin/env bash
 # Build SRS from source with SRT bonding patch applied.
+# Always builds inside a ubuntu:22.04 Docker container to ensure the binary
+# links against GLIBC 2.35 and runs on any Ubuntu 22.04+ server.
 #
-# Run this once on a Linux x86_64 build machine, then use the output binary
-# when installing via server-install.sh.
+# Run this once on any x86_64 machine with Docker, then publish the output
+# binary as a GitHub release asset and update server-install.sh.
 #
 # Usage:
 #   bash scripts/build-srs.sh
 #
 # Output:
 #   ./build/srs   — patched SRS binary, ready to publish as a GitHub release asset
-#
-# Build dependencies (Ubuntu/Debian):
-#   sudo apt-get install -y build-essential cmake git automake pkg-config
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PATCH="$REPO_DIR/patches/srs-srt-bonding.patch"
-BUILD_DIR="$REPO_DIR/build"
-SRS_SRC="$BUILD_DIR/srs-src"
 SRS_TAG="${SRS_TAG:-v6.0-r0}"
-OUT="$BUILD_DIR/srs"
+OUT="$REPO_DIR/build/srs"
 
 step() { echo; echo "=== $* ==="; }
 
-step "Check build dependencies"
-missing=()
-for cmd in git cmake make g++ automake pkg-config; do
-    command -v "$cmd" &>/dev/null || missing+=("$cmd")
-done
-if [[ ${#missing[@]} -gt 0 ]]; then
-    echo "ERROR: missing: ${missing[*]}" >&2
-    echo "Install: sudo apt-get install -y build-essential cmake git automake pkg-config" >&2
+step "Check Docker"
+if ! command -v docker &>/dev/null; then
+    echo "ERROR: Docker is required to build SRS." >&2
+    echo "Install: https://docs.docker.com/engine/install/" >&2
     exit 1
 fi
+echo "Docker: $(docker --version)"
+
+step "Build SRS $SRS_TAG inside ubuntu:22.04"
+echo "Repo mounted: $REPO_DIR → /work"
+echo "Output:       $OUT"
+
+docker run --rm -i \
+    -e SRS_TAG="$SRS_TAG" \
+    -v "$REPO_DIR:/work" \
+    ubuntu:22.04 bash -euo pipefail << 'INNER'
+
+step() { echo; echo "=== $* ==="; }
+
+PATCH=/work/patches/srs-srt-bonding.patch
+BUILD_DIR=/work/build
+SRS_SRC=$BUILD_DIR/srs-src
+OUT=$BUILD_DIR/srs
+
+step "Install build dependencies"
+apt-get update -q
+DEBIAN_FRONTEND=noninteractive apt-get install -y -q \
+    build-essential cmake git automake pkg-config unzip tcl patch perl
 
 mkdir -p "$BUILD_DIR"
 
@@ -61,21 +75,24 @@ step "Configure (SRT enabled)"
 cd "$SRS_SRC/trunk"
 ./configure --srt=on --sanitizer=off
 
-step "Build (using $(nproc) cores)"
+step "Build ($(nproc) cores)"
 make -j"$(nproc)"
 
 step "Copy binary"
 install -m 755 "$SRS_SRC/trunk/objs/srs" "$OUT"
+echo "GLIBC: $(ldd --version | head -1)"
+INNER
 
 echo
 echo "=============================="
 echo " Build complete"
 echo "=============================="
-echo "Binary: $OUT"
+echo "Binary:  $OUT"
 echo "Version: $("$OUT" -v 2>&1 | head -1)"
 echo
 echo "Next step: publish $OUT as a GitHub release asset, then update"
-echo "  SRS_RELEASE_TAG and SRS_SHA256 in scripts/server-install.sh and scripts/dev-server-install.sh"
+echo "  SRS_RELEASE_TAG and SRS_SHA256 in scripts/server-install.sh"
+echo "  and scripts/dev-server-install.sh"
 echo
 echo "SHA256:"
-echo "  $(sha256sum "$OUT" | awk '{print $1}')  $OUT"
+sha256sum "$OUT" | awk '{print $1 "  " $2}'

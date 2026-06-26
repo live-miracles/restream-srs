@@ -242,7 +242,11 @@ To use a locally-built patched SRS binary (see `scripts/build-srs.sh`):
 SRS_LOCAL_BIN=./build/srs npm run dev-install
 ```
 
-**Publishing a new patched SRS release** (requires `build-essential cmake git automake pkg-config gh`):
+**Publishing a new patched SRS release** (requires Docker and `gh`):
+
+The build always runs inside a `ubuntu:22.04` Docker container so the binary links
+against GLIBC 2.35 and is compatible with any Ubuntu 22.04+ server. Docker must be
+installed on the build machine — native builds are not supported.
 
 ```bash
 # Install gh CLI if needed
@@ -250,10 +254,11 @@ sudo apt install -y gh
 gh auth login
 
 # 1. Build — outputs ./build/srs and prints its SHA256
+#    (Docker pulls ubuntu:22.04 on first run; SRS source is cached in ./build/srs-src)
 bash scripts/build-srs.sh
 
 # 2. Upload to GitHub releases (bump the tag for each new build)
-gh release create srs-v6.0-r0-1 "./build/srs" \
+gh release create srs-v6.0-r0-3 "./build/srs" \
   --repo live-miracles/restream-srs \
   --title "SRS v6.0-r0 patched (SRT bonding)" \
   --notes "Patched SRS v6.0-r0 with SRT bonding support."
