@@ -32,9 +32,9 @@ SERVICE_USER=restream-srs
 # To update: run build-srs.sh, publish the binary as a GitHub release asset,
 # then update SRS_RELEASE_TAG and SRS_SHA256 below.
 SRS_VERSION=6.0-r0
-SRS_RELEASE_TAG="srs-v6.0-r0-4"
+SRS_RELEASE_TAG="srs-v6.0-r0-5"
 SRS_FILENAME="srs"
-SRS_SHA256="f3e9291b47f40f1db08dbabf1e607f8854ed0202090e21dcd64e0e658151647c"
+SRS_SHA256="879a77e4e4485cbf1d55f32aa2c58c49d9ccb8a10bbdd8a65a7a9d836441d823"
 SRS_URL="https://github.com/live-miracles/restream-srs/releases/download/${SRS_RELEASE_TAG}/${SRS_FILENAME}"
 
 # FFmpeg is pinned to a specific immutable BtbN build (a month-end autobuild tag,
