@@ -127,6 +127,7 @@ function runFfprobe(url: string): Promise<ProbeResult | null> {
                                   fps: parseFrameRate(vs.r_frame_rate),
                                   profile: (vs.profile as string) || '',
                                   level: vs.level != null ? String(Number(vs.level) / 10) : '',
+                                  fieldOrder: (vs.field_order as string) || null,
                               }
                             : null,
                         audio: as_

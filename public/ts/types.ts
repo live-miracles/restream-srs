@@ -48,6 +48,7 @@ export interface VideoInfo {
     width: number;
     height: number;
     fps?: number | null;
+    fieldOrder?: string | null;
 }
 
 export interface AudioInfo {

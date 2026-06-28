@@ -24,6 +24,14 @@ declare global {
 
 type OutStatus = 'good' | 'warn' | 'error' | 'off';
 
+function fmtFieldOrder(fo: string | null | undefined): string | null {
+    if (!fo || fo === 'unknown') return null;
+    if (fo === 'progressive') return 'P';
+    if (fo === 'tt' || fo === 'tb') return 'i TFF';
+    if (fo === 'bb' || fo === 'bt') return 'i BFF';
+    return fo;
+}
+
 const pendingOutputs = new Map<string, 'start' | 'stop'>();
 
 function outStatus(o: OutputView, inputLive: boolean): OutStatus {
@@ -168,6 +176,7 @@ function renderInputStats(input: InputHealth): string {
             ${stat('Codec', v.codec)}
             ${stat('Resolution', v.width && v.height ? `${v.width}×${v.height}` : null)}
             ${stat('FPS', v.fps != null ? v.fps : null)}
+            ${stat('Scan', fmtFieldOrder(v.fieldOrder))}
             ${stat('Profile', v.profile || null)}
             ${stat('Level', v.level || null)}
         </div>`
@@ -401,7 +410,8 @@ function renderOverview(): void {
                 <td class="font-mono text-xs"${rowspan}>${inp.live ? (inp.isSrt ? 'SRT' : 'RTMP') : '—'}</td>
                 <td class="font-mono text-xs"${rowspan}>${inp.video?.codec ?? '—'}</td>
                 <td class="font-mono text-xs"${rowspan}>${inp.video ? `${inp.video.width}×${inp.video.height}` : '—'}</td>
-                <td class="font-mono text-xs"${rowspan}>${inp.video?.fps ?? '—'}</td>`;
+                <td class="font-mono text-xs"${rowspan}>${inp.video?.fps ?? '—'}</td>
+                <td class="font-mono text-xs"${rowspan}>${fmtFieldOrder(inp.video?.fieldOrder) ?? '—'}</td>`;
             if (audioTracks && audioTracks.length > 1) {
                 inputRows += audioTracks
                     .map((t, i) => {
@@ -464,6 +474,7 @@ function renderOverview(): void {
                     ${td(src?.video?.codec)}
                     ${td(src?.video ? `${src.video.width}×${src.video.height}` : null)}
                     ${td(src?.video?.fps)}
+                    ${td(fmtFieldOrder(src?.video?.fieldOrder))}
                     ${td(src?.audio?.codec)}
                     ${td(src?.audio?.channel)}
                     ${td(isOn ? fmtHz(src?.audio?.sample_rate) : null)}
@@ -517,14 +528,14 @@ function renderOverview(): void {
         <h2 class="mb-2 text-lg font-bold">Inputs <span class="badge badge-neutral badge-sm ml-1">${state.pipelines.length}</span></h2>
         <div class="overflow-x-auto mb-6">
             <table class="table table-sm">
-                ${thead(['Pipeline', 'Status', 'Uptime', 'Bitrate', 'Proto', 'V.Codec', 'Resolution', 'FPS', 'A.Codec', 'Ch', 'Sample Rate'])}
+                ${thead(['Pipeline', 'Status', 'Uptime', 'Bitrate', 'Proto', 'V.Codec', 'Resolution', 'FPS', 'Scan', 'A.Codec', 'Ch', 'Sample Rate'])}
                 <tbody>${inputRows}</tbody>
             </table>
         </div>
         <h2 class="mb-2 text-lg font-bold">Outputs <span class="badge badge-neutral badge-sm ml-1">${totalOuts}</span></h2>
         <div class="overflow-x-auto">
             <table class="table table-sm">
-                ${thead(['Pipeline · Output', 'Status', 'Uptime', 'Bitrate', 'Encoding', 'V.Codec', 'Resolution', 'FPS', 'A.Codec', 'Ch', 'Sample Rate'])}
+                ${thead(['Pipeline · Output', 'Status', 'Uptime', 'Bitrate', 'Encoding', 'V.Codec', 'Resolution', 'FPS', 'Scan', 'A.Codec', 'Ch', 'Sample Rate'])}
                 <tbody>${outputRows}</tbody>
             </table>
         </div>`;

@@ -12,6 +12,7 @@ export interface SrsStreamVideo {
     width: number;
     height: number;
     fps?: number | null;
+    fieldOrder?: string | null;
 }
 
 export interface SrsStreamAudio {
