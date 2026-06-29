@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-shot native setup for a Linux server.
-# Installs Node.js 22, FFmpeg 7.1, SRS 6.0, builds the app,
+# Installs Node.js 22, FFmpeg 7.1, SRS 6.0, srt-live-transmit, builds the app,
 # and registers systemd services that start on boot.
 #
 # Usage:
@@ -28,14 +28,19 @@ LOG_DIR=/var/log/restream-srs
 CONF_DIR=/etc/restream-srs
 SERVICE_USER=restream-srs
 
-# Patched SRS binary — pinned to a specific release of this project.
-# To update: run build-srs.sh, publish the binary as a GitHub release asset,
-# then update SRS_RELEASE_TAG and SRS_SHA256 below.
 SRS_VERSION=6.0-r0
-SRS_RELEASE_TAG="srs-v6.0-r0-5"
-SRS_FILENAME="srs"
-SRS_SHA256="879a77e4e4485cbf1d55f32aa2c58c49d9ccb8a10bbdd8a65a7a9d836441d823"
-SRS_URL="https://github.com/live-miracles/restream-srs/releases/download/${SRS_RELEASE_TAG}/${SRS_FILENAME}"
+SRS_RELEASE_TAG="v${SRS_VERSION}"
+SRS_FILENAME="srs-server-${SRS_VERSION}-linux-amd64.tar.gz"
+SRS_SHA256=""
+SRS_URL="https://github.com/ossrs/srs/releases/download/${SRS_RELEASE_TAG}/${SRS_FILENAME}"
+
+# Pinned srt-live-transmit binary — built once with scripts/build-srt-live-transmit.sh
+# and published as a release asset in this project.
+SRT_VERSION=1.5.5
+SRT_RELEASE_TAG="srt-v${SRT_VERSION}-1"
+SRT_FILENAME="srt-live-transmit-linux-x86_64.tar.gz"
+SRT_SHA256="c206bc9eceb0f0f3c1a48b2d1b9d360dbf45fa9ef98d5a3d8f61bcd235a1d6e2"
+SRT_URL="https://github.com/live-miracles/restream-srs/releases/download/${SRT_RELEASE_TAG}/${SRT_FILENAME}"
 
 # FFmpeg is pinned to a specific immutable BtbN build (a month-end autobuild tag,
 # which BtbN retains for 2 years) instead of the floating "latest" tag, so installs
@@ -71,11 +76,11 @@ verify_sha256() {
     echo "Checksum OK: $(basename "$file")"
 }
 
-step "1/9 System packages"
+step "1/10 System packages"
 apt-get update -q
 apt-get install -y -q curl tar xz-utils git ca-certificates
 
-step "2/9 Node.js 22"
+step "2/10 Node.js 22"
 if node --version 2>/dev/null | grep -q '^v22'; then
     echo "Node.js 22 already installed: $(node --version)"
 else
@@ -84,7 +89,7 @@ else
     echo "Installed: $(node --version)"
 fi
 
-step "3/9 FFmpeg $FFMPEG_VERSION"
+step "3/10 FFmpeg $FFMPEG_VERSION"
 FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_BUILD_TAG}/${FFMPEG_FILENAME}"
 
 if /usr/local/bin/ffmpeg -version 2>/dev/null | grep -q "ffmpeg version n${FFMPEG_VERSION}"; then
@@ -101,19 +106,50 @@ else
 fi
 
 SRS_VERSION_MARKER=/usr/local/bin/.srs-version
-step "4/9 SRS $SRS_VERSION"
+step "4/10 SRS $SRS_VERSION"
 if [[ -x /usr/local/bin/srs && -f "$SRS_VERSION_MARKER" && "$(cat "$SRS_VERSION_MARKER")" == "$SRS_RELEASE_TAG" ]]; then
     echo "SRS $SRS_VERSION ($SRS_RELEASE_TAG) already installed."
 else
     echo "Downloading $SRS_FILENAME ($SRS_RELEASE_TAG)..."
     curl -fsSL "$SRS_URL" -o "$WORK/$SRS_FILENAME"
     verify_sha256 "$WORK/$SRS_FILENAME" "$SRS_SHA256"
-    install -m 755 "$WORK/$SRS_FILENAME" /usr/local/bin/srs
+    tar -xzf "$WORK/$SRS_FILENAME" -C "$WORK"
+    SRS_BIN="$(find "$WORK" -type f -name srs -perm -111 | head -1)"
+    if [[ -z "$SRS_BIN" ]]; then
+        echo "ERROR: could not find srs binary in $SRS_FILENAME" >&2
+        exit 1
+    fi
+    install -m 755 "$SRS_BIN" /usr/local/bin/srs
     echo "$SRS_RELEASE_TAG" > "$SRS_VERSION_MARKER"
     echo "Installed: $(/usr/local/bin/srs -v 2>&1 | head -1)"
 fi
 
-step "5/9 Service user and directories"
+SRT_VERSION_MARKER=/usr/local/bin/.srt-live-transmit-version
+step "5/10 srt-live-transmit $SRT_VERSION"
+if [[ -x /usr/local/bin/srt-live-transmit && -f "$SRT_VERSION_MARKER" && "$(cat "$SRT_VERSION_MARKER")" == "$SRT_RELEASE_TAG" ]]; then
+    echo "srt-live-transmit $SRT_VERSION already installed."
+else
+    echo "Downloading $SRT_FILENAME ($SRT_RELEASE_TAG)..."
+    curl -fsSL "$SRT_URL" -o "$WORK/$SRT_FILENAME"
+    verify_sha256 "$WORK/$SRT_FILENAME" "$SRT_SHA256"
+    tar -xzf "$WORK/$SRT_FILENAME" -C "$WORK"
+    SRT_BIN="$(find "$WORK" -type f -name srt-live-transmit -perm -111 | head -1)"
+    if [[ -z "$SRT_BIN" ]]; then
+        echo "ERROR: could not find srt-live-transmit binary in $SRT_FILENAME" >&2
+        exit 1
+    fi
+    if [[ -d "$WORK/lib" ]]; then
+        install -d -m 755 /usr/local/lib/restream-srs-srt
+        install -m 755 "$WORK"/lib/* /usr/local/lib/restream-srs-srt/
+        echo /usr/local/lib/restream-srs-srt > /etc/ld.so.conf.d/restream-srs-srt.conf
+        ldconfig
+    fi
+    install -m 755 "$SRT_BIN" /usr/local/bin/srt-live-transmit
+    echo "$SRT_RELEASE_TAG" > "$SRT_VERSION_MARKER"
+    echo "Installed: $(/usr/local/bin/srt-live-transmit -h 2>&1 | head -1)"
+fi
+
+step "6/10 Service user and directories"
 if ! id "$SERVICE_USER" &>/dev/null; then
     useradd --system --home "$APP_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
     echo "Created user: $SERVICE_USER"
@@ -123,7 +159,7 @@ fi
 mkdir -p "$APP_DIR" "$DATA_DIR" "$DATA_DIR/objs" "$LOG_DIR" "$CONF_DIR"
 chown "$SERVICE_USER:$SERVICE_USER" "$APP_DIR" "$DATA_DIR" "$DATA_DIR/objs" "$LOG_DIR" "$CONF_DIR"
 
-step "6/9 Application"
+step "7/10 Application"
 if [[ ! -d "$APP_DIR/.git" ]]; then
     git clone "$REPO_URL" "$APP_DIR"
 else
@@ -138,7 +174,7 @@ npm prune --omit=dev
 chown -R "$SERVICE_USER:$SERVICE_USER" "$APP_DIR"
 echo "Build complete."
 
-step "7/9 Config and data"
+step "8/10 Config and data"
 if [[ ! -f "$CONF_DIR/srs.conf" ]]; then
     cp "$APP_DIR/srs.conf" "$CONF_DIR/srs.conf"
     echo "Config: created $CONF_DIR/srs.conf"
@@ -193,7 +229,7 @@ chown "$SERVICE_USER:$SERVICE_USER" "$CONF_DIR/srs.conf" "$DB_FILE"
 echo "Config: $CONF_DIR/srs.conf"
 echo "Data:   $DB_FILE"
 
-step "8/9 Logrotate"
+step "9/10 Logrotate"
 cat > /etc/logrotate.d/restream-srs <<EOF
 $LOG_DIR/srs.log {
     daily
@@ -207,7 +243,7 @@ $LOG_DIR/srs.log {
 EOF
 echo "Logrotate: /etc/logrotate.d/restream-srs"
 
-step "9/9 Systemd"
+step "10/10 Systemd"
 cat > /etc/systemd/system/srs.service <<EOF
 [Unit]
 Description=SRS Streaming Server

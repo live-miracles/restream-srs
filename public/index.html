@@ -334,6 +334,10 @@
               <select class="select w-44 font-mono text-sm" id="pipe-key-select"></select>
             </fieldset>
           </div>
+          <label class="bg-base-300 mt-3 flex cursor-pointer items-center justify-between gap-4 rounded-lg px-3 py-2">
+            <span class="text-sm font-medium">SRT Bonding</span>
+            <input type="checkbox" id="pipe-bonding-input" class="toggle toggle-accent" />
+          </label>
         </div>
         <div class="modal-action">
           <form method="dialog">
@@ -782,7 +786,65 @@
               </div>
             </div>
             <code class="font-mono text-xs break-all opacity-80" id="srt-publish-url"></code>
-            <p class="mt-2 text-xs opacity-40">SRT bonding supported — point all redundant paths to the same host and port.</p>
+          </div>
+          <div id="srt-bonding-card" class="border-base-content/10 bg-base-100/50 rounded-xl border p-3">
+            <div class="mb-1 flex items-center justify-between gap-2">
+              <div class="flex items-center gap-2">
+                <div id="srt-bonding-status-dot" aria-label="status" class="status status-lg"></div>
+                <button id="srt-bonding-toggle-btn" class="btn btn-xs btn-accent btn-outline" onclick="bondingToggleBtn(this)">Start</button>
+                <span class="text-xs font-semibold opacity-60">SRT Bonding</span>
+              </div>
+              <div class="flex gap-1">
+                <button class="btn btn-xs btn-ghost btn-outline" onclick="copyText(document.getElementById('srt-bonding-url').dataset.ip)">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round">
+                    <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                  </svg>
+                  IP
+                </button>
+                <button class="btn btn-xs btn-ghost btn-outline" onclick="copyText(document.getElementById('srt-bonding-url').dataset.port)">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round">
+                    <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                  </svg>
+                  Port
+                </button>
+                <button class="btn btn-xs btn-accent btn-outline" onclick="copyText(document.getElementById('srt-bonding-url').dataset.copy)">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round">
+                    <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <code class="font-mono text-xs break-all opacity-80" id="srt-bonding-url"></code>
           </div>
         </div>
       </div>

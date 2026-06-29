@@ -1,12 +1,13 @@
 # restream-srs
 
-Minimal streaming server — takes RTMP/SRT inputs and restreams them to multiple RTMP/SRT outputs. Built on a patched [SRS](https://github.com/ossrs/srs) for ingest (with SRT bonding support) and FFmpeg for outputs. Node.js + TypeScript backend.
+Minimal streaming server — takes RTMP/SRT inputs and restreams them to multiple RTMP/SRT outputs. Built on official [SRS](https://github.com/ossrs/srs) for ingest, `srt-live-transmit` for optional SRT bonding relays, and FFmpeg for outputs. Node.js + TypeScript backend.
 
 Designed to handle tens of simultaneous pipelines (inputs) and hundreds of output forwards running continuously across long events. See [Capacity & Limits](#capacity--limits) for the tested envelope.
 
 ```
-OBS / ffmpeg  ──RTMP──►  SRS (1935)   ──FFmpeg──►  YouTube / Facebook / ...
-              ──SRT───►  SRS (10080)  ──FFmpeg──►  rtmp:// or srt://
+OBS / ffmpeg  ──RTMP────────►  SRS (1935)   ──FFmpeg──►  YouTube / Facebook / ...
+              ──SRT─────────►  SRS (10080)  ──FFmpeg──►  rtmp:// or srt://
+              ──SRT bonding─►  srt-live-transmit (11000+pipeline) ──► SRS
 ```
 
 ---
@@ -15,7 +16,8 @@ OBS / ffmpeg  ──RTMP──►  SRS (1935)   ──FFmpeg──►  YouTube /
 
 | Component | Description |
 |-----------|-------------|
-| SRS | Ingest broker — accepts RTMP and SRT streams, including bonded SRT (path redundancy) |
+| SRS | Ingest broker — accepts RTMP and SRT streams |
+| srt-live-transmit | Optional per-pipeline SRT bonding relay into SRS |
 | Node.js app | REST API + dashboard on port 8080 |
 | FFmpeg | One process per output, spawned and managed by the app |
 | SQLite | Persistent state for pipelines, outputs, stream keys, settings |
@@ -70,7 +72,7 @@ This app now runs natively on Linux. The production setup uses two systemd servi
 | `srs.service` | Native SRS binary, started as `/usr/local/bin/srs -c /etc/restream-srs/srs.conf` |
 | `restream-srs.service` | Node.js dashboard/API, started from `/opt/restream-srs/dist/index.js` |
 
-The installer downloads a pre-built patched SRS binary from this project's GitHub releases (compiled with SRT bonding support via `patches/srs-srt-bonding.patch`).
+The installer downloads the official SRS release binary and a pinned `srt-live-transmit` binary from this project's GitHub releases. The `srt-live-transmit` asset is built separately from Haivision's official SRT source and verified by SHA256 during install.
 
 **Production install:**
 ```bash
@@ -96,6 +98,7 @@ Open the dashboard: `http://SERVER_IP:8080` — default password is `admin`.
 |------|----------|---------|
 | 1935 | TCP | RTMP input |
 | 10080 | UDP | SRT input |
+| 11001-11050 | UDP | Optional SRT bonding relay inputs, one per pipeline |
 | 8080 | TCP | Dashboard + API |
 
 ### SRS config reload
@@ -105,6 +108,10 @@ The app writes SRS settings to `/etc/restream-srs/srs.conf`. SRS only reads this
 ```bash
 sudo systemctl restart srs.service
 ```
+
+Running SRT bonding relays also read the passphrase when they start. After a
+passphrase change, stop and start any enabled bonding relays from the dashboard
+so they reconnect to SRS with the new passphrase.
 
 ---
 
@@ -136,7 +143,17 @@ srt://YOUR_HOST:10080?streamid=#!::r=live/key01_<random>,m=publish
 
 When an SRT passphrase is configured, the dashboard appends `passphrase` and `pbkeylen=16` to the publish URL. Clients without the matching passphrase are rejected by SRS during the SRT handshake.
 
-**SRT bonding (path redundancy):** SRS is patched to support the libsrt group connection API. Encoders configured for SRT bonding should point all redundant paths to the same host and port — SRS accepts the group connection and libsrt handles deduplication internally before the stream reaches the application.
+**SRT bonding (path redundancy):** Enable SRT Bonding on a pipeline in the dashboard. The app starts one `srt-live-transmit` relay for that pipeline on UDP port `11000 + pipelineId` (for example pipeline 5 listens on `11005`) and forwards the deduplicated stream into SRS on `10080`. The pipeline is selected by the relay port, not by an encoder stream ID. Configure all redundant encoder paths to the bonding URL shown in the pipeline details, for example:
+
+```
+srt://YOUR_HOST:11005?mode=caller&grouptype=broadcast
+```
+
+The dashboard exposes copy buttons for the bonding IP, port and full URL. Do not
+add `streamid` to the encoder-facing bonding URL; the relay publishes into SRS
+with the pipeline's stream key internally.
+
+When an SRT passphrase is configured, the dashboard appends `passphrase` and `pbkeylen=16` to the bonding URL and the relay also uses that passphrase when publishing into SRS.
 
 ffmpeg test commands:
 
@@ -204,7 +221,9 @@ RTMP input → RTMP pull), so there is no pull-method setting.
 | GET | `/api/metrics/system` | Host CPU, RAM, disk and network stats |
 | GET | `/api/srs-logs` | Recent SRS up/down events and a tail of the SRS log |
 | POST | `/api/pipelines` | Create pipeline (auto-names and assigns stream key) |
+| GET | `/api/pipelines/:id` | Pipeline details including SRT bonding desired/runtime state |
 | POST | `/api/pipelines/:id` | Rename pipeline `{ name }`, optionally reassign key `{ name, streamKeyId }` |
+| POST | `/api/pipelines/:id/bonding` | Start/stop SRT bonding relay `{ enabled: boolean }` |
 | DELETE | `/api/pipelines/:id` | Delete pipeline (stream key is freed, not deleted) |
 | GET | `/api/pipelines/:id/logs` | Pipeline online/offline event log |
 | POST | `/api/pipelines/:id/preview/start` | Start an HLS preview `{ audioTrack? }` |
@@ -231,39 +250,30 @@ RTMP input → RTMP pull), so there is no pull-method setting.
 
 Prerequisites: Node.js 22+, FFmpeg.
 
-**1. Install dependencies and the SRS binary:**
+**1. Install dependencies and local media binaries:**
 ```bash
 npm install
-npm run dev-install   # downloads SRS into ./objs/srs, no root required
+npm run dev-install   # downloads SRS and srt-live-transmit into ./objs, no root required
 ```
 
-To use a locally-built patched SRS binary (see `scripts/build-srs.sh`):
+To use a local SRS binary:
 ```bash
 SRS_LOCAL_BIN=./build/srs npm run dev-install
 ```
 
-**Publishing a new patched SRS release** (requires Docker and `gh`):
-
-The build always runs inside a `ubuntu:22.04` Docker container so the binary links
-against GLIBC 2.35 and is compatible with any Ubuntu 22.04+ server. Docker must be
-installed on the build machine — native builds are not supported.
-
+**Publishing a new pinned `srt-live-transmit` release asset** (requires Docker and `gh`):
 ```bash
-# Install gh CLI if needed
-sudo apt install -y gh
-gh auth login
+# Build from Haivision/srt using scripts/docker/srt-live-transmit.Dockerfile.
+bash scripts/build-srt-live-transmit.sh
 
-# 1. Build — outputs ./build/srs and prints its SHA256
-#    (Docker pulls ubuntu:22.04 on first run; SRS source is cached in ./build/srs-src)
-bash scripts/build-srs.sh
-
-# 2. Upload to GitHub releases (bump the tag for each new build)
-gh release create srs-v6.0-r0-3 "./build/srs" \
+# Upload to GitHub releases (bump the tag for each new build).
+gh release create srt-v1.5.5-1 "./build/srt-live-transmit-linux-x86_64.tar.gz" \
   --repo live-miracles/restream-srs \
-  --title "SRS v6.0-r0 patched (SRT bonding)" \
-  --notes "Patched SRS v6.0-r0 with SRT bonding support."
+  --title "srt-live-transmit v1.5.5" \
+  --notes "Built from Haivision/srt v1.5.5 for restream-srs."
 
-# 3. Update SRS_RELEASE_TAG and SRS_SHA256 in scripts/server-install.sh
+# Update SRT_RELEASE_TAG and SRT_SHA256 in scripts/server-install.sh
+# and scripts/dev-server-install.sh if the version or hash changed.
 ```
 
 **2. Start SRS** (terminal 1):
@@ -297,6 +307,7 @@ npm run srs
 | `SRS_LOG_PATH` | `./objs/srs.log` | SRS log path read for the dashboard log tail |
 | `FFMPEG_PATH` | `ffmpeg` | FFmpeg binary (uses `$PATH` if unset) |
 | `FFPROBE_PATH` | `ffprobe` | FFprobe binary (uses `$PATH` if unset) |
+| `SRT_LIVE_TRANSMIT_PATH` | auto-detected | Optional override. Defaults to `./objs/srt-live-transmit` when present, then `/usr/local/bin/srt-live-transmit`, then `$PATH`. |
 | `PORT` | `8080` | App HTTP port |
 
 ## Known issues

@@ -3,6 +3,7 @@ import compression from 'compression';
 import path from 'path';
 import { createDb } from './db/index.js';
 import { createOutputService } from './services/outputs.js';
+import { createSrtRelayService } from './services/srtRelay.js';
 import { createHealthService } from './services/health.js';
 import { registerPipelineApi } from './api/pipelines.js';
 import { registerOutputApi } from './api/outputs.js';
@@ -34,7 +35,8 @@ const db = createDb();
 initializePassword(db);
 
 const outputService = createOutputService(db);
-const healthService = createHealthService(db, outputService);
+const srtRelayService = createSrtRelayService(db);
+const healthService = createHealthService(db, outputService, srtRelayService);
 const previewService = createPreviewService(db, healthService.getInputProtocol);
 
 // Outputs only start ffmpeg when the input is live and SRS is reachable.
@@ -51,7 +53,7 @@ registerAuthApi(app, db);
 app.use('/api', requireAuth);
 
 registerConfigApi(app, db);
-registerPipelineApi(app, db, outputService, previewService);
+registerPipelineApi(app, db, outputService, previewService, srtRelayService);
 registerOutputApi(app, db, outputService);
 registerPreviewApi(app, previewService);
 registerSettingsApi(app, db);
@@ -106,6 +108,7 @@ app.use(
 async function main(): Promise<void> {
     writeSrsConf(db.getSetting('srtPassphrase') || null);
 
+    srtRelayService.restartAll();
     healthService.start();
 
     app.listen(PORT, () => {
@@ -117,8 +120,9 @@ let shuttingDown = false;
 function shutdown(signal: string): void {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`[server] ${signal} received, killing ffmpeg jobs`);
+    console.log(`[server] ${signal} received, killing media jobs`);
     outputService.shutdown();
+    srtRelayService.shutdown();
     previewService.shutdown();
     process.exit(0);
 }

@@ -1,4 +1,11 @@
-import type { ConfigData, HealthData, InputHealth, PipelineView, OutputView } from '../types.js';
+import type {
+    ConfigData,
+    HealthData,
+    InputHealth,
+    PipelineView,
+    OutputView,
+    SrtRelayStatus,
+} from '../types.js';
 
 const EMPTY_INPUT: InputHealth = {
     live: false,
@@ -10,6 +17,13 @@ const EMPTY_INPUT: InputHealth = {
     video: null,
     audio: null,
     audioTracks: [],
+};
+
+const EMPTY_RELAY: SrtRelayStatus = {
+    status: 'stopped',
+    pid: null,
+    startedAtMs: null,
+    lastError: null,
 };
 
 // last_error is stored as "<ts_ms>\n<message>". Parse both parts.
@@ -52,6 +66,6 @@ export function parsePipelines(
             };
         });
 
-        return { ...p, id: String(p.id), input, outs };
+        return { ...p, id: String(p.id), input, outs, srtRelay: ph?.srtRelay ?? EMPTY_RELAY };
     });
 }

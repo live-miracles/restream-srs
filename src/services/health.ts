@@ -11,6 +11,7 @@ import {
 } from '../utils/srs.js';
 import type { Db } from '../types.js';
 import type { OutputService } from './outputs.js';
+import type { SrtRelayService, SrtRelayStats } from './srtRelay.js';
 
 const FFPROBE_CMD = process.env.FFPROBE_PATH || 'ffprobe';
 const FFPROBE_DELAYS_MS = [3000, 10000, 20000, 40000];
@@ -53,6 +54,7 @@ interface OutputHealth {
 interface PipelineHealth {
     input: InputHealth;
     outputs: Record<string, OutputHealth>;
+    srtRelay: SrtRelayStats;
 }
 
 export interface HealthSnapshot {
@@ -148,7 +150,11 @@ function runFfprobe(url: string): Promise<ProbeResult | null> {
     });
 }
 
-export function createHealthService(db: Db, outputService: OutputService) {
+export function createHealthService(
+    db: Db,
+    outputService: OutputService,
+    srtRelayService: SrtRelayService,
+) {
     let snapshot: HealthSnapshot = {
         generatedAt: new Date().toISOString(),
         srsReachable: false,
@@ -364,6 +370,7 @@ export function createHealthService(db: Db, outputService: OutputService) {
                     audioTracks: probe?.audioTracks ?? [],
                 },
                 outputs: outputsHealth,
+                srtRelay: srtRelayService.getStats(pipeline.id),
             };
         }
 

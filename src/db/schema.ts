@@ -15,7 +15,8 @@ export function setupDatabaseSchema(db: Database.Database): void {
         `CREATE TABLE IF NOT EXISTS pipelines (
             id            INTEGER PRIMARY KEY,
             name          TEXT NOT NULL,
-            stream_key_id INTEGER REFERENCES stream_keys(id)
+            stream_key_id INTEGER REFERENCES stream_keys(id),
+            bonding_enabled INTEGER NOT NULL DEFAULT 0
         )`,
     ).run();
 

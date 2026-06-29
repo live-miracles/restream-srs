@@ -10,7 +10,7 @@ const STDERR_TAIL_BYTES = 2000;
 const STOP_WAIT_MS = 200;
 
 function resolveBaseDir(): string {
-    const dbPath = process.env.DB_PATH || path.join(process.cwd(), 'data.db');
+    const dbPath = process.env.DB_PATH || path.join(process.cwd(), 'db.sqlite');
     return path.join(path.dirname(dbPath), 'hls');
 }
 

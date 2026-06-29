@@ -33,6 +33,7 @@ function fmtFieldOrder(fo: string | null | undefined): string | null {
 }
 
 const pendingOutputs = new Map<string, 'start' | 'stop'>();
+const SRT_RELAY_BASE_PORT = 11000;
 
 function outStatus(o: OutputView, inputLive: boolean): OutStatus {
     if (o.desiredState === 'stopped') return 'off';
@@ -117,6 +118,10 @@ function renderPipelineList(): void {
             const inputTypeBadge = p.input.live
                 ? `<span class="badge badge-sm badge-outline shrink-0">${p.input.isSrt ? 'SRT' : 'RTMP'}</span>`
                 : '';
+            const relayBadge =
+                p.srtRelay.status === 'running'
+                    ? `<span class="badge badge-sm badge-info shrink-0">Relay</span>`
+                    : '';
 
             return `<li>
             <div class="flex items-center gap-2 ${selected} cursor-pointer js-select-pipeline" data-id="${p.id}">
@@ -128,6 +133,7 @@ function renderPipelineList(): void {
                 <a class="truncate min-w-0">${p.name}</a>
                 ${uptimeSpan}
                 ${inputTypeBadge}
+                ${relayBadge}
             </div>
         </li>`;
         })
@@ -398,13 +404,17 @@ function renderOverview(): void {
                 : isWarn
                   ? `<span class="badge badge-sm badge-warning">Low Bitrate</span>`
                   : `<span class="badge badge-sm badge-success">Live</span>`;
+            const relayBadge =
+                p.srtRelay.status === 'running'
+                    ? ` <span class="badge badge-sm badge-info">Relay</span>`
+                    : '';
             const audioTracks = inp.audioTracks.length > 0 ? inp.audioTracks : null;
             const rowspan =
                 audioTracks && audioTracks.length > 1 ? ` rowspan="${audioTracks.length}"` : '';
             const rowAttr = `class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(false, isWarn)}`;
             const sharedCells = `
                 <td class="font-semibold"${rowspan}>${p.name}</td>
-                <td${rowspan}>${badge}</td>
+                <td${rowspan}>${badge}${relayBadge}</td>
                 <td class="font-mono text-xs"${rowspan}>${inp.live ? formatUptime(inp.uptimeMs) : '—'}</td>
                 <td class="font-mono text-xs"${rowspan}>${inp.live ? formatBitrate(inp.recvBitrateKbps) : '—'}</td>
                 <td class="font-mono text-xs"${rowspan}>${inp.live ? (inp.isSrt ? 'SRT' : 'RTMP') : '—'}</td>
@@ -627,6 +637,44 @@ function renderPipelineInfo(selectedId: string | null): void {
                 ? pipeline.srtPublishUrl.slice(colonAfterHost + 1, portEnd)
                 : pipeline.srtPublishUrl.slice(colonAfterHost + 1);
         srtEl.dataset.streamId = `#!::r=live/${pipeline.streamKey},m=publish`;
+    }
+
+    const bondingCard = document.getElementById('srt-bonding-card');
+    const bondingDot = document.getElementById('srt-bonding-status-dot');
+    const bondingBtn = document.getElementById(
+        'srt-bonding-toggle-btn',
+    ) as HTMLButtonElement | null;
+    const bondingUrl = document.getElementById('srt-bonding-url');
+    const relayRunning = pipeline.srtRelay.status === 'running';
+    const relayFailed = pipeline.srtRelay.status === 'failed';
+    const bondingHost = state.config.publicHost || 'localhost';
+    const bondingPortValue = SRT_RELAY_BASE_PORT + Number(pipeline.id);
+    const bondingUrlValue =
+        `srt://${bondingHost}:${bondingPortValue}?mode=caller&grouptype=broadcast` +
+        (state.config.srtPassphrase
+            ? `&passphrase=${encodeURIComponent(state.config.srtPassphrase)}&pbkeylen=16`
+            : '');
+    bondingCard?.classList.remove('opacity-60');
+    if (bondingDot) {
+        bondingDot.classList.remove('status-success', 'status-error', 'status-neutral');
+        bondingDot.classList.add(
+            relayRunning ? 'status-success' : relayFailed ? 'status-error' : 'status-neutral',
+        );
+        bondingDot.title = relayRunning
+            ? 'Relay running'
+            : relayFailed
+              ? 'Relay failed'
+              : 'Relay stopped';
+    }
+    if (bondingBtn) {
+        bondingBtn.textContent = pipeline.bondingEnabled ? 'Stop' : 'Start';
+        bondingBtn.classList.toggle('btn-outline', !pipeline.bondingEnabled);
+    }
+    if (bondingUrl) {
+        bondingUrl.textContent = bondingUrlValue.replace(pipeline.streamKey, masked);
+        bondingUrl.dataset.copy = bondingUrlValue;
+        bondingUrl.dataset.ip = bondingHost;
+        bondingUrl.dataset.port = String(bondingPortValue);
     }
 
     renderPreview(pipeline);

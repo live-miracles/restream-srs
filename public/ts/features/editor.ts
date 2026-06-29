@@ -147,6 +147,8 @@ export function openEditPipeline(id: string): void {
     nameEl.classList.remove('input-error');
     (document.getElementById('pipe-id-input') as HTMLInputElement).value = id;
     (document.getElementById('pipe-modal-title') as HTMLElement).textContent = 'Edit Pipeline';
+    (document.getElementById('pipe-bonding-input') as HTMLInputElement).checked =
+        pipeline.bondingEnabled;
     populateKeySelect(pipeline.streamKeyId);
     const keySelect = document.getElementById('pipe-key-select') as HTMLSelectElement;
     const hasActiveOutputs = pipeline.outs.some((o) => o.desiredState !== 'stopped');
@@ -164,13 +166,19 @@ export async function submitPipelineForm(btn?: HTMLButtonElement): Promise<void>
     const streamKeyId = parseInt(
         (document.getElementById('pipe-key-select') as HTMLSelectElement).value,
     );
+    const bondingEnabled = (document.getElementById('pipe-bonding-input') as HTMLInputElement)
+        .checked;
+    const current = state.pipelines.find((p) => p.id === id);
 
     await withBusy(btn, async () => {
         const result = await api.updatePipeline(id, name, streamKeyId);
-        if (result) {
-            pipeModal().close();
-            await refreshAfterMutation();
+        if (!result) return;
+        if (current && current.bondingEnabled !== bondingEnabled) {
+            const bondingResult = await api.setPipelineBonding(id, bondingEnabled);
+            if (!bondingResult) return;
         }
+        pipeModal().close();
+        await refreshAfterMutation();
     });
 }
 
@@ -795,6 +803,18 @@ export async function stopAllOutputs(pipelineId: string, btn: HTMLButtonElement)
     if (!confirm('Stop all outputs for this pipeline?')) return;
     await withBusy(btn, async () => {
         const ok = await api.stopAllOutputs(pipelineId);
+        if (!ok) return;
+        await refreshAfterMutation();
+    });
+}
+
+export async function setPipelineBonding(
+    pipelineId: string,
+    enabled: boolean,
+    btn?: HTMLButtonElement,
+): Promise<void> {
+    await withBusy(btn, async () => {
+        const ok = await api.setPipelineBonding(pipelineId, enabled);
         if (!ok) return;
         await refreshAfterMutation();
     });
