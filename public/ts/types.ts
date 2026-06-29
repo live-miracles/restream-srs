@@ -79,7 +79,7 @@ export interface OutputStatus {
 }
 
 export interface SrtRelayStatus {
-    status: 'starting' | 'running' | 'stopping' | 'stopped' | 'failed';
+    status: 'running' | 'stopping' | 'stopped' | 'failed';
     pid: number | null;
     startedAtMs: number | null;
     lastError: string | null;

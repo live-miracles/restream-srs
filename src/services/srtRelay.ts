@@ -20,7 +20,7 @@ const STDERR_TAIL_BYTES = 3000;
 const RESTART_DELAY_MS = 5000;
 
 export interface SrtRelayStats {
-    status: 'starting' | 'running' | 'stopping' | 'stopped' | 'failed';
+    status: 'running' | 'stopping' | 'stopped' | 'failed';
     pid: number | null;
     startedAtMs: number | null;
     lastError: string | null;
@@ -148,10 +148,11 @@ export function createSrtRelayService(db: Db): SrtRelayService {
         });
 
         processes.set(pipeline.id, child);
+        const startedAtMs = Date.now();
         setStatus(pipeline.id, {
-            status: 'starting',
+            status: 'running',
             pid: child.pid ?? null,
-            startedAtMs: Date.now(),
+            startedAtMs,
             lastError: null,
         });
         console.log(
@@ -163,19 +164,7 @@ export function createSrtRelayService(db: Db): SrtRelayService {
             stderrTail = (stderrTail + d.toString()).slice(-STDERR_TAIL_BYTES);
         });
 
-        const readyTimer = setTimeout(() => {
-            if (processes.get(pipeline.id) !== child) return;
-            setStatus(pipeline.id, {
-                status: 'running',
-                pid: child.pid ?? null,
-                startedAtMs: getStats(pipeline.id).startedAtMs,
-                lastError: null,
-            });
-        }, 1000);
-        readyTimer.unref?.();
-
         child.on('error', (err) => {
-            clearTimeout(readyTimer);
             const message = err.message;
             setStatus(pipeline.id, {
                 status: 'failed',
@@ -187,7 +176,6 @@ export function createSrtRelayService(db: Db): SrtRelayService {
         });
 
         child.on('close', (code, signal) => {
-            clearTimeout(readyTimer);
             const wasStop = stopRequested.delete(pipeline.id);
             processes.delete(pipeline.id);
             const detail = stderrTail.trim();

@@ -30,8 +30,8 @@ SERVICE_USER=restream-srs
 
 SRS_VERSION=6.0-r0
 SRS_RELEASE_TAG="v${SRS_VERSION}"
-SRS_FILENAME="srs-server-${SRS_VERSION}-linux-amd64.tar.gz"
-SRS_SHA256=""
+SRS_FILENAME="SRS-CentOS7-x86_64-${SRS_VERSION}.zip"
+SRS_SHA256="1eb20245a76643b2d32a1be85e71015079689a0733a10f79964f9a8189c21609"
 SRS_URL="https://github.com/ossrs/srs/releases/download/${SRS_RELEASE_TAG}/${SRS_FILENAME}"
 
 # Pinned srt-live-transmit binary — built once with scripts/build-srt-live-transmit.sh
@@ -78,7 +78,7 @@ verify_sha256() {
 
 step "1/10 System packages"
 apt-get update -q
-apt-get install -y -q curl tar xz-utils git ca-certificates
+apt-get install -y -q curl tar xz-utils unzip git ca-certificates
 
 step "2/10 Node.js 22"
 if node --version 2>/dev/null | grep -q '^v22'; then
@@ -113,8 +113,8 @@ else
     echo "Downloading $SRS_FILENAME ($SRS_RELEASE_TAG)..."
     curl -fsSL "$SRS_URL" -o "$WORK/$SRS_FILENAME"
     verify_sha256 "$WORK/$SRS_FILENAME" "$SRS_SHA256"
-    tar -xzf "$WORK/$SRS_FILENAME" -C "$WORK"
-    SRS_BIN="$(find "$WORK" -type f -name srs -perm -111 | head -1)"
+    unzip -q "$WORK/$SRS_FILENAME" -d "$WORK/srs"
+    SRS_BIN="$(find "$WORK/srs" -type f -path '*/usr/local/srs/objs/srs' | head -1)"
     if [[ -z "$SRS_BIN" ]]; then
         echo "ERROR: could not find srs binary in $SRS_FILENAME" >&2
         exit 1
