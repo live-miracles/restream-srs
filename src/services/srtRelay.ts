@@ -1,18 +1,8 @@
 import { spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
-import { existsSync } from 'fs';
-import path from 'path';
 import type { Db, Pipeline } from '../types.js';
 
-function resolveSrtLiveTransmitCmd(): string {
-    if (process.env.SRT_LIVE_TRANSMIT_PATH) return process.env.SRT_LIVE_TRANSMIT_PATH;
-    const local = path.join(process.cwd(), 'objs', 'srt-live-transmit');
-    if (existsSync(local)) return local;
-    if (existsSync('/usr/local/bin/srt-live-transmit')) return '/usr/local/bin/srt-live-transmit';
-    return 'srt-live-transmit';
-}
-
-const SRT_LIVE_TRANSMIT_CMD = resolveSrtLiveTransmitCmd();
+const FFMPEG_CMD = process.env.FFMPEG_PATH || 'ffmpeg';
 const SRS_SRT_PORT = parseInt(process.env.SRS_SRT_PORT || '10080');
 const RELAY_BASE_PORT = 11000;
 const SIGKILL_DELAY_MS = 5000;
@@ -71,19 +61,45 @@ export function createSrtRelayService(db: Db): SrtRelayService {
 
     function relayArgs(pipeline: Pipeline): string[] {
         const passphrase = db.getSetting('srtPassphrase') || null;
-        const relayParams: Record<string, string | number | boolean> = { groupconnect: 1 };
-        const publishParams: Record<string, string | number | boolean> = {
+        // Input: listen for the encoder's bonded SRT group.
+        // latency=240000 µs (240 ms) matches the AJA Bridge Live default; the SRT
+        // handshake negotiates max(sender, receiver) so this is safe for lower values too.
+        const inputParams: Record<string, string | number | boolean> = {
+            mode: 'listener',
+            groupconnect: 1,
+            transtype: 'live',
+            latency: 240000,
+        };
+        // Output: push to SRS only after ffmpeg has received input data.
+        // ffmpeg probes the input before opening the output, so SRS never receives an
+        // idle publisher connection — it only sees the connection once data is flowing,
+        // which avoids SRS's hardcoded 5-second idle-publisher timeout.
+        const outputParams: Record<string, string | number | boolean> = {
             streamid: `#!::r=live/${pipeline.streamKey},m=publish`,
+            transtype: 'live',
+            latency: 200000,
         };
         if (passphrase) {
-            relayParams.passphrase = passphrase;
-            relayParams.pbkeylen = 16;
-            publishParams.passphrase = passphrase;
-            publishParams.pbkeylen = 16;
+            inputParams.passphrase = passphrase;
+            inputParams.pbkeylen = 16;
+            outputParams.passphrase = passphrase;
+            outputParams.pbkeylen = 16;
         }
         return [
-            srtUrl(`srt://:${getPort(pipeline.id)}`, relayParams),
-            srtUrl(`srt://127.0.0.1:${SRS_SRT_PORT}`, publishParams),
+            '-loglevel',
+            'warning',
+            // Declare the input format so ffmpeg skips format probing entirely.
+            // Without this, ffmpeg buffers ~5 s of data before opening the SRS
+            // output, which stalls the stream and can cause the encoder to give up.
+            '-f',
+            'mpegts',
+            '-i',
+            srtUrl(`srt://0.0.0.0:${getPort(pipeline.id)}`, inputParams),
+            '-c',
+            'copy',
+            '-f',
+            'mpegts',
+            srtUrl(`srt://127.0.0.1:${SRS_SRT_PORT}`, outputParams),
         ];
     }
 
@@ -142,7 +158,7 @@ export function createSrtRelayService(db: Db): SrtRelayService {
         if (!pipeline.streamKey) throw new Error('Pipeline stream key is missing');
 
         const args = relayArgs(pipeline);
-        const child = spawn(SRT_LIVE_TRANSMIT_CMD, args, {
+        const child = spawn(FFMPEG_CMD, args, {
             stdio: ['ignore', 'ignore', 'pipe'],
             env: process.env,
         });
@@ -156,7 +172,7 @@ export function createSrtRelayService(db: Db): SrtRelayService {
             lastError: null,
         });
         console.log(
-            `[srt-relay] pipeline ${pipeline.id} listening on UDP ${getPort(pipeline.id)} pid=${child.pid}`,
+            `[ffmpeg-relay] pipeline ${pipeline.id} listening on UDP ${getPort(pipeline.id)} pid=${child.pid}`,
         );
 
         let stderrTail = '';
@@ -172,7 +188,7 @@ export function createSrtRelayService(db: Db): SrtRelayService {
                 startedAtMs: null,
                 lastError: message,
             });
-            console.warn(`[srt-relay] pipeline ${pipeline.id} error:`, message);
+            console.warn(`[ffmpeg-relay] pipeline ${pipeline.id} error:`, message);
         });
 
         child.on('close', (code, signal) => {
@@ -187,7 +203,7 @@ export function createSrtRelayService(db: Db): SrtRelayService {
                 lastError: wasStop ? null : detail ? `${exitStr}\n${detail}` : exitStr,
             });
             console.log(
-                `[srt-relay] pipeline ${pipeline.id} exited code=${code} signal=${signal} status=${wasStop ? 'stopped' : 'failed'}`,
+                `[ffmpeg-relay] pipeline ${pipeline.id} exited code=${code} signal=${signal} status=${wasStop ? 'stopped' : 'failed'}`,
             );
             const wantsRelay = db.getPipeline(pipeline.id)?.bondingEnabled;
             if (wasStop && pendingStart.delete(pipeline.id) && wantsRelay) {
