@@ -6,6 +6,10 @@ import {
     getUrlParam,
     maskStreamKey,
     LOW_BITRATE_KBPS,
+    STATUS_COLOR_GOOD,
+    STATUS_COLOR_WARN,
+    STATUS_COLOR_ERROR,
+    STATUS_COLOR_OFF,
 } from '../core/utils.js';
 import { state } from '../core/state.js';
 import type { InputHealth, PipelineView, OutputView, MetricSample } from '../types.js';
@@ -100,12 +104,12 @@ function renderPipelineList(): void {
             const inColor = statusColor(p.input.live, p.input.recvBitrateKbps);
             const outColor =
                 outFailed > 0
-                    ? '#ef4444'
+                    ? STATUS_COLOR_ERROR
                     : outWarn > 0
-                      ? '#eab308'
+                      ? STATUS_COLOR_WARN
                       : outGood > 0
-                        ? '#22c55e'
-                        : '#6b7280';
+                        ? STATUS_COLOR_GOOD
+                        : STATUS_COLOR_OFF;
             const selected = p.id === selectedId ? 'bg-base-100' : '';
 
             const badge = (n: number, cls: string) =>
@@ -676,12 +680,12 @@ function renderOutputCard(
     const st = outStatus(o, inputLive);
     const statusHex =
         st === 'good'
-            ? '#22c55e'
+            ? STATUS_COLOR_GOOD
             : st === 'warn'
-              ? '#eab308'
+              ? STATUS_COLOR_WARN
               : st === 'error'
-                ? '#ef4444'
-                : '#6b7280';
+                ? STATUS_COLOR_ERROR
+                : STATUS_COLOR_OFF;
     const uptimeMs = st === 'good' && o.startedAtMs !== null ? Date.now() - o.startedAtMs : null;
     const badges = [`<span class="badge badge-sm whitespace-nowrap">${o.videoEncoding}</span>`];
     if (uptimeMs !== null) {

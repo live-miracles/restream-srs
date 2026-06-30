@@ -16,10 +16,15 @@ export function setUrlParam(key: string, value: string | null): void {
 
 export const LOW_BITRATE_KBPS = 200;
 
+export const STATUS_COLOR_GOOD = '#22c55e';
+export const STATUS_COLOR_WARN = '#facc15';
+export const STATUS_COLOR_ERROR = '#ef4444';
+export const STATUS_COLOR_OFF = '#6b7280';
+
 export function statusColor(live: boolean, bitrateKbps?: number | null): string {
-    if (!live) return '#6b7280';
-    if (bitrateKbps != null && bitrateKbps < LOW_BITRATE_KBPS) return '#eab308';
-    return '#22c55e';
+    if (!live) return STATUS_COLOR_OFF;
+    if (bitrateKbps != null && bitrateKbps < LOW_BITRATE_KBPS) return STATUS_COLOR_WARN;
+    return STATUS_COLOR_GOOD;
 }
 
 export function formatBitrate(kbps: number | null): string {
