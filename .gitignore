@@ -8,6 +8,7 @@ public/output.css
 data.db
 *.sqlite
 .env
+srt-bonding-relay.env
 *.mp4
 objs/
 build/

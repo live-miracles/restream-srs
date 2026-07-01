@@ -9,7 +9,6 @@ export interface Pipeline {
     name: string;
     streamKey: string;
     streamKeyId: number;
-    bondingEnabled: boolean;
 }
 
 export interface OutputSink {
@@ -55,8 +54,6 @@ export interface Db {
     getPipeline(id: number): Pipeline | undefined;
     listPipelines(): Pipeline[];
     updatePipeline(id: number, name: string, streamKeyId?: number): Pipeline | null;
-    setPipelineBondingEnabled(id: number, enabled: boolean): Pipeline | null;
-    listBondingEnabledPipelines(): Pipeline[];
     deletePipeline(id: number): boolean;
 
     createOutput(params: {

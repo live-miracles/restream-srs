@@ -21,7 +21,6 @@ import {
     pasteOutputs,
     startAllOutputs,
     stopAllOutputs,
-    setPipelineBonding,
 } from './editor.js';
 
 declare global {
@@ -42,7 +41,6 @@ declare global {
         outputsPasteBtn: () => Promise<void>;
         outputsStartAllBtn: () => Promise<void>;
         outputsStopAllBtn: () => Promise<void>;
-        bondingToggleBtn: (btn?: HTMLButtonElement) => Promise<void>;
         outFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
         outAddSink: () => void;
         outRemoveSink: (btn: HTMLElement) => void;
@@ -120,13 +118,6 @@ window.outputsStopAllBtn = async () => {
     const id = getUrlParam('p');
     const btn = document.getElementById('outputs-stop-all-btn') as HTMLButtonElement | null;
     if (id && btn) await stopAllOutputs(id, btn);
-};
-
-window.bondingToggleBtn = async (btn) => {
-    const id = getUrlParam('p');
-    const pipeline = id ? state.pipelines.find((p) => p.id === id) : null;
-    if (!id || !pipeline) return;
-    await setPipelineBonding(id, !pipeline.bondingEnabled, btn);
 };
 
 window.outFormBtn = (btn) => submitOutputForm(btn);

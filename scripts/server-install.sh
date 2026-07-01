@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-shot native setup for a Linux server.
-# Installs Node.js 22, FFmpeg 7.1, SRS 6.0, srt-group-recv, builds the app,
+# Installs Node.js 22, FFmpeg 7.1, SRS 6.0, srt-bonding-relay, builds the app,
 # and registers systemd services that start on boot.
 #
 # Usage:
@@ -34,12 +34,12 @@ SRS_FILENAME="SRS-CentOS7-x86_64-${SRS_VERSION}.zip"
 SRS_SHA256="1eb20245a76643b2d32a1be85e71015079689a0733a10f79964f9a8189c21609"
 SRS_URL="https://github.com/ossrs/srs/releases/download/${SRS_RELEASE_TAG}/${SRS_FILENAME}"
 
-# Pinned srt-group-recv binary — built once with scripts/build-srt-group-recv.sh
+# Pinned srt-bonding-relay binary — built once with scripts/build-srt-bonding-relay.sh
 # and published as a release asset in this project.
 SRT_VERSION=1.5.5
 SRT_RELEASE_TAG="srt-v${SRT_VERSION}-2"
-SRT_FILENAME="srt-group-recv-linux-x86_64.tar.gz"
-SRT_SHA256=""   # TODO: run scripts/build-srt-group-recv.sh, publish the asset, fill in SHA256
+SRT_FILENAME="srt-bonding-relay-linux-x86_64.tar.gz"
+SRT_SHA256=""   # TODO: run scripts/build-srt-bonding-relay.sh, publish the asset, fill in SHA256
 SRT_URL="https://github.com/live-miracles/restream-srs/releases/download/${SRT_RELEASE_TAG}/${SRT_FILENAME}"
 
 # FFmpeg is pinned to a specific immutable BtbN build (a month-end autobuild tag,
@@ -124,18 +124,18 @@ else
     echo "Installed: $(/usr/local/bin/srs -v 2>&1 | head -1)"
 fi
 
-SRT_VERSION_MARKER=/usr/local/bin/.srt-group-recv-version
-step "5/10 srt-group-recv $SRT_VERSION"
-if [[ -x /usr/local/bin/srt-group-recv && -f "$SRT_VERSION_MARKER" && "$(cat "$SRT_VERSION_MARKER")" == "$SRT_RELEASE_TAG" ]]; then
-    echo "srt-group-recv $SRT_VERSION already installed."
+SRT_VERSION_MARKER=/usr/local/bin/.srt-bonding-relay-version
+step "5/10 srt-bonding-relay $SRT_VERSION"
+if [[ -x /usr/local/bin/srt-bonding-relay && -f "$SRT_VERSION_MARKER" && "$(cat "$SRT_VERSION_MARKER")" == "$SRT_RELEASE_TAG" ]]; then
+    echo "srt-bonding-relay $SRT_VERSION already installed."
 else
     echo "Downloading $SRT_FILENAME ($SRT_RELEASE_TAG)..."
     curl -fsSL "$SRT_URL" -o "$WORK/$SRT_FILENAME"
     verify_sha256 "$WORK/$SRT_FILENAME" "$SRT_SHA256"
     tar -xzf "$WORK/$SRT_FILENAME" -C "$WORK"
-    SRT_BIN="$(find "$WORK" -type f -name srt-group-recv -perm -111 | head -1)"
+    SRT_BIN="$(find "$WORK" -type f -name srt-bonding-relay -perm -111 | head -1)"
     if [[ -z "$SRT_BIN" ]]; then
-        echo "ERROR: could not find srt-group-recv binary in $SRT_FILENAME" >&2
+        echo "ERROR: could not find srt-bonding-relay binary in $SRT_FILENAME" >&2
         exit 1
     fi
     if [[ -d "$WORK/lib" ]]; then
@@ -144,9 +144,9 @@ else
         echo /usr/local/lib/restream-srs-srt > /etc/ld.so.conf.d/restream-srs-srt.conf
         ldconfig
     fi
-    install -m 755 "$SRT_BIN" /usr/local/bin/srt-group-recv
+    install -m 755 "$SRT_BIN" /usr/local/bin/srt-bonding-relay
     echo "$SRT_RELEASE_TAG" > "$SRT_VERSION_MARKER"
-    echo "Installed: /usr/local/bin/srt-group-recv"
+    echo "Installed: /usr/local/bin/srt-bonding-relay"
 fi
 
 step "6/10 Service user and directories"
@@ -225,7 +225,14 @@ if [[ -s "$DB_FILE" ]]; then
     fi
 fi
 touch "$DB_FILE"
-chown "$SERVICE_USER:$SERVICE_USER" "$CONF_DIR/srs.conf" "$DB_FILE"
+if [[ ! -f "$CONF_DIR/srt-bonding-relay.env" ]]; then
+    cat > "$CONF_DIR/srt-bonding-relay.env" <<EOF
+SRT_BONDING_INPUT_URI="srt://0.0.0.0:10081?mode=listener&groupconnect=1&transtype=live&latency=240"
+SRT_BONDING_OUTPUT_URI="srt://127.0.0.1:10080?transtype=live&latency=200"
+SRT_BONDING_STATE_PATH="$DATA_DIR/srt-bonding-relay.state"
+EOF
+fi
+chown "$SERVICE_USER:$SERVICE_USER" "$CONF_DIR/srs.conf" "$CONF_DIR/srt-bonding-relay.env" "$DB_FILE"
 echo "Config: $CONF_DIR/srs.conf"
 echo "Data:   $DB_FILE"
 
@@ -268,11 +275,37 @@ ReadWritePaths=$DATA_DIR $LOG_DIR $CONF_DIR
 WantedBy=multi-user.target
 EOF
 
+cat > /etc/systemd/system/srt-bonding-relay.service <<EOF
+[Unit]
+Description=Shared SRT Bonding Relay
+After=network-online.target srs.service
+Wants=network-online.target srs.service
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+Group=$SERVICE_USER
+WorkingDirectory=$DATA_DIR
+EnvironmentFile=$CONF_DIR/srt-bonding-relay.env
+Environment=SRT_BONDING_STATE_PATH=$DATA_DIR/srt-bonding-relay.state
+ExecStart=/usr/local/bin/srt-bonding-relay \${SRT_BONDING_INPUT_URI} \${SRT_BONDING_OUTPUT_URI}
+Restart=always
+RestartSec=2
+LimitNOFILE=1048576
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=$DATA_DIR $LOG_DIR $CONF_DIR
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 cat > /etc/systemd/system/restream-srs.service <<EOF
 [Unit]
 Description=Restream SRS Control Plane
-After=network-online.target srs.service
-Wants=network-online.target
+After=network-online.target srs.service srt-bonding-relay.service
+Wants=network-online.target srt-bonding-relay.service
 
 [Service]
 Type=simple
@@ -288,6 +321,10 @@ Environment=SRS_API_URL=http://127.0.0.1:1985
 Environment=SRS_RTMP_HOST=127.0.0.1
 Environment=SRS_RTMP_PORT=1935
 Environment=SRS_SRT_PORT=10080
+Environment=SRT_BONDING_PORT=10081
+Environment=SRT_BONDING_RELAY_PATH=/usr/local/bin/srt-bonding-relay
+Environment=SRT_BONDING_RELAY_ENV_PATH=$CONF_DIR/srt-bonding-relay.env
+Environment=SRT_BONDING_STATE_PATH=$DATA_DIR/srt-bonding-relay.state
 Environment=FFMPEG_PATH=/usr/local/bin/ffmpeg
 Environment=FFPROBE_PATH=/usr/local/bin/ffprobe
 ExecStart=/usr/bin/node $APP_DIR/dist/index.js
@@ -312,8 +349,8 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable srs.service restream-srs.service
-systemctl restart srs.service restream-srs.service
+systemctl enable srs.service srt-bonding-relay.service restream-srs.service
+systemctl restart srs.service srt-bonding-relay.service restream-srs.service
 
 echo
 echo "=============================="
@@ -332,9 +369,11 @@ echo "Data:      $DATA_DIR/db.sqlite"
 echo ""
 echo "Check status:"
 echo "  systemctl status srs.service"
+echo "  systemctl status srt-bonding-relay.service"
 echo "  systemctl status restream-srs.service"
 echo ""
 echo "Follow logs:"
+echo "  journalctl -u srt-bonding-relay.service -f"
 echo "  journalctl -u restream-srs.service -f"
 echo "  journalctl -u srs.service -f"
 echo ""

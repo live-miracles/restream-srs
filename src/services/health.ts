@@ -60,6 +60,7 @@ interface PipelineHealth {
 export interface HealthSnapshot {
     generatedAt: string;
     srsReachable: boolean;
+    srtRelay: SrtRelayStats;
     // Config revision at snapshot time. Clients compare this against the rev they
     // loaded /api/config at; a mismatch means the config was edited elsewhere and
     // the client should reload. Carried on the health snapshot so it reaches every
@@ -158,6 +159,7 @@ export function createHealthService(
     let snapshot: HealthSnapshot = {
         generatedAt: new Date().toISOString(),
         srsReachable: false,
+        srtRelay: srtRelayService.getStats(),
         configRev: db.getConfigRev(),
         pipelines: {},
     };
@@ -281,6 +283,7 @@ export function createHealthService(
         }
 
         const pipelinesHealth: Record<string, PipelineHealth> = {};
+        const relayStats = srtRelayService.getStats();
         let ffprobeStagger = 0;
         let restartStagger = 0;
         for (const pipeline of pipelines) {
@@ -354,6 +357,8 @@ export function createHealthService(
 
             const srtStream = nowLive && s?.tcUrl?.startsWith('srt://');
             const probe = ffprobeResults.get(pipeline.id) ?? null;
+            const bondingStreamId = `#!::r=live/${pipeline.streamKey},m=publish`;
+            const bondingActive = srtRelayService.isStreamActive(bondingStreamId);
 
             pipelinesHealth[String(pipeline.id)] = {
                 input: {
@@ -370,13 +375,21 @@ export function createHealthService(
                     audioTracks: probe?.audioTracks ?? [],
                 },
                 outputs: outputsHealth,
-                srtRelay: srtRelayService.getStats(pipeline.id),
+                srtRelay: {
+                    ...relayStats,
+                    status: bondingActive
+                        ? 'running'
+                        : relayStats.status === 'running'
+                          ? 'stopped'
+                          : relayStats.status,
+                },
             };
         }
 
         snapshot = {
             generatedAt: new Date().toISOString(),
             srsReachable,
+            srtRelay: relayStats,
             configRev: db.getConfigRev(),
             pipelines: pipelinesHealth,
         };

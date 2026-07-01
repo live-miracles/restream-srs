@@ -13,7 +13,7 @@ import type {
 } from '../types.js';
 
 const PIPELINE_SELECT = `
-    SELECT p.id, p.name, p.stream_key_id, p.bonding_enabled, COALESCE(sk.key, '') as stream_key
+    SELECT p.id, p.name, p.stream_key_id, COALESCE(sk.key, '') as stream_key
     FROM pipelines p
     LEFT JOIN stream_keys sk ON sk.id = p.stream_key_id
 `;
@@ -28,7 +28,6 @@ function rowToPipeline(row: Record<string, unknown>): Pipeline {
         name: row.name as string,
         streamKey: row.stream_key as string,
         streamKeyId: row.stream_key_id as number,
-        bondingEnabled: !!row.bonding_enabled,
     };
 }
 
@@ -68,9 +67,6 @@ export function createDb(dbPath?: string): Db {
     );
     // Targeted single-row lookups for the hot retry / process-exit paths.
     const stmtGetPipeline = sqlite.prepare(`${PIPELINE_SELECT} WHERE p.id = ?`);
-    const stmtListBondingPipelines = sqlite.prepare(
-        `${PIPELINE_SELECT} WHERE p.bonding_enabled = 1 ORDER BY p.id`,
-    );
     const stmtGetOutput = sqlite.prepare('SELECT * FROM outputs WHERE id = ?');
     const stmtGetExtraSinksByOutput = sqlite.prepare(
         'SELECT seq, url, audio_encoding FROM output_sinks WHERE output_id = ? ORDER BY seq',
@@ -327,19 +323,6 @@ export function createDb(dbPath?: string): Db {
             bumpConfigRev();
             const row = stmtGetPipeline.get(id) as Record<string, unknown> | undefined;
             return row ? rowToPipeline(row) : null;
-        },
-
-        setPipelineBondingEnabled(id: number, enabled: boolean): Pipeline | null {
-            sqlite
-                .prepare('UPDATE pipelines SET bonding_enabled = ? WHERE id = ?')
-                .run(enabled ? 1 : 0, id);
-            bumpConfigRev();
-            const row = stmtGetPipeline.get(id) as Record<string, unknown> | undefined;
-            return row ? rowToPipeline(row) : null;
-        },
-
-        listBondingEnabledPipelines(): Pipeline[] {
-            return (stmtListBondingPipelines.all() as Record<string, unknown>[]).map(rowToPipeline);
         },
 
         deletePipeline(id: number): boolean {

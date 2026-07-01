@@ -9,7 +9,6 @@ export interface Pipeline {
     name: string;
     streamKey: string;
     streamKeyId: number;
-    bondingEnabled: boolean;
     rtmpPublishUrl: string;
     srtPublishUrl: string;
 }
@@ -126,6 +125,7 @@ export interface PipelineHealth {
 export interface HealthData {
     generatedAt: string;
     srsReachable: boolean;
+    srtRelay: SrtRelayStatus;
     configRev: number;
     pipelines: Record<string, PipelineHealth>;
 }
@@ -163,7 +163,6 @@ export interface PipelineView {
     name: string;
     streamKey: string;
     streamKeyId: number;
-    bondingEnabled: boolean;
     srtRelay: SrtRelayStatus;
     rtmpPublishUrl: string;
     srtPublishUrl: string;

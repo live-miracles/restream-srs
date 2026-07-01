@@ -100,9 +100,6 @@ export const updatePipeline = (id: string, name: string, streamKeyId?: number) =
 export const deletePipeline = (id: string) =>
     apiRequest(`/api/pipelines/${id}`, { method: 'DELETE' });
 
-export const setPipelineBonding = (id: string, enabled: boolean) =>
-    apiRequest(`/api/pipelines/${id}/bonding`, { method: 'POST', body: { enabled } });
-
 export const createOutput = (pipelineId: string, data: OutputPayload) =>
     apiRequest(`/api/pipelines/${pipelineId}/outputs`, { method: 'POST', body: data });
 

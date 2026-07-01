@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
-# Build a pinned srt-group-recv release asset.
+# Build a pinned SRT bonding relay release asset.
 # This is not used by production installs; run it only when intentionally
 # preparing a new GitHub release asset for scripts/server-install.sh.
 #
 # Usage:
-#   bash scripts/build-srt-group-recv.sh
+#   bash scripts/build-srt-bonding-relay.sh
 #
 # Output:
-#   ./build/srt-group-recv-linux-x86_64.tar.gz
+#   ./build/srt-bonding-relay-linux-x86_64.tar.gz
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SRT_TAG="${SRT_TAG:-v1.5.5}"
 OUT_DIR="${OUT_DIR:-$REPO_DIR/build}"
-OUT_TGZ="$OUT_DIR/srt-group-recv-linux-x86_64.tar.gz"
-IMAGE_TAG="restream-srs-srt-group-recv:${SRT_TAG}"
+OUT_TGZ="$OUT_DIR/srt-bonding-relay-linux-x86_64.tar.gz"
+IMAGE_TAG="restream-srs-srt-bonding-relay:${SRT_TAG}"
 CONTAINER_NAME="restream-srs-srt-package-$$"
 
 step() { echo; echo "=== $* ==="; }
 
 step "Check Docker"
 if ! command -v docker &>/dev/null; then
-    echo "ERROR: Docker is required to build srt-group-recv." >&2
+    echo "ERROR: Docker is required to build srt-bonding-relay." >&2
     echo "Install: https://docs.docker.com/engine/install/" >&2
     exit 1
 fi
@@ -44,7 +44,7 @@ step "Build image"
 docker build \
     --build-arg "SRT_TAG=$SRT_TAG" \
     -t "$IMAGE_TAG" \
-    -f "$REPO_DIR/scripts/docker/srt-group-recv.Dockerfile" \
+    -f "$REPO_DIR/scripts/srt-bonding-relay.Dockerfile" \
     "$REPO_DIR"
 
 step "Package asset"

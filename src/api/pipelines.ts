@@ -23,7 +23,7 @@ export function registerPipelineApi(
         if (!pipeline) return res.status(404).json({ error: 'Pipeline not found' });
         return res.json({
             ...pipeline,
-            srtRelay: srtRelayService.getStats(id),
+            srtRelay: srtRelayService.getStats(),
         });
     });
 
@@ -45,11 +45,6 @@ export function registerPipelineApi(
                     .status(409)
                     .json({ error: 'Stop all outputs before changing the stream key' });
             }
-            if (existing.bondingEnabled) {
-                return res
-                    .status(409)
-                    .json({ error: 'Stop SRT bonding before changing the stream key' });
-            }
             // The preview pulls a fixed stream key and has no retry loop, so a
             // key reassignment would leave it pinned to the old key. Stop it;
             // the user can replay against the new key.
@@ -58,35 +53,6 @@ export function registerPipelineApi(
 
         const updated = db.updatePipeline(id, name, streamKeyId);
         return res.json(updated);
-    });
-
-    app.post('/api/pipelines/:id/bonding', (req, res) => {
-        const id = parseInt(req.params.id);
-        if (isNaN(id)) return res.status(400).json({ error: 'invalid id' });
-        if (!db.getPipeline(id)) return res.status(404).json({ error: 'Pipeline not found' });
-
-        const enabled = req.body?.enabled;
-        if (typeof enabled !== 'boolean') {
-            return res.status(400).json({ error: 'enabled boolean is required' });
-        }
-
-        try {
-            const updated = db.setPipelineBondingEnabled(id, enabled);
-            if (enabled) srtRelayService.start(id);
-            else srtRelayService.stop(id);
-            return res.json({
-                ok: true,
-                pipeline: updated,
-                srtRelay: srtRelayService.getStats(id),
-            });
-        } catch (err) {
-            try {
-                db.setPipelineBondingEnabled(id, false);
-            } catch {
-                /* best-effort */
-            }
-            return res.status(400).json({ error: (err as Error).message });
-        }
     });
 
     app.delete('/api/pipelines/:id', async (req, res) => {
@@ -102,7 +68,6 @@ export function registerPipelineApi(
         }
 
         previewService.stop(id);
-        await srtRelayService.stopAndWait(id);
         const outputs = db.listOutputsForPipeline(id);
         await Promise.all(outputs.map((o) => outputService.stopAndWait(o.id)));
 

@@ -95,6 +95,13 @@ async function fetchAndRender(): Promise<void> {
     const srsBanner = document.getElementById('srs-banner');
     srsBanner?.classList.toggle('hidden', !showSrsBanner);
     srsBanner?.classList.toggle('flex', showSrsBanner);
+    const showSrtRelayBanner =
+        !isServerUnreachable() &&
+        !!state.health.srtRelay &&
+        state.health.srtRelay.status !== 'running';
+    const srtRelayBanner = document.getElementById('srt-relay-banner');
+    srtRelayBanner?.classList.toggle('hidden', !showSrtRelayBanner);
+    srtRelayBanner?.classList.toggle('flex', showSrtRelayBanner);
     if (metricsResult) state.metrics = metricsResult;
     if (historyResult) state.metricsHistory = historyResult;
     state.pipelines = parsePipelines(state.config, state.health);

@@ -20,7 +20,7 @@ import {
     checkIsAuthenticated,
 } from './api/auth.js';
 import { registerVersionApi } from './api/version.js';
-import { writeSrsConf } from './utils/conf.js';
+import { writeSrsConf, writeSrtBondingRelayEnv } from './utils/conf.js';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '8080');
@@ -35,7 +35,7 @@ const db = createDb();
 initializePassword(db);
 
 const outputService = createOutputService(db);
-const srtRelayService = createSrtRelayService(db);
+const srtRelayService = createSrtRelayService();
 const healthService = createHealthService(db, outputService, srtRelayService);
 const previewService = createPreviewService(db, healthService.getInputProtocol);
 
@@ -106,9 +106,10 @@ app.use(
 );
 
 async function main(): Promise<void> {
-    writeSrsConf(db.getSetting('srtPassphrase') || null);
+    const srtPassphrase = db.getSetting('srtPassphrase') || null;
+    writeSrsConf(srtPassphrase);
+    writeSrtBondingRelayEnv(srtPassphrase);
 
-    srtRelayService.restartAll();
     healthService.start();
 
     app.listen(PORT, () => {

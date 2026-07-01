@@ -1,23 +1,11 @@
-import { spawn } from 'child_process';
-import type { ChildProcess } from 'child_process';
-import { existsSync } from 'fs';
-import type { Db, Pipeline } from '../types.js';
+import fs from 'fs';
+import path from 'path';
 
-const SRS_SRT_PORT = parseInt(process.env.SRS_SRT_PORT || '10080');
-const RELAY_BASE_PORT = 11000;  // encoder-facing listener ports
-const SIGKILL_DELAY_MS = 5000;
-const STDERR_TAIL_BYTES = 3000;
-const RESTART_DELAY_MS = 5000;
-
-function resolveSrtGroupRecv(): string {
-    if (process.env.SRT_GROUP_RECV_PATH) return process.env.SRT_GROUP_RECV_PATH;
-    for (const p of ['./objs/srt-group-recv', '/usr/local/bin/srt-group-recv']) {
-        if (existsSync(p)) return p;
-    }
-    return 'srt-group-recv';
-}
-
-const SRT_GROUP_RECV_CMD = resolveSrtGroupRecv();
+const SRT_BONDING_PORT = parseInt(process.env.SRT_BONDING_PORT || '10081');
+const SRT_BONDING_STATE_PATH =
+    process.env.SRT_BONDING_STATE_PATH ||
+    path.join(process.cwd(), 'objs', 'srt-bonding-relay.state');
+const SRT_BONDING_STATE_STALE_MS = 15000;
 
 export interface SrtRelayStats {
     status: 'running' | 'stopping' | 'stopped' | 'failed';
@@ -27,254 +15,65 @@ export interface SrtRelayStats {
 }
 
 export interface SrtRelayService {
-    getPort(pipelineId: number): number;
-    getStats(pipelineId: number): SrtRelayStats;
-    start(pipelineId: number): void;
-    stop(pipelineId: number): void;
-    stopAndWait(pipelineId: number): Promise<void>;
-    restartAll(): void;
+    getPort(): number;
+    getStats(): SrtRelayStats;
+    isStreamActive(streamId: string): boolean;
     shutdown(): void;
 }
 
-export function createSrtRelayService(db: Db): SrtRelayService {
-    const procs = new Map<number, ChildProcess>();
-    const statuses = new Map<number, SrtRelayStats>();
-    const stopRequested = new Set<number>();
-    const pendingStart = new Set<number>();
-    const timers = new Map<number, NodeJS.Timeout>();
+interface RelayStateFile {
+    pid?: number;
+    startedAtMs?: number;
+    updatedAtMs?: number;
+    activeStreamIds?: string[];
+}
 
-    function getPort(pipelineId: number): number {
-        return RELAY_BASE_PORT + pipelineId;
+function readRelayState(): RelayStateFile | null {
+    try {
+        const raw = fs.readFileSync(SRT_BONDING_STATE_PATH, 'utf8');
+        return JSON.parse(raw) as RelayStateFile;
+    } catch {
+        return null;
     }
+}
 
-    function getStats(pipelineId: number): SrtRelayStats {
-        return (
-            statuses.get(pipelineId) ?? {
-                status: 'stopped',
-                pid: null,
-                startedAtMs: null,
-                lastError: null,
-            }
+export function createSrtRelayService(): SrtRelayService {
+    function activeStreamIds(state: RelayStateFile | null): Set<string> {
+        return new Set(
+            (state?.activeStreamIds ?? []).filter((s): s is string => typeof s === 'string'),
         );
     }
 
-    function setStatus(pipelineId: number, stats: SrtRelayStats): void {
-        statuses.set(pipelineId, stats);
-    }
-
-    function isRunning(pipelineId: number): boolean {
-        return procs.has(pipelineId);
-    }
-
-    function srtUrl(base: string, params: Record<string, string | number | boolean>): string {
-        const qs = Object.entries(params)
-            .map(([k, v]) => `${k}=${k === 'streamid' ? String(v) : encodeURIComponent(String(v))}`)
-            .join('&');
-        return `${base}?${qs}`;
-    }
-
-    // srt-group-recv: accepts the bonded SRT group from the encoder and forwards
-    // directly to SRS as a plain SRT caller. The SRS connection is opened only when
-    // the encoder connects, so SRS's idle-publisher timeout is never triggered.
-    function relayArgs(pipeline: Pipeline): string[] {
-        const passphrase = db.getSetting('srtPassphrase') || null;
-        const relayPort = getPort(pipeline.id);
-
-        const inputParams: Record<string, string | number | boolean> = {
-            mode: 'listener',
-            groupconnect: 1,
-            transtype: 'live',
-            latency: 240,  // milliseconds (SRTO_LATENCY unit since SRT 1.3.0)
-        };
-        if (passphrase) {
-            inputParams.passphrase = passphrase;
-            inputParams.pbkeylen = 16;
+    function currentState(): RelayStateFile | null {
+        const state = readRelayState();
+        if (!state?.updatedAtMs || Date.now() - state.updatedAtMs > SRT_BONDING_STATE_STALE_MS) {
+            return null;
         }
-
-        const outputParams: Record<string, string | number | boolean> = {
-            streamid: `#!::r=live/${pipeline.streamKey},m=publish`,
-            transtype: 'live',
-            latency: 200,  // milliseconds
-        };
-        if (passphrase) {
-            outputParams.passphrase = passphrase;
-            outputParams.pbkeylen = 16;
-        }
-
-        return [
-            srtUrl(`srt://0.0.0.0:${relayPort}`, inputParams),
-            srtUrl(`srt://127.0.0.1:${SRS_SRT_PORT}`, outputParams),
-        ];
-    }
-
-    function clearTimer(pipelineId: number): void {
-        const timer = timers.get(pipelineId);
-        if (timer) clearTimeout(timer);
-        timers.delete(pipelineId);
-    }
-
-    function scheduleRestart(pipelineId: number): void {
-        clearTimer(pipelineId);
-        const timer = setTimeout(() => {
-            timers.delete(pipelineId);
-            if (db.getPipeline(pipelineId)?.bondingEnabled) start(pipelineId);
-        }, RESTART_DELAY_MS);
-        timer.unref?.();
-        timers.set(pipelineId, timer);
-    }
-
-    function killProc(proc: ChildProcess): Promise<void> {
-        return new Promise<void>((resolve) => {
-            if (proc.exitCode !== null || proc.signalCode !== null) {
-                resolve();
-                return;
-            }
-            const t = setTimeout(() => {
-                try {
-                    proc.kill('SIGKILL');
-                } catch {
-                    /* already gone */
-                }
-            }, SIGKILL_DELAY_MS);
-            proc.once('exit', () => {
-                clearTimeout(t);
-                resolve();
-            });
-            try {
-                proc.kill('SIGTERM');
-            } catch {
-                clearTimeout(t);
-                resolve();
-            }
-        });
-    }
-
-    function start(pipelineId: number): void {
-        clearTimer(pipelineId);
-        if (isRunning(pipelineId)) {
-            if (stopRequested.has(pipelineId)) pendingStart.add(pipelineId);
-            return;
-        }
-        pendingStart.delete(pipelineId);
-
-        const pipeline = db.getPipeline(pipelineId);
-        if (!pipeline) throw new Error('Pipeline not found');
-        if (!pipeline.streamKey) throw new Error('Pipeline stream key is missing');
-
-        const relayPort = getPort(pipelineId);
-
-        const proc = spawn(SRT_GROUP_RECV_CMD, relayArgs(pipeline), {
-            stdio: ['ignore', 'ignore', 'pipe'],
-            env: process.env,
-        });
-        procs.set(pipelineId, proc);
-
-        const startedAtMs = Date.now();
-        setStatus(pipelineId, {
-            status: 'running',
-            pid: proc.pid ?? null,
-            startedAtMs,
-            lastError: null,
-        });
-        console.log(
-            `[srt-relay] pipeline ${pipelineId} listening on SRT :${relayPort} → SRS :${SRS_SRT_PORT} (pid=${proc.pid})`,
-        );
-
-        let stderr = '';
-        proc.stderr?.on('data', (d: Buffer) => {
-            stderr = (stderr + d.toString()).slice(-STDERR_TAIL_BYTES);
-        });
-
-        proc.on('error', (err) => {
-            console.warn(`[srt-relay] pipeline ${pipelineId} error:`, err.message);
-        });
-
-        proc.on('close', (code, signal) => {
-            console.log(`[srt-relay] pipeline ${pipelineId} exited code=${code} signal=${signal}`);
-            procs.delete(pipelineId);
-
-            const wasStop = stopRequested.delete(pipelineId);
-            const wantsRelay = db.getPipeline(pipelineId)?.bondingEnabled;
-            const exitStr = `exit=${code ?? signal}`;
-
-            setStatus(pipelineId, {
-                status: wasStop ? 'stopped' : 'failed',
-                pid: null,
-                startedAtMs: null,
-                lastError: wasStop ? null : stderr.trim() ? `${exitStr}\n${stderr.trim()}` : exitStr,
-            });
-            console.log(
-                `[srt-relay] pipeline ${pipelineId} relay down status=${wasStop ? 'stopped' : 'failed'}`,
-            );
-
-            if (wasStop && pendingStart.delete(pipelineId) && wantsRelay) {
-                start(pipelineId);
-            } else if (!wasStop && wantsRelay) {
-                scheduleRestart(pipelineId);
-            }
-        });
+        return state;
     }
 
     return {
-        getPort,
-        getStats,
-        start,
-
-        stop(pipelineId: number): void {
-            clearTimer(pipelineId);
-            if (isRunning(pipelineId)) {
-                pendingStart.delete(pipelineId);
-                stopRequested.add(pipelineId);
-                const { pid, startedAtMs } = getStats(pipelineId);
-                setStatus(pipelineId, { status: 'stopping', pid, startedAtMs, lastError: null });
-                const proc = procs.get(pipelineId);
-                if (proc) void killProc(proc);
-            } else {
-                setStatus(pipelineId, {
-                    status: 'stopped',
-                    pid: null,
-                    startedAtMs: null,
-                    lastError: null,
-                });
-            }
+        getPort(): number {
+            return SRT_BONDING_PORT;
         },
 
-        async stopAndWait(pipelineId: number): Promise<void> {
-            clearTimer(pipelineId);
-            if (!isRunning(pipelineId)) {
-                setStatus(pipelineId, {
-                    status: 'stopped',
-                    pid: null,
-                    startedAtMs: null,
-                    lastError: null,
-                });
-                return;
-            }
-            pendingStart.delete(pipelineId);
-            stopRequested.add(pipelineId);
-            const { pid, startedAtMs } = getStats(pipelineId);
-            setStatus(pipelineId, { status: 'stopping', pid, startedAtMs, lastError: null });
-            const proc = procs.get(pipelineId);
-            if (proc) await killProc(proc);
+        getStats(): SrtRelayStats {
+            const state = currentState();
+            const pid = typeof state?.pid === 'number' ? state.pid : null;
+            return {
+                status: state ? 'running' : 'stopped',
+                pid,
+                startedAtMs: typeof state?.startedAtMs === 'number' ? state.startedAtMs : null,
+                lastError: null,
+            };
         },
 
-        restartAll(): void {
-            for (const pipeline of db.listBondingEnabledPipelines()) start(pipeline.id);
+        isStreamActive(streamId: string): boolean {
+            return activeStreamIds(currentState()).has(streamId);
         },
 
         shutdown(): void {
-            for (const timer of timers.values()) clearTimeout(timer);
-            timers.clear();
-            pendingStart.clear();
-            for (const pipelineId of procs.keys()) stopRequested.add(pipelineId);
-            for (const proc of procs.values()) {
-                try {
-                    proc.kill('SIGKILL');
-                } catch {
-                    /* already gone */
-                }
-            }
-            procs.clear();
+            // systemd owns srt-bonding-relay.service; the Node app never stops it.
         },
     };
 }

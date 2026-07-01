@@ -37,7 +37,7 @@ function fmtFieldOrder(fo: string | null | undefined): string | null {
 }
 
 const pendingOutputs = new Map<string, 'start' | 'stop'>();
-const SRT_RELAY_BASE_PORT = 11000;
+const SRT_BONDING_PORT = 10081;
 
 function outStatus(o: OutputView, inputLive: boolean): OutStatus {
     if (o.desiredState === 'stopped') return 'off';
@@ -644,41 +644,37 @@ function renderPipelineInfo(selectedId: string | null): void {
 
     const bondingCard = document.getElementById('srt-bonding-card');
     const bondingDot = document.getElementById('srt-bonding-status-dot');
-    const bondingBtn = document.getElementById(
-        'srt-bonding-toggle-btn',
-    ) as HTMLButtonElement | null;
     const bondingUrl = document.getElementById('srt-bonding-url');
-    const relayRunning = pipeline.srtRelay.status === 'running';
-    const relayFailed = pipeline.srtRelay.status === 'failed';
+    const bondingActive = pipeline.srtRelay.status === 'running';
+    const relayProcessRunning = state.health.srtRelay?.status === 'running';
     const bondingHost = state.config.publicHost || 'localhost';
-    const bondingPortValue = SRT_RELAY_BASE_PORT + Number(pipeline.id);
+    const bondingPortValue = SRT_BONDING_PORT;
+    const bondingStreamId = `#!::r=live/${pipeline.streamKey},m=publish`;
     const bondingUrlValue =
         `srt://${bondingHost}:${bondingPortValue}?mode=caller&grouptype=broadcast` +
+        `&streamid=${bondingStreamId}` +
         (state.config.srtPassphrase
             ? `&passphrase=${encodeURIComponent(state.config.srtPassphrase)}&pbkeylen=16`
             : '');
     bondingCard?.classList.remove('opacity-60');
     if (bondingDot) {
-        bondingDot.style.backgroundColor = relayRunning
+        bondingDot.style.backgroundColor = bondingActive
             ? STATUS_COLOR_GOOD
-            : relayFailed
+            : !relayProcessRunning
               ? STATUS_COLOR_ERROR
               : STATUS_COLOR_OFF;
-        bondingDot.title = relayRunning
-            ? 'Relay running'
-            : relayFailed
-              ? 'Relay failed'
-              : 'Relay stopped';
-    }
-    if (bondingBtn) {
-        bondingBtn.textContent = pipeline.bondingEnabled ? 'Stop' : 'Start';
-        bondingBtn.classList.toggle('btn-outline', pipeline.bondingEnabled);
+        bondingDot.title = bondingActive
+            ? 'Bonded SRT input active for this stream key'
+            : relayProcessRunning
+              ? 'No bonded SRT input for this stream key'
+              : 'SRT bonding relay is not running';
     }
     if (bondingUrl) {
         bondingUrl.textContent = bondingUrlValue.replace(pipeline.streamKey, masked);
         bondingUrl.dataset.copy = bondingUrlValue;
         bondingUrl.dataset.ip = bondingHost;
         bondingUrl.dataset.port = String(bondingPortValue);
+        bondingUrl.dataset.streamId = bondingStreamId;
     }
 
     renderPreview(pipeline);

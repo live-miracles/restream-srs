@@ -7,8 +7,8 @@
     "scripts": {
         "start": "node dist/index.js",
         "dev": "concurrently -n server,frontend,css -c cyan,yellow,magenta \"npx tsx watch src/index.ts\" \"npx tsc -p tsconfig.json --watch\" \"npx tailwindcss -i public/input.css -o public/output.css --watch\"",
-        "srs:start": "mkdir -p objs && ./objs/srs -c srs.conf",
-        "srs:stop": "kill $(cat objs/srs.pid) 2>/dev/null && echo 'SRS stopped' || echo 'SRS not running'",
+        "srs": "mkdir -p objs && ./objs/srs -c srs.conf",
+        "relay": "bash scripts/srt-bonding-relay-start.sh",
         "dev-install": "bash scripts/dev-server-install.sh",
         "build": "npm run build:backend && npm run build:frontend",
         "build:backend": "npx tsc -p tsconfig.backend.json",

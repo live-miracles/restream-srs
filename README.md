@@ -1,13 +1,13 @@
 # restream-srs
 
-Minimal streaming server — takes RTMP/SRT inputs and restreams them to multiple RTMP/SRT outputs. Built on official [SRS](https://github.com/ossrs/srs) for ingest, `srt-live-transmit` for optional SRT bonding relays, and FFmpeg for outputs. Node.js + TypeScript backend.
+Minimal streaming server — takes RTMP/SRT inputs and restreams them to multiple RTMP/SRT outputs. Built on official [SRS](https://github.com/ossrs/srs) for ingest, `srt-bonding-relay` for bonded SRT ingress, and FFmpeg for outputs. Node.js + TypeScript backend.
 
 Designed to handle tens of simultaneous pipelines (inputs) and hundreds of output forwards running continuously across long events. See [Capacity & Limits](#capacity--limits) for the tested envelope.
 
 ```
 OBS / ffmpeg  ──RTMP────────►  SRS (1935)   ──FFmpeg──►  YouTube / Facebook / ...
               ──SRT─────────►  SRS (10080)  ──FFmpeg──►  rtmp:// or srt://
-              ──SRT bonding─►  srt-live-transmit (11000+pipeline) ──► SRS
+              ──SRT bonding─►  srt-bonding-relay (10081) ──► SRS
 ```
 
 ---
@@ -17,7 +17,7 @@ OBS / ffmpeg  ──RTMP────────►  SRS (1935)   ──FFmpeg�
 | Component | Description |
 |-----------|-------------|
 | SRS | Ingest broker — accepts RTMP and SRT streams |
-| srt-live-transmit | Optional per-pipeline SRT bonding relay into SRS |
+| srt-bonding-relay | Shared SRT bonding relay into SRS |
 | Node.js app | REST API + dashboard on port 8080 |
 | FFmpeg | One process per output, spawned and managed by the app |
 | SQLite | Persistent state for pipelines, outputs, stream keys, settings |
@@ -70,9 +70,10 @@ This app now runs natively on Linux. The production setup uses two systemd servi
 | Service | Purpose |
 |---------|---------|
 | `srs.service` | Native SRS binary, started as `/usr/local/bin/srs -c /etc/restream-srs/srs.conf` |
+| `srt-bonding-relay.service` | Shared SRT bonding relay, started on UDP port 10081 |
 | `restream-srs.service` | Node.js dashboard/API, started from `/opt/restream-srs/dist/index.js` |
 
-The installer downloads the official SRS release binary and a pinned `srt-live-transmit` binary from this project's GitHub releases. The `srt-live-transmit` asset is built separately from Haivision's official SRT source and verified by SHA256 during install.
+The installer downloads the official SRS release binary and a pinned `srt-bonding-relay` binary from this project's GitHub releases. The relay asset is built separately from Haivision's official SRT source and verified by SHA256 during install.
 
 **Production install:**
 ```bash
@@ -98,7 +99,7 @@ Open the dashboard: `http://SERVER_IP:8080` — default password is `admin`.
 |------|----------|---------|
 | 1935 | TCP | RTMP input |
 | 10080 | UDP | SRT input |
-| 11001-11050 | UDP | Optional SRT bonding relay inputs, one per pipeline |
+| 10081 | UDP | SRT bonding input |
 | 8080 | TCP | Dashboard + API |
 
 ### SRS config reload
@@ -109,9 +110,8 @@ The app writes SRS settings to `/etc/restream-srs/srs.conf`. SRS only reads this
 sudo systemctl restart srs.service
 ```
 
-Running SRT bonding relays also read the passphrase when they start. After a
-passphrase change, stop and start any enabled bonding relays from the dashboard
-so they reconnect to SRS with the new passphrase.
+The SRT bonding relay also reads the passphrase when it starts. After a
+passphrase change, restart `srt-bonding-relay.service` and `srs.service`.
 
 ---
 
@@ -143,15 +143,13 @@ srt://YOUR_HOST:10080?streamid=#!::r=live/key01_<random>,m=publish
 
 When an SRT passphrase is configured, the dashboard appends `passphrase` and `pbkeylen=16` to the publish URL. Clients without the matching passphrase are rejected by SRS during the SRT handshake.
 
-**SRT bonding (path redundancy):** Enable SRT Bonding on a pipeline in the dashboard. The app starts one `srt-live-transmit` relay for that pipeline on UDP port `11000 + pipelineId` (for example pipeline 5 listens on `11005`) and forwards the deduplicated stream into SRS on `10080`. The pipeline is selected by the relay port, not by an encoder stream ID. Configure all redundant encoder paths to the bonding URL shown in the pipeline details, for example:
+**SRT bonding (path redundancy):** `srt-bonding-relay.service` starts on boot and listens on UDP port `10081`. It accepts bonded SRT groups, forwards the deduplicated stream into SRS on `10080`, and preserves the incoming SRT stream ID. Configure all redundant encoder paths to the bonding URL shown in the pipeline details, for example:
 
 ```
-srt://YOUR_HOST:11005?mode=caller&grouptype=broadcast
+srt://YOUR_HOST:10081?mode=caller&grouptype=broadcast&streamid=#!::r=live/key01_<random>,m=publish
 ```
 
-The dashboard exposes copy buttons for the bonding IP, port and full URL. Do not
-add `streamid` to the encoder-facing bonding URL; the relay publishes into SRS
-with the pipeline's stream key internally.
+The dashboard exposes copy buttons for the bonding IP, port and full URL.
 
 When an SRT passphrase is configured, the dashboard appends `passphrase` and `pbkeylen=16` to the bonding URL and the relay also uses that passphrase when publishing into SRS.
 
@@ -221,9 +219,8 @@ RTMP input → RTMP pull), so there is no pull-method setting.
 | GET | `/api/metrics/system` | Host CPU, RAM, disk and network stats |
 | GET | `/api/srs-logs` | Recent SRS up/down events and a tail of the SRS log |
 | POST | `/api/pipelines` | Create pipeline (auto-names and assigns stream key) |
-| GET | `/api/pipelines/:id` | Pipeline details including SRT bonding desired/runtime state |
+| GET | `/api/pipelines/:id` | Pipeline details including SRT bonding runtime state |
 | POST | `/api/pipelines/:id` | Rename pipeline `{ name }`, optionally reassign key `{ name, streamKeyId }` |
-| POST | `/api/pipelines/:id/bonding` | Start/stop SRT bonding relay `{ enabled: boolean }` |
 | DELETE | `/api/pipelines/:id` | Delete pipeline (stream key is freed, not deleted) |
 | GET | `/api/pipelines/:id/logs` | Pipeline online/offline event log |
 | POST | `/api/pipelines/:id/preview/start` | Start an HLS preview `{ audioTrack? }` |
@@ -253,7 +250,7 @@ Prerequisites: Node.js 22+, FFmpeg.
 **1. Install dependencies and local media binaries:**
 ```bash
 npm install
-npm run dev-install   # downloads SRS and srt-live-transmit into ./objs, no root required
+npm run dev-install   # downloads SRS and srt-bonding-relay into ./objs, no root required
 ```
 
 To use a local SRS binary:
@@ -261,15 +258,23 @@ To use a local SRS binary:
 SRS_LOCAL_BIN=./build/srs npm run dev-install
 ```
 
-**Publishing a new pinned `srt-live-transmit` release asset** (requires Docker and `gh`):
+To test a locally built relay before publishing a GitHub release:
 ```bash
-# Build from Haivision/srt using scripts/docker/srt-live-transmit.Dockerfile.
-bash scripts/build-srt-live-transmit.sh
+# From the release tarball produced by scripts/build-srt-bonding-relay.sh
+SRT_LOCAL_TGZ=./build/srt-bonding-relay-linux-x86_64.tar.gz npm run dev-install
+
+# Or from a raw local binary
+SRT_LOCAL_BIN=/path/to/srt-bonding-relay npm run dev-install
+```
+
+**Publishing a new pinned `srt-bonding-relay` release asset** (requires Docker and `gh`):
+```bash
+bash scripts/build-srt-bonding-relay.sh
 
 # Upload to GitHub releases (bump the tag for each new build).
-gh release create srt-v1.5.5-1 "./build/srt-live-transmit-linux-x86_64.tar.gz" \
+gh release create srt-v1.5.5-2 "./build/srt-bonding-relay-linux-x86_64.tar.gz" \
   --repo live-miracles/restream-srs \
-  --title "srt-live-transmit v1.5.5" \
+  --title "srt-bonding-relay v1.5.5" \
   --notes "Built from Haivision/srt v1.5.5 for restream-srs."
 
 # Update SRT_RELEASE_TAG and SRT_SHA256 in scripts/server-install.sh
@@ -281,15 +286,34 @@ gh release create srt-v1.5.5-1 "./build/srt-live-transmit-linux-x86_64.tar.gz" \
 npm run srs           # runs ./objs/srs -c srs.conf in the foreground
 ```
 
-**3. Start the app** (terminal 2):
+**3. Start the SRT bonding relay** (terminal 2):
+```bash
+npm run relay         # runs ./objs/srt-bonding-relay on UDP/SRT 10081
+```
+
+The relay writes its runtime state to `./objs/srt-bonding-relay.state` in
+development, including a heartbeat and the active incoming bonding stream IDs.
+The dashboard uses that file to show the top-level relay status and the
+per-pipeline SRT Bonding status.
+
+After changing relay C code, rebuild and reinstall the local relay before
+testing:
+```bash
+bash scripts/build-srt-bonding-relay.sh
+SRT_LOCAL_TGZ=./build/srt-bonding-relay-linux-x86_64.tar.gz npm run dev-install
+```
+
+**4. Start the app** (terminal 3):
 ```bash
 npm run dev           # tsx watch + tsc watch + tailwind watch
 ```
 
-If the app rewrites `srs.conf` after a passphrase change, restart SRS:
+If the app rewrites `srs.conf` or `srt-bonding-relay.env` after a passphrase change, restart SRS and the relay:
 ```bash
 Ctrl-C  # in terminal 1
 npm run srs
+Ctrl-C  # in terminal 2
+npm run relay
 ```
 
 ---
@@ -307,7 +331,8 @@ npm run srs
 | `SRS_LOG_PATH` | `./objs/srs.log` | SRS log path read for the dashboard log tail |
 | `FFMPEG_PATH` | `ffmpeg` | FFmpeg binary (uses `$PATH` if unset) |
 | `FFPROBE_PATH` | `ffprobe` | FFprobe binary (uses `$PATH` if unset) |
-| `SRT_LIVE_TRANSMIT_PATH` | auto-detected | Optional override. Defaults to `./objs/srt-live-transmit` when present, then `/usr/local/bin/srt-live-transmit`, then `$PATH`. |
+| `SRT_BONDING_PORT` | `10081` | Shared SRT bonding listener port |
+| `SRT_BONDING_RELAY_ENV_PATH` | beside `srs.conf` | Env file consumed by `srt-bonding-relay.service` |
 | `PORT` | `8080` | App HTTP port |
 
 ## Known issues
@@ -328,20 +353,15 @@ which preserves every audio track and keeps timestamps intact; the HLS preview i
 generated by the app's own ffmpeg rather than SRS's native HLS. RTMP inputs are
 unaffected — they never went through `srt_to_rtmp` — and are pulled over RTMP.
 
-### SRT bonding relay: two-process design
+### SRT bonding relay
 
-The relay uses a two-process pipeline to work around two otherwise-conflicting constraints:
+The relay exists to work around two constraints:
 
-1. **ffmpeg cannot accept bonded SRT group connections.** ffmpeg's SRT handler does not set `SRTO_GROUPCONNECT=1` on its listener socket — the option is silently ignored, so bonded (group) connection attempts from encoders like AJA Bridge Live are rejected at the handshake level. `srt-live-transmit` does support `groupconnect=1` correctly, so it must handle the encoder-facing side.
+1. **ffmpeg cannot accept bonded SRT group connections.** ffmpeg's SRT handler does not set `SRTO_GROUPCONNECT=1` on its listener socket, so bonded connection attempts from encoders like AJA Bridge Live are rejected at the handshake level.
 
-2. **SRS has a hardcoded 5-second idle-publisher timeout** (`srs_protocol_srt.cpp`, `recv_timeout_ = 5 * SRS_UTIME_SECONDS`). `srt-live-transmit` would connect to SRS immediately at startup — before the encoder connects — and SRS would kick it after 5 seconds, causing a crash/restart loop that prevents the encoder from ever connecting.
+2. **SRS has no native SRT bonding support.** SRS accepts normal SRT publishers, but it does not accept bonded/redundant SRT groups directly.
 
-**How it is fixed:** The relay runs two processes per pipeline:
-
-- **`srt-live-transmit`** listens for the bonded encoder group on `11000 + pipelineId` and pushes deduplicated MPEG-TS over **plain UDP** to an internal loopback port (`12000 + pipelineId`). Because the output is UDP (connectionless), `srt-live-transmit` only needs to bind its single SRT listener socket — the encoder-facing port is available immediately at startup, and packets only flow when the encoder actually connects.
-- **ffmpeg** receives on the internal UDP port and forwards to SRS. UDP `recvfrom()` blocks indefinitely until the first packet arrives — there is no SRT connection-level timeout that could cause ffmpeg to open the SRS output before data is flowing. SRS only ever receives a publisher connection once actual video data is already in flight, so the 5-second idle timeout never fires.
-
-Both processes are started together and managed as a unit: if either exits unexpectedly the other is killed and both are restarted after 5 seconds.
+**How it is fixed:** `srt-bonding-relay` starts as its own systemd service, listens on `10081` with `SRTO_GROUPCONNECT=1`, accepts each bonded source session, reads its incoming `streamid`, and opens a normal SRT publisher connection to SRS using the same `streamid`. It only connects to SRS after an encoder connects, so SRS's idle-publisher timeout is not triggered by an empty boot-time publisher.
 
 ### SRT-input outputs don't surface output errors (e.g. wrong stream key) (wontfix)
 
