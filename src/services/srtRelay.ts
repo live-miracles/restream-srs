@@ -1,13 +1,23 @@
 import { spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
+import { existsSync } from 'fs';
 import type { Db, Pipeline } from '../types.js';
 
-const FFMPEG_CMD = process.env.FFMPEG_PATH || 'ffmpeg';
 const SRS_SRT_PORT = parseInt(process.env.SRS_SRT_PORT || '10080');
-const RELAY_BASE_PORT = 11000;
+const RELAY_BASE_PORT = 11000;  // encoder-facing listener ports
 const SIGKILL_DELAY_MS = 5000;
 const STDERR_TAIL_BYTES = 3000;
 const RESTART_DELAY_MS = 5000;
+
+function resolveSrtGroupRecv(): string {
+    if (process.env.SRT_GROUP_RECV_PATH) return process.env.SRT_GROUP_RECV_PATH;
+    for (const p of ['./objs/srt-group-recv', '/usr/local/bin/srt-group-recv']) {
+        if (existsSync(p)) return p;
+    }
+    return 'srt-group-recv';
+}
+
+const SRT_GROUP_RECV_CMD = resolveSrtGroupRecv();
 
 export interface SrtRelayStats {
     status: 'running' | 'stopping' | 'stopped' | 'failed';
@@ -27,7 +37,7 @@ export interface SrtRelayService {
 }
 
 export function createSrtRelayService(db: Db): SrtRelayService {
-    const processes = new Map<number, ChildProcess>();
+    const procs = new Map<number, ChildProcess>();
     const statuses = new Map<number, SrtRelayStats>();
     const stopRequested = new Set<number>();
     const pendingStart = new Set<number>();
@@ -52,6 +62,10 @@ export function createSrtRelayService(db: Db): SrtRelayService {
         statuses.set(pipelineId, stats);
     }
 
+    function isRunning(pipelineId: number): boolean {
+        return procs.has(pipelineId);
+    }
+
     function srtUrl(base: string, params: Record<string, string | number | boolean>): string {
         const qs = Object.entries(params)
             .map(([k, v]) => `${k}=${k === 'streamid' ? String(v) : encodeURIComponent(String(v))}`)
@@ -59,46 +73,36 @@ export function createSrtRelayService(db: Db): SrtRelayService {
         return `${base}?${qs}`;
     }
 
+    // srt-group-recv: accepts the bonded SRT group from the encoder and forwards
+    // directly to SRS as a plain SRT caller. The SRS connection is opened only when
+    // the encoder connects, so SRS's idle-publisher timeout is never triggered.
     function relayArgs(pipeline: Pipeline): string[] {
         const passphrase = db.getSetting('srtPassphrase') || null;
-        // Input: listen for the encoder's bonded SRT group.
-        // latency=240000 µs (240 ms) matches the AJA Bridge Live default; the SRT
-        // handshake negotiates max(sender, receiver) so this is safe for lower values too.
+        const relayPort = getPort(pipeline.id);
+
         const inputParams: Record<string, string | number | boolean> = {
             mode: 'listener',
             groupconnect: 1,
             transtype: 'live',
-            latency: 240000,
-        };
-        // Output: push to SRS only after ffmpeg has received input data.
-        // ffmpeg probes the input before opening the output, so SRS never receives an
-        // idle publisher connection — it only sees the connection once data is flowing,
-        // which avoids SRS's hardcoded 5-second idle-publisher timeout.
-        const outputParams: Record<string, string | number | boolean> = {
-            streamid: `#!::r=live/${pipeline.streamKey},m=publish`,
-            transtype: 'live',
-            latency: 200000,
+            latency: 240,  // milliseconds (SRTO_LATENCY unit since SRT 1.3.0)
         };
         if (passphrase) {
             inputParams.passphrase = passphrase;
             inputParams.pbkeylen = 16;
+        }
+
+        const outputParams: Record<string, string | number | boolean> = {
+            streamid: `#!::r=live/${pipeline.streamKey},m=publish`,
+            transtype: 'live',
+            latency: 200,  // milliseconds
+        };
+        if (passphrase) {
             outputParams.passphrase = passphrase;
             outputParams.pbkeylen = 16;
         }
+
         return [
-            '-loglevel',
-            'warning',
-            // Declare the input format so ffmpeg skips format probing entirely.
-            // Without this, ffmpeg buffers ~5 s of data before opening the SRS
-            // output, which stalls the stream and can cause the encoder to give up.
-            '-f',
-            'mpegts',
-            '-i',
-            srtUrl(`srt://0.0.0.0:${getPort(pipeline.id)}`, inputParams),
-            '-c',
-            'copy',
-            '-f',
-            'mpegts',
+            srtUrl(`srt://0.0.0.0:${relayPort}`, inputParams),
             srtUrl(`srt://127.0.0.1:${SRS_SRT_PORT}`, outputParams),
         ];
     }
@@ -119,8 +123,7 @@ export function createSrtRelayService(db: Db): SrtRelayService {
         timers.set(pipelineId, timer);
     }
 
-    function killProcess(pipelineId: number, proc: ChildProcess): Promise<void> {
-        stopRequested.add(pipelineId);
+    function killProc(proc: ChildProcess): Promise<void> {
         return new Promise<void>((resolve) => {
             if (proc.exitCode !== null || proc.signalCode !== null) {
                 resolve();
@@ -148,68 +151,66 @@ export function createSrtRelayService(db: Db): SrtRelayService {
 
     function start(pipelineId: number): void {
         clearTimer(pipelineId);
-        if (processes.has(pipelineId)) {
+        if (isRunning(pipelineId)) {
             if (stopRequested.has(pipelineId)) pendingStart.add(pipelineId);
             return;
         }
         pendingStart.delete(pipelineId);
+
         const pipeline = db.getPipeline(pipelineId);
         if (!pipeline) throw new Error('Pipeline not found');
         if (!pipeline.streamKey) throw new Error('Pipeline stream key is missing');
 
-        const args = relayArgs(pipeline);
-        const child = spawn(FFMPEG_CMD, args, {
+        const relayPort = getPort(pipelineId);
+
+        const proc = spawn(SRT_GROUP_RECV_CMD, relayArgs(pipeline), {
             stdio: ['ignore', 'ignore', 'pipe'],
             env: process.env,
         });
+        procs.set(pipelineId, proc);
 
-        processes.set(pipeline.id, child);
         const startedAtMs = Date.now();
-        setStatus(pipeline.id, {
+        setStatus(pipelineId, {
             status: 'running',
-            pid: child.pid ?? null,
+            pid: proc.pid ?? null,
             startedAtMs,
             lastError: null,
         });
         console.log(
-            `[ffmpeg-relay] pipeline ${pipeline.id} listening on UDP ${getPort(pipeline.id)} pid=${child.pid}`,
+            `[srt-relay] pipeline ${pipelineId} listening on SRT :${relayPort} → SRS :${SRS_SRT_PORT} (pid=${proc.pid})`,
         );
 
-        let stderrTail = '';
-        child.stderr?.on('data', (d: Buffer) => {
-            stderrTail = (stderrTail + d.toString()).slice(-STDERR_TAIL_BYTES);
+        let stderr = '';
+        proc.stderr?.on('data', (d: Buffer) => {
+            stderr = (stderr + d.toString()).slice(-STDERR_TAIL_BYTES);
         });
 
-        child.on('error', (err) => {
-            const message = err.message;
-            setStatus(pipeline.id, {
-                status: 'failed',
-                pid: null,
-                startedAtMs: null,
-                lastError: message,
-            });
-            console.warn(`[ffmpeg-relay] pipeline ${pipeline.id} error:`, message);
+        proc.on('error', (err) => {
+            console.warn(`[srt-relay] pipeline ${pipelineId} error:`, err.message);
         });
 
-        child.on('close', (code, signal) => {
-            const wasStop = stopRequested.delete(pipeline.id);
-            processes.delete(pipeline.id);
-            const detail = stderrTail.trim();
+        proc.on('close', (code, signal) => {
+            console.log(`[srt-relay] pipeline ${pipelineId} exited code=${code} signal=${signal}`);
+            procs.delete(pipelineId);
+
+            const wasStop = stopRequested.delete(pipelineId);
+            const wantsRelay = db.getPipeline(pipelineId)?.bondingEnabled;
             const exitStr = `exit=${code ?? signal}`;
-            setStatus(pipeline.id, {
+
+            setStatus(pipelineId, {
                 status: wasStop ? 'stopped' : 'failed',
                 pid: null,
                 startedAtMs: null,
-                lastError: wasStop ? null : detail ? `${exitStr}\n${detail}` : exitStr,
+                lastError: wasStop ? null : stderr.trim() ? `${exitStr}\n${stderr.trim()}` : exitStr,
             });
             console.log(
-                `[ffmpeg-relay] pipeline ${pipeline.id} exited code=${code} signal=${signal} status=${wasStop ? 'stopped' : 'failed'}`,
+                `[srt-relay] pipeline ${pipelineId} relay down status=${wasStop ? 'stopped' : 'failed'}`,
             );
-            const wantsRelay = db.getPipeline(pipeline.id)?.bondingEnabled;
-            if (wasStop && pendingStart.delete(pipeline.id) && wantsRelay) {
-                start(pipeline.id);
+
+            if (wasStop && pendingStart.delete(pipelineId) && wantsRelay) {
+                start(pipelineId);
             } else if (!wasStop && wantsRelay) {
-                scheduleRestart(pipeline.id);
+                scheduleRestart(pipelineId);
             }
         });
     }
@@ -221,16 +222,13 @@ export function createSrtRelayService(db: Db): SrtRelayService {
 
         stop(pipelineId: number): void {
             clearTimer(pipelineId);
-            const proc = processes.get(pipelineId);
-            if (proc) {
+            if (isRunning(pipelineId)) {
                 pendingStart.delete(pipelineId);
-                setStatus(pipelineId, {
-                    status: 'stopping',
-                    pid: proc.pid ?? null,
-                    startedAtMs: getStats(pipelineId).startedAtMs,
-                    lastError: null,
-                });
-                void killProcess(pipelineId, proc);
+                stopRequested.add(pipelineId);
+                const { pid, startedAtMs } = getStats(pipelineId);
+                setStatus(pipelineId, { status: 'stopping', pid, startedAtMs, lastError: null });
+                const proc = procs.get(pipelineId);
+                if (proc) void killProc(proc);
             } else {
                 setStatus(pipelineId, {
                     status: 'stopped',
@@ -243,8 +241,7 @@ export function createSrtRelayService(db: Db): SrtRelayService {
 
         async stopAndWait(pipelineId: number): Promise<void> {
             clearTimer(pipelineId);
-            const proc = processes.get(pipelineId);
-            if (!proc) {
+            if (!isRunning(pipelineId)) {
                 setStatus(pipelineId, {
                     status: 'stopped',
                     pid: null,
@@ -254,13 +251,11 @@ export function createSrtRelayService(db: Db): SrtRelayService {
                 return;
             }
             pendingStart.delete(pipelineId);
-            setStatus(pipelineId, {
-                status: 'stopping',
-                pid: proc.pid ?? null,
-                startedAtMs: getStats(pipelineId).startedAtMs,
-                lastError: null,
-            });
-            await killProcess(pipelineId, proc);
+            stopRequested.add(pipelineId);
+            const { pid, startedAtMs } = getStats(pipelineId);
+            setStatus(pipelineId, { status: 'stopping', pid, startedAtMs, lastError: null });
+            const proc = procs.get(pipelineId);
+            if (proc) await killProc(proc);
         },
 
         restartAll(): void {
@@ -271,15 +266,15 @@ export function createSrtRelayService(db: Db): SrtRelayService {
             for (const timer of timers.values()) clearTimeout(timer);
             timers.clear();
             pendingStart.clear();
-            for (const [pipelineId, proc] of processes) {
-                stopRequested.add(pipelineId);
+            for (const pipelineId of procs.keys()) stopRequested.add(pipelineId);
+            for (const proc of procs.values()) {
                 try {
                     proc.kill('SIGKILL');
                 } catch {
                     /* already gone */
                 }
             }
-            processes.clear();
+            procs.clear();
         },
     };
 }

@@ -7,26 +7,33 @@ RUN apt-get update -q \
         build-essential \
         ca-certificates \
         cmake \
+        g++ \
         git \
         libssl-dev \
         pkg-config \
         tclsh \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /src
-
+# Build and install libsrt with bonding support
+WORKDIR /src/srt
 RUN git clone --branch "${SRT_TAG}" --depth 1 https://github.com/Haivision/srt.git .
+RUN ./configure --prefix=/usr/local --enable-apps=OFF --enable-bonding \
+    && make -j"$(nproc)" \
+    && make install \
+    && ldconfig
 
-RUN ./configure --prefix=/usr/local --enable-apps=ON \
-    && make -j"$(nproc)"
+# Compile srt-group-recv against the installed libsrt
+WORKDIR /src/app
+COPY srt-bonding-test/srt-group-recv.c .
+RUN g++ -O2 -o srt-group-recv srt-group-recv.c \
+    $(pkg-config --cflags --libs srt) -lpthread -lssl -lcrypto -lm
 
+# Package binary + non-system shared libs
 RUN set -eux; \
     stage=/package; \
     mkdir -p "$stage/bin" "$stage/lib"; \
-    bin="$(find /src -type f -name srt-live-transmit -perm -111 | head -1)"; \
-    test -n "$bin"; \
-    install -m 755 "$bin" "$stage/bin/srt-live-transmit"; \
-    ldd "$stage/bin/srt-live-transmit" | awk '/=> \// {print $3}' | while read -r lib; do \
+    install -m 755 srt-group-recv "$stage/bin/srt-group-recv"; \
+    ldd "$stage/bin/srt-group-recv" | awk '/=> \// {print $3}' | while read -r lib; do \
         case "$lib" in \
             /lib/*/libc.so.*|/lib/*/libpthread.so.*|/lib/*/libm.so.*|/lib/*/libdl.so.*|/lib/*/ld-linux-*.so.*) ;; \
             *) cp -v "$lib" "$stage/lib/" ;; \

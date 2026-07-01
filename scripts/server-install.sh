@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-shot native setup for a Linux server.
-# Installs Node.js 22, FFmpeg 7.1, SRS 6.0, srt-live-transmit, builds the app,
+# Installs Node.js 22, FFmpeg 7.1, SRS 6.0, srt-group-recv, builds the app,
 # and registers systemd services that start on boot.
 #
 # Usage:
@@ -34,12 +34,12 @@ SRS_FILENAME="SRS-CentOS7-x86_64-${SRS_VERSION}.zip"
 SRS_SHA256="1eb20245a76643b2d32a1be85e71015079689a0733a10f79964f9a8189c21609"
 SRS_URL="https://github.com/ossrs/srs/releases/download/${SRS_RELEASE_TAG}/${SRS_FILENAME}"
 
-# Pinned srt-live-transmit binary — built once with scripts/build-srt-live-transmit.sh
+# Pinned srt-group-recv binary — built once with scripts/build-srt-group-recv.sh
 # and published as a release asset in this project.
 SRT_VERSION=1.5.5
-SRT_RELEASE_TAG="srt-v${SRT_VERSION}-1"
-SRT_FILENAME="srt-live-transmit-linux-x86_64.tar.gz"
-SRT_SHA256="c206bc9eceb0f0f3c1a48b2d1b9d360dbf45fa9ef98d5a3d8f61bcd235a1d6e2"
+SRT_RELEASE_TAG="srt-v${SRT_VERSION}-2"
+SRT_FILENAME="srt-group-recv-linux-x86_64.tar.gz"
+SRT_SHA256=""   # TODO: run scripts/build-srt-group-recv.sh, publish the asset, fill in SHA256
 SRT_URL="https://github.com/live-miracles/restream-srs/releases/download/${SRT_RELEASE_TAG}/${SRT_FILENAME}"
 
 # FFmpeg is pinned to a specific immutable BtbN build (a month-end autobuild tag,
@@ -124,18 +124,18 @@ else
     echo "Installed: $(/usr/local/bin/srs -v 2>&1 | head -1)"
 fi
 
-SRT_VERSION_MARKER=/usr/local/bin/.srt-live-transmit-version
-step "5/10 srt-live-transmit $SRT_VERSION"
-if [[ -x /usr/local/bin/srt-live-transmit && -f "$SRT_VERSION_MARKER" && "$(cat "$SRT_VERSION_MARKER")" == "$SRT_RELEASE_TAG" ]]; then
-    echo "srt-live-transmit $SRT_VERSION already installed."
+SRT_VERSION_MARKER=/usr/local/bin/.srt-group-recv-version
+step "5/10 srt-group-recv $SRT_VERSION"
+if [[ -x /usr/local/bin/srt-group-recv && -f "$SRT_VERSION_MARKER" && "$(cat "$SRT_VERSION_MARKER")" == "$SRT_RELEASE_TAG" ]]; then
+    echo "srt-group-recv $SRT_VERSION already installed."
 else
     echo "Downloading $SRT_FILENAME ($SRT_RELEASE_TAG)..."
     curl -fsSL "$SRT_URL" -o "$WORK/$SRT_FILENAME"
     verify_sha256 "$WORK/$SRT_FILENAME" "$SRT_SHA256"
     tar -xzf "$WORK/$SRT_FILENAME" -C "$WORK"
-    SRT_BIN="$(find "$WORK" -type f -name srt-live-transmit -perm -111 | head -1)"
+    SRT_BIN="$(find "$WORK" -type f -name srt-group-recv -perm -111 | head -1)"
     if [[ -z "$SRT_BIN" ]]; then
-        echo "ERROR: could not find srt-live-transmit binary in $SRT_FILENAME" >&2
+        echo "ERROR: could not find srt-group-recv binary in $SRT_FILENAME" >&2
         exit 1
     fi
     if [[ -d "$WORK/lib" ]]; then
@@ -144,9 +144,9 @@ else
         echo /usr/local/lib/restream-srs-srt > /etc/ld.so.conf.d/restream-srs-srt.conf
         ldconfig
     fi
-    install -m 755 "$SRT_BIN" /usr/local/bin/srt-live-transmit
+    install -m 755 "$SRT_BIN" /usr/local/bin/srt-group-recv
     echo "$SRT_RELEASE_TAG" > "$SRT_VERSION_MARKER"
-    echo "Installed: $(/usr/local/bin/srt-live-transmit -h 2>&1 | head -1)"
+    echo "Installed: /usr/local/bin/srt-group-recv"
 fi
 
 step "6/10 Service user and directories"
