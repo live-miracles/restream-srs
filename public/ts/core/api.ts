@@ -143,6 +143,7 @@ export const getVersion = () =>
     apiRequest<{
         commit: string;
         srs: string;
+        srtRelay: string;
         ffmpeg: string;
         os: string;
         kernel: string;

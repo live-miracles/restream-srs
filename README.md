@@ -258,6 +258,8 @@ Prerequisites: Node.js 22+, FFmpeg.
 npm install
 npm run dev-install   # downloads SRS into ./objs, no root required
 ```
+Rerunning `npm run dev-install` also refreshes the sibling `../srt-bonding-relay`
+repo when it has no local changes and rebuilds `./objs/srt-bonding-relay`.
 
 To use a local SRS binary:
 ```bash
@@ -303,7 +305,7 @@ npm run relay
 | `SRS_RTMP_HOST` | `localhost` | SRS RTMP host (for FFmpeg to pull from) |
 | `SRS_RTMP_PORT` | `1935` | SRS RTMP port |
 | `SRS_SRT_PORT` | `10080` | SRS SRT port (for FFmpeg to pull from) |
-| `DB_PATH` | `./data.db` | SQLite database path |
+| `DB_PATH` | `./db.sqlite` | SQLite database path |
 | `SRS_CONF_PATH` | `./srs.conf` | SRS config path written by the app |
 | `SRS_LOG_PATH` | `./objs/srs.log` | SRS log path read for the dashboard log tail |
 | `FFMPEG_PATH` | `ffmpeg` | FFmpeg binary (uses `$PATH` if unset) |

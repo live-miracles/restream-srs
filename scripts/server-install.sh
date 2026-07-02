@@ -35,9 +35,9 @@ SRS_SHA256="1eb20245a76643b2d32a1be85e71015079689a0733a10f79964f9a8189c21609"
 SRS_URL="https://github.com/ossrs/srs/releases/download/${SRS_RELEASE_TAG}/${SRS_FILENAME}"
 
 # Pinned srt-bonding-relay binary — published from the standalone relay repo.
-SRT_RELEASE_TAG="${SRT_RELEASE_TAG:-v1.0.0}"
+SRT_RELEASE_TAG="${SRT_RELEASE_TAG:-v1.0.1}"
 SRT_FILENAME="srt-bonding-relay-linux-x86_64.tar.gz"
-SRT_SHA256="${SRT_SHA256:-}"   # Fill with the standalone repo asset hash to enforce verification.
+SRT_SHA256="${SRT_SHA256:-38c29f76700ce94a25ba1d4e63e10bdd5ff8e9a57af1d9a52c7d0639b22b4afa}"
 SRT_URL="${SRT_URL:-https://github.com/live-miracles/srt-bonding-relay/releases/download/${SRT_RELEASE_TAG}/${SRT_FILENAME}}"
 
 # FFmpeg is pinned to a specific immutable BtbN build (a month-end autobuild tag,

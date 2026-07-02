@@ -65,6 +65,27 @@ ensure_relay_repo() {
     git clone "$RELAY_REPO_URL" "$RELAY_REPO_DIR"
 }
 
+update_relay_repo() {
+    if [[ ! -d "$RELAY_REPO_DIR/.git" ]]; then
+        echo "ERROR: relay repo not found at $RELAY_REPO_DIR" >&2
+        exit 1
+    fi
+
+    if [[ -n "$(git -C "$RELAY_REPO_DIR" status --short)" ]]; then
+        echo "Relay repo has local changes; skipping auto-update."
+        return
+    fi
+
+    echo "Updating relay repo..."
+    git -C "$RELAY_REPO_DIR" fetch --tags origin
+    git -C "$RELAY_REPO_DIR" pull --ff-only origin master
+}
+
+build_relay_local() {
+    echo "Building local relay binary..."
+    bash "$REPO_DIR/scripts/build-srt-bonding-relay-local.sh"
+}
+
 mkdir -p "$REPO_DIR/objs"
 
 SRS_VERSION_MARKER="$REPO_DIR/objs/.srs-version"
@@ -113,6 +134,8 @@ if [[ -z "${SRS_LOCAL_BIN:-}" ]]; then
 fi
 
 ensure_relay_repo
+update_relay_repo
+build_relay_local
 
 echo ""
 echo "Run SRS:  npm run srs"

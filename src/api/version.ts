@@ -5,12 +5,20 @@ import type { Express } from 'express';
 
 const VERSION_EXEC_TIMEOUT_MS = 3000;
 const VERSION_FETCH_TIMEOUT_MS = 2000;
+const SRT_RELAY_BIN = process.env.SRT_BONDING_RELAY_PATH ?? '/usr/local/bin/srt-bonding-relay';
+const SRT_RELAY_LIB_DIR =
+    process.env.SRT_BONDING_RELAY_LIB_DIR ?? '/usr/local/lib/restream-srs-srt';
 
-function exec(cmd: string, args: string[]): Promise<string> {
+function exec(cmd: string, args: string[], cwd?: string, env?: NodeJS.ProcessEnv): Promise<string> {
     return new Promise((resolve) => {
-        execFile(cmd, args, { timeout: VERSION_EXEC_TIMEOUT_MS }, (_err, stdout, stderr) => {
-            resolve((stdout || stderr).trim());
-        });
+        execFile(
+            cmd,
+            args,
+            { timeout: VERSION_EXEC_TIMEOUT_MS, cwd, env },
+            (_err, stdout, stderr) => {
+                resolve((stdout || stderr).trim());
+            },
+        );
     });
 }
 
@@ -37,9 +45,23 @@ async function getSrsVersion(): Promise<string> {
     }
 }
 
+async function getSrtRelayVersion(): Promise<string> {
+    if (!fs.existsSync(SRT_RELAY_BIN)) return 'unknown';
+
+    const env = { ...process.env };
+    if (fs.existsSync(SRT_RELAY_LIB_DIR)) {
+        env.LD_LIBRARY_PATH = env.LD_LIBRARY_PATH
+            ? `${SRT_RELAY_LIB_DIR}:${env.LD_LIBRARY_PATH}`
+            : SRT_RELAY_LIB_DIR;
+    }
+    const version = await exec(SRT_RELAY_BIN, ['--version'], undefined, env);
+    return version || 'unknown';
+}
+
 interface VersionResult {
     commit: string;
     srs: string;
+    srtRelay: string;
     ffmpeg: string;
     os: string;
     kernel: string;
@@ -51,10 +73,11 @@ export function registerVersionApi(app: Express): void {
     app.get('/api/version', async (_req, res) => {
         if (cached) return res.json(cached);
 
-        const [commitLine, commitDate, srs, ffmpegOut] = await Promise.all([
+        const [commitLine, commitDate, srs, srtRelay, ffmpegOut] = await Promise.all([
             exec('git', ['log', '-1', '--format=%h %s']),
             exec('git', ['log', '-1', '--format=%ci']),
             getSrsVersion(),
+            getSrtRelayVersion(),
             exec('ffmpeg', ['-version']),
         ]);
 
@@ -65,6 +88,7 @@ export function registerVersionApi(app: Express): void {
         cached = {
             commit: date ? `${date} ${commitLine}` : commitLine || 'unknown',
             srs: srs || 'unknown',
+            srtRelay,
             ffmpeg,
             os: readOsRelease(),
             kernel: os.release(),

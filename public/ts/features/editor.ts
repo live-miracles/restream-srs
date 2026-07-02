@@ -32,6 +32,7 @@ export function openSettings(): void {
         if (!v) return;
         (document.getElementById('v-commit') as HTMLElement).textContent = v.commit;
         (document.getElementById('v-srs') as HTMLElement).textContent = v.srs;
+        (document.getElementById('v-relay') as HTMLElement).textContent = v.srtRelay;
         (document.getElementById('v-ffmpeg') as HTMLElement).textContent = v.ffmpeg;
         (document.getElementById('v-os') as HTMLElement).textContent = v.os;
         (document.getElementById('v-kernel') as HTMLElement).textContent = v.kernel;
