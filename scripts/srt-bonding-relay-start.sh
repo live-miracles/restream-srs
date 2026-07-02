@@ -15,7 +15,7 @@ if [[ ! -d "$RELAY_REPO_DIR/.git" ]]; then
     exit 1
 fi
 
-if [[ ! -x "$RUN_SCRIPT" ]]; then
+if [[ ! -f "$RUN_SCRIPT" ]]; then
     echo "ERROR: relay runner not found: $RUN_SCRIPT" >&2
     exit 1
 fi

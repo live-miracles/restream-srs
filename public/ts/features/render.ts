@@ -236,18 +236,13 @@ function renderInputStats(input: InputHealth): string {
     const a = input.audio;
     const compactStat = (label: string, val: string | number | null | undefined) =>
         `<span class="input-meta-item"><span class="input-meta-label">${label}</span><span class="input-meta-value">${val ?? '—'}</span></span>`;
-    const stat = (label: string, val: string | number | null | undefined) =>
-        `<div class="stat p-3">
-            <div class="stat-title text-xs">${label}</div>
-            <div class="stat-value text-sm">${val ?? '—'}</div>
-        </div>`;
 
     return `
         ${
             v
                 ? `
-        <div class="input-meta-row my-0.5">
-            ${compactStat('In Bitrate', formatBitrate(input.recvBitrateKbps))}
+        <div class="input-meta-row input-meta-row-sm my-0.5">
+            ${compactStat('In', formatBitrate(input.recvBitrateKbps))}
             ${compactStat('Codec', v.codec)}
             ${compactStat('Size', v.width && v.height ? `${v.width}×${v.height}` : null)}
             ${compactStat('FPS', v.fps != null ? v.fps : null)}
@@ -284,11 +279,16 @@ function renderInputStats(input: InputHealth): string {
                 : a
                   ? `
         <h3 class="mt-3 text-sm font-semibold opacity-60">Audio</h3>
-        <div class="stats shadow mt-1 flex-wrap">
-            ${stat('Codec', a.codec)}
-            ${stat('Sample Rate', a.sample_rate ? `${(a.sample_rate / 1000).toFixed(1)} kHz` : null)}
-            ${stat('Channels', a.channel)}
-            ${stat('Profile', a.profile || null)}
+        <div class="mt-1">
+            ${renderCompactMetaRow([
+                { label: 'Codec', value: a.codec },
+                {
+                    label: 'Sample Rate',
+                    value: a.sample_rate ? `${(a.sample_rate / 1000).toFixed(1)} kHz` : null,
+                },
+                { label: 'Channels', value: a.channel },
+                { label: 'Profile', value: a.profile || null },
+            ])}
         </div>`
                   : ''
         }

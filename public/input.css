@@ -20,6 +20,7 @@
     display: inline-flex;
     flex-direction: column;
     justify-content: center;
+    align-items: center;
     gap: 0.15rem;
     width: fit-content;
     min-width: max-content;
@@ -27,6 +28,7 @@
     position: relative;
     padding-left: 0.18rem;
     padding-right: 0.18rem;
+    text-align: center;
 }
 
 .input-meta-item + .input-meta-item {
