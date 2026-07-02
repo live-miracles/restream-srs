@@ -24,6 +24,8 @@ RUN ./configure --prefix=/usr/local --enable-apps=OFF --enable-bonding \
 
 # Compile the shared bonding relay against the installed libsrt
 WORKDIR /src/app
+ARG RELAY_SOURCE_SHA=dev
+RUN printf '%s\n' "$RELAY_SOURCE_SHA" > /tmp/relay-source.sha
 COPY native/srt-bonding-relay.c .
 RUN g++ -O2 -o srt-bonding-relay srt-bonding-relay.c \
     $(pkg-config --cflags --libs srt) -lpthread -lssl -lcrypto -lm

@@ -7,3 +7,77 @@
 #overview-col .table td:first-child {
     min-width: 11rem;
 }
+
+.input-meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    row-gap: 0.35rem;
+    column-gap: 0;
+    align-items: stretch;
+}
+
+.input-meta-item {
+    display: inline-flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.15rem;
+    width: fit-content;
+    min-width: max-content;
+    max-width: 100%;
+    position: relative;
+    padding-left: 0.18rem;
+    padding-right: 0.18rem;
+}
+
+.input-meta-item + .input-meta-item {
+    margin-left: 0.72rem;
+}
+
+.input-meta-item + .input-meta-item::before {
+    content: '|';
+    position: absolute;
+    left: -0.4rem;
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0.3;
+}
+
+.input-meta-label {
+    opacity: 0.6;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    line-height: 1.1;
+}
+
+.input-meta-value {
+    font-weight: 600;
+    font-size: 0.9rem;
+    line-height: 1.2;
+}
+
+.input-meta-row-sm {
+    row-gap: 0.2rem;
+    column-gap: 0;
+}
+
+.input-meta-row-sm .input-meta-item {
+    padding-left: 0.14rem;
+    padding-right: 0.14rem;
+}
+
+.input-meta-row-sm .input-meta-item + .input-meta-item {
+    margin-left: 0.6rem;
+}
+
+.input-meta-row-sm .input-meta-item + .input-meta-item::before {
+    left: -0.34rem;
+}
+
+.input-meta-row-sm .input-meta-label {
+    font-size: 0.63rem;
+}
+
+.input-meta-row-sm .input-meta-value {
+    font-size: 0.8rem;
+}

@@ -38,6 +38,14 @@ function fmtFieldOrder(fo: string | null | undefined): string | null {
 
 const pendingOutputs = new Map<string, 'start' | 'stop'>();
 const SRT_BONDING_PORT = 10081;
+const RELAY_FLOW_STALE_MS = 15000;
+
+function formatCompactCount(n: number): string {
+    if (!Number.isFinite(n)) return '0';
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`;
+    return String(Math.round(n));
+}
 
 function outStatus(o: OutputView, inputLive: boolean): OutStatus {
     if (o.desiredState === 'stopped') return 'off';
@@ -160,7 +168,8 @@ function renderInputStats(input: InputHealth): string {
 
     const v = input.video;
     const a = input.audio;
-
+    const compactStat = (label: string, val: string | number | null | undefined) =>
+        `<span class="input-meta-item"><span class="input-meta-label">${label}</span><span class="input-meta-value">${val ?? '—'}</span></span>`;
     const stat = (label: string, val: string | number | null | undefined) =>
         `<div class="stat p-3">
             <div class="stat-title text-xs">${label}</div>
@@ -168,22 +177,17 @@ function renderInputStats(input: InputHealth): string {
         </div>`;
 
     return `
-        <div class="stats shadow flex-wrap">
-            ${stat('In Bitrate', formatBitrate(input.recvBitrateKbps))}
-            ${stat('Readers', input.readers)}
-            ${stat('Uptime', formatUptime(input.uptimeMs))}
-        </div>
         ${
             v
                 ? `
-        <h3 class="mt-3 text-sm font-semibold opacity-60">Video</h3>
-        <div class="stats shadow mt-1 flex-wrap">
-            ${stat('Codec', v.codec)}
-            ${stat('Resolution', v.width && v.height ? `${v.width}×${v.height}` : null)}
-            ${stat('FPS', v.fps != null ? v.fps : null)}
-            ${stat('Scan', fmtFieldOrder(v.fieldOrder))}
-            ${stat('Profile', v.profile || null)}
-            ${stat('Level', v.level || null)}
+        <div class="input-meta-row my-0.5">
+            ${compactStat('In Bitrate', formatBitrate(input.recvBitrateKbps))}
+            ${compactStat('Codec', v.codec)}
+            ${compactStat('Size', v.width && v.height ? `${v.width}×${v.height}` : null)}
+            ${compactStat('FPS', v.fps != null ? v.fps : null)}
+            ${compactStat('Scan', fmtFieldOrder(v.fieldOrder))}
+            ${compactStat('Prof', v.profile || null)}
+            ${compactStat('Lvl', v.level || null)}
         </div>`
                 : input.isSrt
                   ? `<p class="text-xs opacity-50 mt-2">Codec info is still being probed — this may take a moment.</p>`
@@ -223,6 +227,18 @@ function renderInputStats(input: InputHealth): string {
                   : ''
         }
     `;
+}
+
+function renderCompactMetaRow(
+    items: Array<{ label: string; value: string | number | null | undefined }>,
+    className = '',
+): string {
+    return `<div class="input-meta-row ${className}">${items
+        .map(
+            (item) =>
+                `<span class="input-meta-item"><span class="input-meta-label">${item.label}</span><span class="input-meta-value">${item.value ?? '—'}</span></span>`,
+        )
+        .join('')}</div>`;
 }
 
 const CHART_WINDOW_MS = 15 * 60 * 1000;
@@ -594,6 +610,11 @@ function renderPipelineInfo(selectedId: string | null): void {
     outsCol?.classList.remove('hidden');
 
     setInnerText('pipe-name', pipeline.name);
+    const readersBadge = document.getElementById('pipe-readers-badge');
+    if (readersBadge) {
+        readersBadge.textContent = `${pipeline.input.readers} reader${pipeline.input.readers === 1 ? '' : 's'}`;
+        readersBadge.classList.toggle('hidden', !pipeline.input.live);
+    }
 
     const hasActiveOutputs = pipeline.outs.some((o) => o.desiredState !== 'stopped');
     const deleteBtn = document.getElementById('pipe-delete-btn');
@@ -636,12 +657,18 @@ function renderPipelineInfo(selectedId: string | null): void {
 
     const bondingCard = document.getElementById('srt-bonding-card');
     const bondingDot = document.getElementById('srt-bonding-status-dot');
+    const bondingDotFill = document.getElementById('srt-bonding-status-fill');
     const bondingUrl = document.getElementById('srt-bonding-url');
+    const bondingStats = document.getElementById('srt-bonding-stats');
     const bondingErrWrap = document.getElementById('srt-bonding-last-error-wrap');
     const bondingErrTs = document.getElementById('srt-bonding-last-error-ts');
     const bondingErr = document.getElementById('srt-bonding-last-error');
     const bondingInputActive = pipeline.srtBonding.inputActive;
     const bondingOutputConnected = pipeline.srtBonding.outputConnected;
+    const bondingLastPacketAt = pipeline.srtBonding.lastPacketAt;
+    const bondingHasRecentFlow =
+        bondingLastPacketAt != null && Date.now() - bondingLastPacketAt <= RELAY_FLOW_STALE_MS;
+    const bondingHasForwardedData = pipeline.srtBonding.forwardedPackets > 0;
     const relayProcessRunning = state.health.srtRelay?.status === 'running';
     const bondingHost = state.config.publicHost || 'localhost';
     const bondingPortValue = SRT_BONDING_PORT;
@@ -653,34 +680,42 @@ function renderPipelineInfo(selectedId: string | null): void {
             ? `&passphrase=${encodeURIComponent(state.config.srtPassphrase)}&pbkeylen=16`
             : '');
     bondingCard?.classList.remove('opacity-60');
-    if (bondingDot) {
-        const leftColor = bondingInputActive
-            ? STATUS_COLOR_GOOD
-            : !relayProcessRunning
-              ? STATUS_COLOR_ERROR
-              : STATUS_COLOR_OFF;
-        const rightColor = !relayProcessRunning
+    if (bondingDot && bondingDotFill) {
+        const leftColor = !relayProcessRunning
             ? STATUS_COLOR_ERROR
-            : bondingOutputConnected
+            : bondingInputActive && bondingHasRecentFlow
               ? STATUS_COLOR_GOOD
               : bondingInputActive
                 ? pipeline.srtBonding.lastError
                     ? STATUS_COLOR_ERROR
                     : STATUS_COLOR_WARN
                 : STATUS_COLOR_OFF;
-        bondingDot.style.backgroundColor = 'transparent';
-        bondingDot.style.backgroundImage =
+        const rightColor = !relayProcessRunning
+            ? STATUS_COLOR_ERROR
+            : bondingOutputConnected && bondingHasRecentFlow
+              ? STATUS_COLOR_GOOD
+              : bondingInputActive
+                ? pipeline.srtBonding.lastError
+                    ? STATUS_COLOR_ERROR
+                    : STATUS_COLOR_WARN
+                : STATUS_COLOR_OFF;
+        bondingDotFill.style.backgroundColor = 'transparent';
+        bondingDotFill.style.backgroundImage =
             `linear-gradient(90deg, ` +
             `${leftColor} 0 45%, ` +
             `#242933 45% 55%, ` +
             `${rightColor} 55% 100%)`;
         bondingDot.title = !relayProcessRunning
             ? 'SRT bonding relay is not running'
-            : bondingInputActive && bondingOutputConnected
+            : bondingInputActive && bondingOutputConnected && bondingHasRecentFlow
               ? 'Bonded SRT input active and forwarding into SRS'
-              : bondingInputActive
-                ? `Bonded SRT input active, relay output reconnecting${pipeline.srtBonding.retryFailures > 0 ? ` (${pipeline.srtBonding.retryFailures} retries)` : ''}`
-                : 'No bonded SRT input for this stream key';
+              : bondingInputActive && bondingOutputConnected
+                ? bondingHasForwardedData
+                    ? 'Bonded SRT input connected, but media forwarding has stalled'
+                    : 'Bonded SRT input connected, but no media has been received yet'
+                : bondingInputActive
+                  ? `Bonded SRT input active, relay output reconnecting${pipeline.srtBonding.retryFailures > 0 ? ` (${pipeline.srtBonding.retryFailures} retries)` : ''}`
+                  : 'No bonded SRT input for this stream key';
     }
     if (bondingUrl) {
         bondingUrl.textContent = bondingUrlValue.replace(pipeline.streamKey, masked);
@@ -688,6 +723,47 @@ function renderPipelineInfo(selectedId: string | null): void {
         bondingUrl.dataset.ip = bondingHost;
         bondingUrl.dataset.port = String(bondingPortValue);
         bondingUrl.dataset.streamId = bondingStreamId;
+    }
+    if (bondingStats) {
+        const rxPkts =
+            pipeline.srtBonding.recvUniquePacketsTotal || pipeline.srtBonding.recvPacketsTotal;
+        const hasSessionStats =
+            relayProcessRunning &&
+            (bondingInputActive || rxPkts > 0 || pipeline.srtBonding.retransTotal > 0);
+        bondingStats.innerHTML = hasSessionStats
+            ? renderCompactMetaRow(
+                  [
+                      { label: 'Rx', value: `${formatCompactCount(rxPkts)} pkts` },
+                      {
+                          label: 'Loss',
+                          value: formatCompactCount(pipeline.srtBonding.recvLossTotal),
+                      },
+                      {
+                          label: 'Rexmit',
+                          value: formatCompactCount(pipeline.srtBonding.retransTotal),
+                      },
+                      ...(pipeline.srtBonding.recvDropTotal > 0
+                          ? [
+                                {
+                                    label: 'Drop',
+                                    value: formatCompactCount(pipeline.srtBonding.recvDropTotal),
+                                },
+                            ]
+                          : []),
+                      ...(pipeline.srtBonding.rttMs != null
+                          ? [
+                                {
+                                    label: 'RTT',
+                                    value: `${pipeline.srtBonding.rttMs.toFixed(
+                                        pipeline.srtBonding.rttMs >= 10 ? 0 : 1,
+                                    )}ms`,
+                                },
+                            ]
+                          : []),
+                  ],
+                  'input-meta-row-sm',
+              )
+            : '<span class="opacity-70">No SRT session stats yet</span>';
     }
     if (bondingErrWrap && bondingErr && bondingErrTs) {
         const msg = pipeline.srtBonding.lastError;

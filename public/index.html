@@ -440,7 +440,7 @@
     </dialog>
 
     <!-- Main grid -->
-    <div class="grid h-screen min-h-0 flex-1 gap-4 p-4 pt-0" style="grid-template-columns: minmax(15rem, 20rem) minmax(0, 3fr) minmax(22rem, 4fr)">
+    <div class="grid h-screen min-h-0 flex-1 gap-4 p-4 pt-0" style="grid-template-columns: minmax(15rem, 20rem) minmax(0, 3fr) minmax(24rem, 4fr)">
       <!-- Left: Pipeline list -->
       <div class="bg-base-300 rounded-box mt-4 overflow-y-auto">
         <div class="space-y-2 p-4">
@@ -473,7 +473,10 @@
       <!-- Middle: Pipeline info -->
       <div class="bg-base-200 mt-4 hidden overflow-y-auto rounded-xl p-4 shadow" id="pipe-info-col">
         <div class="mb-3 flex items-center justify-between gap-3 text-xl font-bold">
-          <span class="truncate" id="pipe-name"></span>
+          <div class="flex min-w-0 items-center gap-2">
+            <span class="truncate" id="pipe-name"></span>
+            <span class="badge badge-sm badge-outline hidden shrink-0" id="pipe-readers-badge"></span>
+          </div>
           <div class="flex shrink-0 items-center gap-2">
             <button class="btn btn-xs btn-ghost" onclick="pipeHistoryBtn()" title="View pipeline history">
               <svg
@@ -667,6 +670,93 @@
           <div id="input-stats"></div>
         </div>
 
+        <div id="srt-bonding-card" class="border-base-content/10 bg-base-100/50 mb-4 rounded-xl border p-3">
+          <div class="mb-1 flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2">
+              <div
+                id="srt-bonding-status-dot"
+                aria-label="status"
+                class="border-base-content/15 h-5 w-5 shrink-0 overflow-hidden rounded-full border">
+                <div id="srt-bonding-status-fill" class="h-full w-full rounded-full"></div>
+              </div>
+              <span class="text-xs font-semibold opacity-60">SRT Bonding</span>
+            </div>
+            <div class="flex gap-1">
+              <button class="btn btn-xs btn-ghost btn-outline" onclick="copyText(document.getElementById('srt-bonding-url').dataset.ip)">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round">
+                  <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                  <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                </svg>
+                IP
+              </button>
+              <button class="btn btn-xs btn-ghost btn-outline" onclick="copyText(document.getElementById('srt-bonding-url').dataset.port)">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round">
+                  <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                  <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                </svg>
+                Port
+              </button>
+              <button class="btn btn-xs btn-ghost btn-outline" onclick="copyText(document.getElementById('srt-bonding-url').dataset.streamId)">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round">
+                  <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                  <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                </svg>
+                Stream ID
+              </button>
+              <button class="btn btn-xs btn-accent btn-outline" onclick="copyText(document.getElementById('srt-bonding-url').dataset.copy)">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round">
+                  <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                  <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <code class="font-mono text-xs break-all opacity-80" id="srt-bonding-url"></code>
+          <div class="mt-1 text-[11px] opacity-70" id="srt-bonding-stats"></div>
+          <div class="mt-2 hidden" id="srt-bonding-last-error-wrap">
+            <div class="flex min-w-0 items-center gap-2">
+              <span class="text-error shrink-0 text-xs" id="srt-bonding-last-error-ts"></span>
+              <div class="text-error min-w-0 truncate text-xs" id="srt-bonding-last-error"></div>
+            </div>
+          </div>
+        </div>
+
         <!-- Publish URLs -->
         <div class="space-y-2">
           <div class="border-base-content/10 bg-base-100/50 rounded-xl border p-3">
@@ -794,86 +884,6 @@
               </div>
             </div>
             <code class="font-mono text-xs break-all opacity-80" id="srt-publish-url"></code>
-          </div>
-          <div id="srt-bonding-card" class="border-base-content/10 bg-base-100/50 rounded-xl border p-3">
-            <div class="mb-1 flex items-center justify-between gap-2">
-              <div class="flex items-center gap-2">
-                <div id="srt-bonding-status-dot" aria-label="status" class="border-base-content/15 h-4 w-4 shrink-0 rounded-full border"></div>
-                <span class="text-xs font-semibold opacity-60">SRT Bonding</span>
-              </div>
-              <div class="flex gap-1">
-                <button class="btn btn-xs btn-ghost btn-outline" onclick="copyText(document.getElementById('srt-bonding-url').dataset.ip)">
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round">
-                    <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
-                    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
-                  </svg>
-                  IP
-                </button>
-                <button class="btn btn-xs btn-ghost btn-outline" onclick="copyText(document.getElementById('srt-bonding-url').dataset.port)">
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round">
-                    <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
-                    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
-                  </svg>
-                  Port
-                </button>
-                <button class="btn btn-xs btn-ghost btn-outline" onclick="copyText(document.getElementById('srt-bonding-url').dataset.streamId)">
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round">
-                    <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
-                    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
-                  </svg>
-                  Stream ID
-                </button>
-                <button class="btn btn-xs btn-accent btn-outline" onclick="copyText(document.getElementById('srt-bonding-url').dataset.copy)">
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round">
-                    <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
-                    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-            <code class="font-mono text-xs break-all opacity-80" id="srt-bonding-url"></code>
-            <div class="mt-2 hidden" id="srt-bonding-last-error-wrap">
-              <div class="flex min-w-0 items-center gap-2">
-                <span class="text-error shrink-0 text-xs" id="srt-bonding-last-error-ts"></span>
-                <div class="text-error min-w-0 truncate text-xs" id="srt-bonding-last-error"></div>
-              </div>
-            </div>
           </div>
         </div>
       </div>

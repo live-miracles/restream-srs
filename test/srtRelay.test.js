@@ -49,6 +49,15 @@ describe('SRT relay service', () => {
                             inputActive: true,
                             outputConnected: true,
                             retryFailures: 0,
+                            forwardedPackets: 42,
+                            forwardedBytes: 65536,
+                            lastPacketAt: startedAtMs + 900,
+                            recvPacketsTotal: 120,
+                            recvUniquePacketsTotal: 118,
+                            recvLossTotal: 2,
+                            recvDropTotal: 0,
+                            retransTotal: 3,
+                            rttMs: 4.25,
                             lastErrorAt,
                             lastError: null,
                         },
@@ -69,7 +78,71 @@ describe('SRT relay service', () => {
             inputActive: true,
             outputConnected: true,
             retryFailures: 0,
+            forwardedPackets: 42,
+            forwardedBytes: 65536,
+            lastPacketAt: startedAtMs + 900,
+            recvPacketsTotal: 120,
+            recvUniquePacketsTotal: 118,
+            recvLossTotal: 2,
+            recvDropTotal: 0,
+            retransTotal: 3,
+            rttMs: 4.25,
             lastErrorAt,
+            lastError: null,
+        });
+    });
+
+    test('matches stream status by resource path when encoder streamid includes extra fields', async () => {
+        global.fetch = async () =>
+            new Response(
+                JSON.stringify({
+                    pid: 12345,
+                    startedAtMs: Date.now() - 1000,
+                    updatedAtMs: Date.now(),
+                    activeStreamIds: ['#!::u=bridge,h=encoder.example,r=live/key01,m=publish'],
+                    lastError: null,
+                    streamStates: [
+                        {
+                            streamId: '#!::u=bridge,h=encoder.example,r=live/key01,m=publish',
+                            inputActive: true,
+                            outputConnected: true,
+                            retryFailures: 0,
+                            forwardedPackets: 0,
+                            forwardedBytes: 0,
+                            lastPacketAt: null,
+                            recvPacketsTotal: 0,
+                            recvUniquePacketsTotal: 0,
+                            recvLossTotal: 0,
+                            recvDropTotal: 0,
+                            retransTotal: 0,
+                            rttMs: null,
+                            lastErrorAt: null,
+                            lastError: null,
+                        },
+                    ],
+                }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } },
+            );
+
+        const service = createSrtRelayService();
+        cleanup.push(async () => service.shutdown());
+        service.start();
+
+        await waitFor(() => service.getStats().status === 'running');
+        assert.deepEqual(service.getStreamStatus('#!::r=live/key01,m=publish'), {
+            inputActive: true,
+            outputConnected: true,
+            retryFailures: 0,
+            forwardedPackets: 0,
+            forwardedBytes: 0,
+            lastPacketAt: null,
+            recvPacketsTotal: 0,
+            recvUniquePacketsTotal: 0,
+            recvLossTotal: 0,
+            recvDropTotal: 0,
+            retransTotal: 0,
+            rttMs: null,
+            lastErrorAt: null,
             lastError: null,
         });
     });

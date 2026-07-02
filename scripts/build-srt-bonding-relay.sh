@@ -16,6 +16,7 @@ OUT_DIR="${OUT_DIR:-$REPO_DIR/build}"
 OUT_TGZ="$OUT_DIR/srt-bonding-relay-linux-x86_64.tar.gz"
 IMAGE_TAG="restream-srs-srt-bonding-relay:${SRT_TAG}"
 CONTAINER_NAME="restream-srs-srt-package-$$"
+SOURCE_SHA="$(sha256sum "$REPO_DIR/native/srt-bonding-relay.c" | awk '{print $1}')"
 
 step() { echo; echo "=== $* ==="; }
 
@@ -43,6 +44,7 @@ trap cleanup EXIT
 step "Build image"
 docker build \
     --build-arg "SRT_TAG=$SRT_TAG" \
+    --build-arg "RELAY_SOURCE_SHA=$SOURCE_SHA" \
     -t "$IMAGE_TAG" \
     -f "$REPO_DIR/scripts/srt-bonding-relay.Dockerfile" \
     "$REPO_DIR"

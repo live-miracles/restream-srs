@@ -45,9 +45,20 @@ static const int RETRY_DELAYS_MS[] = {1000, 2000, 4000, 8000, 16000};
 
 typedef struct relay_stream_state {
     char streamid[1024];
+    int input_sessions;
     int input_active;
     int output_connected;
     int retry_failures;
+    long long forwarded_packets;
+    long long forwarded_bytes;
+    long long last_packet_at_ms;
+    long long recv_packets_total;
+    long long recv_unique_packets_total;
+    int recv_loss_total;
+    int recv_drop_total;
+    int retrans_total;
+    double rtt_ms;
+    long long last_stats_at_ms;
     char last_error[LAST_ERROR_MAX];
     long long last_error_at_ms;
 } relay_stream_state_t;
@@ -55,6 +66,9 @@ typedef struct relay_stream_state {
 static volatile sig_atomic_t g_running = 1;
 static pthread_mutex_t g_sessions_mu = PTHREAD_MUTEX_INITIALIZER;
 static char g_last_error[512];
+// Process-level last error is intentionally sticky: it acts as the last
+// operator-visible fault until the bonded input goes fully idle and a fresh
+// input lifecycle begins. Do not clear it on transient recovery.
 static relay_stream_state_t g_stream_states[MAX_ACTIVE_SESSIONS];
 static long long g_started_at_ms = 0;
 static int g_status_port = 10082;
@@ -132,6 +146,16 @@ static void set_stream_errorf(int slot, const char *fmt, ...)
     pthread_mutex_unlock(&g_sessions_mu);
 }
 
+static long long max_ll(long long a, long long b)
+{
+    return a > b ? a : b;
+}
+
+static int max_int(int a, int b)
+{
+    return a > b ? a : b;
+}
+
 static int add_stream_state(const char *streamid)
 {
     if (!streamid || !streamid[0]) return -1;
@@ -141,9 +165,8 @@ static int add_stream_state(const char *streamid)
         if (g_stream_states[i].streamid[0] &&
             strcmp(g_stream_states[i].streamid, streamid) == 0) {
             slot = i;
+            g_stream_states[i].input_sessions++;
             g_stream_states[i].input_active = 1;
-            g_stream_states[i].output_connected = 0;
-            g_stream_states[i].retry_failures = 0;
             break;
         }
     }
@@ -153,6 +176,7 @@ static int add_stream_state(const char *streamid)
                 slot = i;
                 memset(&g_stream_states[i], 0, sizeof g_stream_states[i]);
                 strncpy(g_stream_states[i].streamid, streamid, sizeof g_stream_states[i].streamid - 1);
+                g_stream_states[i].input_sessions = 1;
                 g_stream_states[i].input_active = 1;
                 break;
             }
@@ -166,9 +190,19 @@ static void remove_stream_state(int slot)
 {
     if (slot < 0 || slot >= MAX_ACTIVE_SESSIONS) return;
     pthread_mutex_lock(&g_sessions_mu);
+    if (g_stream_states[slot].input_sessions > 1) {
+        g_stream_states[slot].input_sessions--;
+        g_stream_states[slot].input_active = 1;
+        pthread_mutex_unlock(&g_sessions_mu);
+        return;
+    }
+    g_stream_states[slot].input_sessions = 0;
     g_stream_states[slot].input_active = 0;
     g_stream_states[slot].output_connected = 0;
     g_stream_states[slot].retry_failures = 0;
+    // Per-stream last_error is also intentionally sticky across transient
+    // reconnects. It is only cleared when a publish path reconnects or when the
+    // full input lifecycle ends and the slot is reset below.
     if (!g_stream_states[slot].last_error[0]) {
         memset(&g_stream_states[slot], 0, sizeof g_stream_states[slot]);
     }
@@ -179,6 +213,10 @@ static void set_stream_output_connected(int slot, int connected)
 {
     if (slot < 0 || slot >= MAX_ACTIVE_SESSIONS) return;
     pthread_mutex_lock(&g_sessions_mu);
+    if (!connected && g_stream_states[slot].input_sessions > 1) {
+        pthread_mutex_unlock(&g_sessions_mu);
+        return;
+    }
     g_stream_states[slot].output_connected = connected;
     if (connected) {
         g_stream_states[slot].retry_failures = 0;
@@ -203,6 +241,59 @@ static int get_stream_retry_failures(int slot)
     int failures = g_stream_states[slot].retry_failures;
     pthread_mutex_unlock(&g_sessions_mu);
     return failures;
+}
+
+static void record_stream_forward_progress(int slot, int bytes)
+{
+    if (slot < 0 || slot >= MAX_ACTIVE_SESSIONS || bytes <= 0) return;
+    pthread_mutex_lock(&g_sessions_mu);
+    g_stream_states[slot].forwarded_packets++;
+    g_stream_states[slot].forwarded_bytes += bytes;
+    g_stream_states[slot].last_packet_at_ms = now_ms();
+    pthread_mutex_unlock(&g_sessions_mu);
+}
+
+static void update_stream_srt_counters(int slot, SRTSOCKET in_sock, SRTSOCKET out_sock, int force)
+{
+    if (slot < 0 || slot >= MAX_ACTIVE_SESSIONS) return;
+
+    long long now = now_ms();
+    pthread_mutex_lock(&g_sessions_mu);
+    long long last = g_stream_states[slot].last_stats_at_ms;
+    pthread_mutex_unlock(&g_sessions_mu);
+    if (!force && last > 0 && now - last < 1000) return;
+
+    SRT_TRACEBSTATS in_stats;
+    memset(&in_stats, 0, sizeof in_stats);
+    int have_in = in_sock != SRT_INVALID_SOCK && srt_bstats(in_sock, &in_stats, 0) != SRT_ERROR;
+
+    SRT_TRACEBSTATS out_stats;
+    memset(&out_stats, 0, sizeof out_stats);
+    int have_out = out_sock != SRT_INVALID_SOCK && srt_bstats(out_sock, &out_stats, 0) != SRT_ERROR;
+
+    pthread_mutex_lock(&g_sessions_mu);
+    if (have_in) {
+        // Multiple redundant legs can briefly share one streamid. Keep the
+        // shared counters monotonic at the stream level instead of letting the
+        // latest thread overwrite them with lower per-session values.
+        g_stream_states[slot].recv_packets_total =
+            max_ll(g_stream_states[slot].recv_packets_total, in_stats.pktRecvTotal);
+        g_stream_states[slot].recv_unique_packets_total =
+            max_ll(g_stream_states[slot].recv_unique_packets_total, in_stats.pktRecvUniqueTotal);
+        g_stream_states[slot].recv_loss_total =
+            max_int(g_stream_states[slot].recv_loss_total, in_stats.pktRcvLossTotal);
+        g_stream_states[slot].recv_drop_total =
+            max_int(g_stream_states[slot].recv_drop_total, in_stats.pktRcvDropTotal);
+    }
+    if (have_out) {
+        g_stream_states[slot].retrans_total =
+            max_int(g_stream_states[slot].retrans_total, out_stats.pktRetransTotal);
+        g_stream_states[slot].rtt_ms = out_stats.msRTT;
+    } else if (have_in) {
+        g_stream_states[slot].rtt_ms = in_stats.msRTT;
+    }
+    g_stream_states[slot].last_stats_at_ms = now;
+    pthread_mutex_unlock(&g_sessions_mu);
 }
 
 static int stream_input_still_connected(SRTSOCKET conn)
@@ -270,10 +361,19 @@ static void write_status_response(int client_fd)
                 first ? "\n" : ",\n");
         json_write_escaped(f, g_stream_states[i].streamid);
         fprintf(f,
-                "\",\n      \"inputActive\": %s,\n      \"outputConnected\": %s,\n      \"retryFailures\": %d,\n      \"lastErrorAt\": %lld,\n      \"lastError\": ",
+                "\",\n      \"inputActive\": %s,\n      \"outputConnected\": %s,\n      \"retryFailures\": %d,\n      \"forwardedPackets\": %lld,\n      \"forwardedBytes\": %lld,\n      \"lastPacketAt\": %lld,\n      \"recvPacketsTotal\": %lld,\n      \"recvUniquePacketsTotal\": %lld,\n      \"recvLossTotal\": %d,\n      \"recvDropTotal\": %d,\n      \"retransTotal\": %d,\n      \"rttMs\": %.3f,\n      \"lastErrorAt\": %lld,\n      \"lastError\": ",
                 g_stream_states[i].input_active ? "true" : "false",
                 g_stream_states[i].output_connected ? "true" : "false",
                 g_stream_states[i].retry_failures,
+                g_stream_states[i].forwarded_packets,
+                g_stream_states[i].forwarded_bytes,
+                g_stream_states[i].last_packet_at_ms,
+                g_stream_states[i].recv_packets_total,
+                g_stream_states[i].recv_unique_packets_total,
+                g_stream_states[i].recv_loss_total,
+                g_stream_states[i].recv_drop_total,
+                g_stream_states[i].retrans_total,
+                g_stream_states[i].rtt_ms,
                 g_stream_states[i].last_error_at_ms);
         if (g_stream_states[i].last_error[0]) {
             fputc('"', f);
@@ -596,6 +696,7 @@ static void *session_main(void *arg)
             break;
         }
         if (r <= 0) continue;
+        update_stream_srt_counters(state_slot, conn, srt_out, 0);
 
         if (udp_fd >= 0) {
             sendto(udp_fd, buf, (size_t)r, 0, (struct sockaddr *)&cfg->out_addr, cfg->out_addrlen);
@@ -610,10 +711,12 @@ static void *session_main(void *arg)
                 srt_out = SRT_INVALID_SOCK;
                 continue;
             }
+            record_stream_forward_progress(state_slot, r);
         }
     }
 
     if (udp_fd >= 0) close(udp_fd);
+    update_stream_srt_counters(state_slot, conn, srt_out, 1);
     if (srt_out != SRT_INVALID_SOCK) srt_close(srt_out);
     srt_close(conn);
     remove_stream_state(state_slot);

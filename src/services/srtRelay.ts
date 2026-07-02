@@ -16,6 +16,15 @@ export interface SrtRelayStreamStatus {
     inputActive: boolean;
     outputConnected: boolean;
     retryFailures: number;
+    forwardedPackets: number;
+    forwardedBytes: number;
+    lastPacketAt: number | null;
+    recvPacketsTotal: number;
+    recvUniquePacketsTotal: number;
+    recvLossTotal: number;
+    recvDropTotal: number;
+    retransTotal: number;
+    rttMs: number | null;
     lastErrorAt: number | null;
     lastError: string | null;
 }
@@ -39,9 +48,24 @@ interface RelayStatusResponse {
         inputActive?: boolean;
         outputConnected?: boolean;
         retryFailures?: number;
+        forwardedPackets?: number;
+        forwardedBytes?: number;
+        lastPacketAt?: number;
+        recvPacketsTotal?: number;
+        recvUniquePacketsTotal?: number;
+        recvLossTotal?: number;
+        recvDropTotal?: number;
+        retransTotal?: number;
+        rttMs?: number;
         lastErrorAt?: number;
         lastError?: string | null;
     }>;
+}
+
+function extractStreamResource(streamId: string): string | null {
+    const match = /(?:^|[?,,#]|::|,)r=([^,]+)/.exec(streamId);
+    if (!match?.[1]) return null;
+    return match[1].replace(/^\/+/, '');
 }
 
 export function createSrtRelayService(): SrtRelayService {
@@ -87,6 +111,25 @@ export function createSrtRelayService(): SrtRelayService {
                                 outputConnected: !!s.outputConnected,
                                 retryFailures:
                                     typeof s.retryFailures === 'number' ? s.retryFailures : 0,
+                                forwardedPackets:
+                                    typeof s.forwardedPackets === 'number' ? s.forwardedPackets : 0,
+                                forwardedBytes:
+                                    typeof s.forwardedBytes === 'number' ? s.forwardedBytes : 0,
+                                lastPacketAt:
+                                    typeof s.lastPacketAt === 'number' ? s.lastPacketAt : null,
+                                recvPacketsTotal:
+                                    typeof s.recvPacketsTotal === 'number' ? s.recvPacketsTotal : 0,
+                                recvUniquePacketsTotal:
+                                    typeof s.recvUniquePacketsTotal === 'number'
+                                        ? s.recvUniquePacketsTotal
+                                        : 0,
+                                recvLossTotal:
+                                    typeof s.recvLossTotal === 'number' ? s.recvLossTotal : 0,
+                                recvDropTotal:
+                                    typeof s.recvDropTotal === 'number' ? s.recvDropTotal : 0,
+                                retransTotal:
+                                    typeof s.retransTotal === 'number' ? s.retransTotal : 0,
+                                rttMs: typeof s.rttMs === 'number' ? s.rttMs : null,
                                 lastErrorAt:
                                     typeof s.lastErrorAt === 'number' ? s.lastErrorAt : null,
                                 lastError: s.lastError ?? null,
@@ -136,15 +179,32 @@ export function createSrtRelayService(): SrtRelayService {
         },
 
         getStreamStatus(streamId: string): SrtRelayStreamStatus {
-            return (
-                streamStates.get(streamId) ?? {
-                    inputActive: false,
-                    outputConnected: false,
-                    retryFailures: 0,
-                    lastErrorAt: null,
-                    lastError: null,
+            const exact = streamStates.get(streamId);
+            if (exact) return exact;
+
+            const wantedResource = extractStreamResource(streamId);
+            if (wantedResource) {
+                for (const [rawStreamId, status] of streamStates) {
+                    if (extractStreamResource(rawStreamId) === wantedResource) return status;
                 }
-            );
+            }
+
+            return {
+                inputActive: false,
+                outputConnected: false,
+                retryFailures: 0,
+                forwardedPackets: 0,
+                forwardedBytes: 0,
+                lastPacketAt: null,
+                recvPacketsTotal: 0,
+                recvUniquePacketsTotal: 0,
+                recvLossTotal: 0,
+                recvDropTotal: 0,
+                retransTotal: 0,
+                rttMs: null,
+                lastErrorAt: null,
+                lastError: null,
+            };
         },
 
         start,

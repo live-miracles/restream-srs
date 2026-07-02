@@ -7,6 +7,7 @@ IMAGE_TAG="restream-srs-srt-bonding-relay-dev:${SRT_TAG}"
 CONTAINER_NAME="restream-srs-srt-dev-$$"
 OUT_BIN="${SRT_BONDING_RELAY_PATH:-$REPO_DIR/objs/srt-bonding-relay}"
 OUT_LIB_DIR="${SRT_BONDING_RELAY_LIB_DIR:-$REPO_DIR/objs/lib}"
+SOURCE_SHA="$(sha256sum "$REPO_DIR/native/srt-bonding-relay.c" | awk '{print $1}')"
 
 if ! command -v docker >/dev/null 2>&1; then
     echo "ERROR: Docker is required to build srt-bonding-relay locally." >&2
@@ -23,6 +24,7 @@ trap cleanup EXIT
 echo "[relay-build] building Docker image $IMAGE_TAG"
 docker build \
     --build-arg "SRT_TAG=$SRT_TAG" \
+    --build-arg "RELAY_SOURCE_SHA=$SOURCE_SHA" \
     -t "$IMAGE_TAG" \
     -f "$REPO_DIR/scripts/srt-bonding-relay.Dockerfile" \
     "$REPO_DIR"

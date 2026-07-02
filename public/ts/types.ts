@@ -88,6 +88,15 @@ export interface SrtBondingStatus {
     inputActive: boolean;
     outputConnected: boolean;
     retryFailures: number;
+    forwardedPackets: number;
+    forwardedBytes: number;
+    lastPacketAt: number | null;
+    recvPacketsTotal: number;
+    recvUniquePacketsTotal: number;
+    recvLossTotal: number;
+    recvDropTotal: number;
+    retransTotal: number;
+    rttMs: number | null;
     lastErrorAt: number | null;
     lastError: string | null;
 }
