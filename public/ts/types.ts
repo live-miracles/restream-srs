@@ -91,6 +91,7 @@ export interface SrtBondingStatus {
     forwardedPackets: number;
     forwardedBytes: number;
     lastPacketAt: number | null;
+    lastInputPacketAt: number | null;
     recvPacketsTotal: number;
     recvUniquePacketsTotal: number;
     recvLossTotal: number;

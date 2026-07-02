@@ -27,6 +27,11 @@ declare global {
 }
 
 type OutStatus = 'good' | 'warn' | 'error' | 'off';
+type BondingIndicator = {
+    leftColor: string;
+    rightColor: string;
+    title: string;
+};
 
 function fmtFieldOrder(fo: string | null | undefined): string | null {
     if (!fo || fo === 'unknown') return null;
@@ -58,6 +63,67 @@ function outStatus(o: OutputView, inputLive: boolean): OutStatus {
     }
     // status === 'stopped' but desiredState === 'running': between retries
     return o.lastError !== null ? 'error' : 'warn';
+}
+
+function getBondingIndicator(
+    pipeline: PipelineView,
+    relayProcessRunning: boolean,
+): BondingIndicator {
+    const { srtBonding } = pipeline;
+    const hasRecentInputFlow =
+        srtBonding.lastInputPacketAt != null &&
+        Date.now() - srtBonding.lastInputPacketAt <= RELAY_FLOW_STALE_MS;
+    const hasRecentOutputFlow =
+        srtBonding.lastPacketAt != null &&
+        Date.now() - srtBonding.lastPacketAt <= RELAY_FLOW_STALE_MS;
+    const hasForwardedData = srtBonding.forwardedPackets > 0;
+
+    if (!relayProcessRunning) {
+        return {
+            leftColor: STATUS_COLOR_ERROR,
+            rightColor: STATUS_COLOR_ERROR,
+            title: 'SRT bonding relay is not running',
+        };
+    }
+
+    if (
+        srtBonding.inputActive &&
+        srtBonding.outputConnected &&
+        hasRecentInputFlow &&
+        hasRecentOutputFlow
+    ) {
+        return {
+            leftColor: STATUS_COLOR_GOOD,
+            rightColor: STATUS_COLOR_GOOD,
+            title: 'Bonded SRT input active and forwarding to downstream output',
+        };
+    }
+
+    if (srtBonding.inputActive && srtBonding.outputConnected) {
+        return {
+            leftColor: hasRecentInputFlow ? STATUS_COLOR_GOOD : STATUS_COLOR_WARN,
+            rightColor: STATUS_COLOR_WARN,
+            title: hasForwardedData
+                ? 'Bonded SRT input connected, but media forwarding has stalled'
+                : 'Bonded SRT input connected, but no media has been received yet',
+        };
+    }
+
+    if (srtBonding.inputActive) {
+        return {
+            leftColor: hasRecentInputFlow ? STATUS_COLOR_GOOD : STATUS_COLOR_WARN,
+            rightColor: STATUS_COLOR_ERROR,
+            title:
+                `Bonded SRT input active, relay output reconnecting` +
+                (srtBonding.retryFailures > 0 ? ` (${srtBonding.retryFailures} retries)` : ''),
+        };
+    }
+
+    return {
+        leftColor: STATUS_COLOR_OFF,
+        rightColor: STATUS_COLOR_OFF,
+        title: 'No bonded SRT input for this stream key',
+    };
 }
 
 // ── Pipeline list (left column) ───────────────────────
@@ -665,10 +731,6 @@ function renderPipelineInfo(selectedId: string | null): void {
     const bondingErr = document.getElementById('srt-bonding-last-error');
     const bondingInputActive = pipeline.srtBonding.inputActive;
     const bondingOutputConnected = pipeline.srtBonding.outputConnected;
-    const bondingLastPacketAt = pipeline.srtBonding.lastPacketAt;
-    const bondingHasRecentFlow =
-        bondingLastPacketAt != null && Date.now() - bondingLastPacketAt <= RELAY_FLOW_STALE_MS;
-    const bondingHasForwardedData = pipeline.srtBonding.forwardedPackets > 0;
     const relayProcessRunning = state.health.srtRelay?.status === 'running';
     const bondingHost = state.config.publicHost || 'localhost';
     const bondingPortValue = SRT_BONDING_PORT;
@@ -681,41 +743,14 @@ function renderPipelineInfo(selectedId: string | null): void {
             : '');
     bondingCard?.classList.remove('opacity-60');
     if (bondingDot && bondingDotFill) {
-        const leftColor = !relayProcessRunning
-            ? STATUS_COLOR_ERROR
-            : bondingInputActive && bondingHasRecentFlow
-              ? STATUS_COLOR_GOOD
-              : bondingInputActive
-                ? pipeline.srtBonding.lastError
-                    ? STATUS_COLOR_ERROR
-                    : STATUS_COLOR_WARN
-                : STATUS_COLOR_OFF;
-        const rightColor = !relayProcessRunning
-            ? STATUS_COLOR_ERROR
-            : bondingOutputConnected && bondingHasRecentFlow
-              ? STATUS_COLOR_GOOD
-              : bondingInputActive
-                ? pipeline.srtBonding.lastError
-                    ? STATUS_COLOR_ERROR
-                    : STATUS_COLOR_WARN
-                : STATUS_COLOR_OFF;
+        const indicator = getBondingIndicator(pipeline, relayProcessRunning);
         bondingDotFill.style.backgroundColor = 'transparent';
         bondingDotFill.style.backgroundImage =
             `linear-gradient(90deg, ` +
-            `${leftColor} 0 45%, ` +
+            `${indicator.leftColor} 0 45%, ` +
             `#242933 45% 55%, ` +
-            `${rightColor} 55% 100%)`;
-        bondingDot.title = !relayProcessRunning
-            ? 'SRT bonding relay is not running'
-            : bondingInputActive && bondingOutputConnected && bondingHasRecentFlow
-              ? 'Bonded SRT input active and forwarding into SRS'
-              : bondingInputActive && bondingOutputConnected
-                ? bondingHasForwardedData
-                    ? 'Bonded SRT input connected, but media forwarding has stalled'
-                    : 'Bonded SRT input connected, but no media has been received yet'
-                : bondingInputActive
-                  ? `Bonded SRT input active, relay output reconnecting${pipeline.srtBonding.retryFailures > 0 ? ` (${pipeline.srtBonding.retryFailures} retries)` : ''}`
-                  : 'No bonded SRT input for this stream key';
+            `${indicator.rightColor} 55% 100%)`;
+        bondingDot.title = indicator.title;
     }
     if (bondingUrl) {
         bondingUrl.textContent = bondingUrlValue.replace(pipeline.streamKey, masked);

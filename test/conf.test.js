@@ -8,7 +8,7 @@ const path = require('node:path');
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'restream-srs-conf-'));
 process.env.SRS_CONF_PATH = path.join(tempDir, 'srs.conf');
-process.env.SRT_BONDING_RELAY_ENV_PATH = path.join(tempDir, 'srt-bonding-relay.env');
+process.env.SRT_BONDING_RELAY_CONFIG_PATH = path.join(tempDir, 'srt-bonding-relay.json');
 
 // writeSrsConf patches an existing file, so seed a minimal conf with the
 // srt_server block that the passphrase injection regex targets.
@@ -25,23 +25,34 @@ describe('SRS config generation', () => {
         writeSrtRuntimeConfigs();
 
         const conf = fs.readFileSync(process.env.SRS_CONF_PATH, 'utf8');
-        const relayEnv = fs.readFileSync(process.env.SRT_BONDING_RELAY_ENV_PATH, 'utf8');
+        const relayConfig = JSON.parse(
+            fs.readFileSync(process.env.SRT_BONDING_RELAY_CONFIG_PATH, 'utf8'),
+        );
         assert.doesNotMatch(conf, /passphrase\s+/);
         assert.doesNotMatch(conf, /pbkeylen\s+/);
-        assert.doesNotMatch(relayEnv, /passphrase=/);
-        assert.doesNotMatch(relayEnv, /pbkeylen=16/);
-        assert.doesNotMatch(relayEnv, /SRT_BONDING_STATE_PATH=/);
+        assert.equal(relayConfig.input_host, '0.0.0.0');
+        assert.equal(relayConfig.input_port, 10081);
+        assert.equal(relayConfig.output_host, '127.0.0.1');
+        assert.equal(relayConfig.output_port, 10080);
+        assert.equal(relayConfig.status_port, 10082);
+        assert.equal(relayConfig.passphrase, '');
     });
 
     test('writes configured SRT passphrase to both runtime configs', () => {
         writeSrtRuntimeConfigs('secret-value');
 
         const conf = fs.readFileSync(process.env.SRS_CONF_PATH, 'utf8');
-        const relayEnv = fs.readFileSync(process.env.SRT_BONDING_RELAY_ENV_PATH, 'utf8');
+        const relayConfig = JSON.parse(
+            fs.readFileSync(process.env.SRT_BONDING_RELAY_CONFIG_PATH, 'utf8'),
+        );
         assert.match(conf, /passphrase\s+"secret-value";/);
         assert.match(conf, /pbkeylen\s+16;/);
-        assert.match(relayEnv, /passphrase=secret-value/);
-        assert.match(relayEnv, /pbkeylen=16/);
+        assert.equal(relayConfig.input_host, '0.0.0.0');
+        assert.equal(relayConfig.input_port, 10081);
+        assert.equal(relayConfig.output_host, '127.0.0.1');
+        assert.equal(relayConfig.output_port, 10080);
+        assert.equal(relayConfig.status_port, 10082);
+        assert.equal(relayConfig.passphrase, 'secret-value');
     });
 
     test('throws when enabling SRT passphrase without an srt_server block', () => {

@@ -294,6 +294,10 @@ export function createHealthService(
             const prevLive = inputLive.get(pipeline.id) ?? false;
             const s = srsReachable ? liveByPath.get(path) : undefined;
             const nowLive = srsReachable ? !!s : prevLive;
+            // UI should reflect whether the input is currently usable through SRS.
+            // Keep nowLive sticky internally for restart/logging behavior during an
+            // SRS outage, but don't present a stale green input while SRS is down.
+            const displayLive = srsReachable ? nowLive : false;
 
             if (srsReachable) {
                 inputLive.set(pipeline.id, nowLive);
@@ -349,25 +353,25 @@ export function createHealthService(
                     // (ffmpeg may still be connected to the destination, draining
                     // buffered data). Hide it so the UI doesn't show a high bitrate
                     // alongside a red/error status.
-                    bitrateKbps: nowLive ? stats.bitrateKbps : null,
+                    bitrateKbps: displayLive ? stats.bitrateKbps : null,
                     failures: stats.failures,
                     lastError: lastErrorById.get(outId) ?? null,
                 };
             }
 
-            const srtStream = nowLive && s?.tcUrl?.startsWith('srt://');
+            const srtStream = displayLive && s?.tcUrl?.startsWith('srt://');
             const probe = ffprobeResults.get(pipeline.id) ?? null;
             const bondingStreamId = `#!::r=live/${pipeline.streamKey},m=publish`;
             const bondingStatus = srtRelayService.getStreamStatus(bondingStreamId);
 
             pipelinesHealth[String(pipeline.id)] = {
                 input: {
-                    live: nowLive,
+                    live: displayLive,
                     isSrt: !!srtStream,
                     recvBitrateKbps: s?.kbps?.recv_30s ?? null,
                     sendBitrateKbps: s?.kbps?.send_30s ?? null,
                     readers: s ? Math.max(0, (s.clients ?? 0) - 1) : 0,
-                    uptimeMs: nowLive
+                    uptimeMs: displayLive
                         ? Date.now() - (inputLiveStartMs.get(pipeline.id) ?? Date.now())
                         : null,
                     video: probe?.video ?? (s?.video ? { ...s.video, fps: null } : null),

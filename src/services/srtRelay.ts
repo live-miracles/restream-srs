@@ -19,6 +19,7 @@ export interface SrtRelayStreamStatus {
     forwardedPackets: number;
     forwardedBytes: number;
     lastPacketAt: number | null;
+    lastInputPacketAt: number | null;
     recvPacketsTotal: number;
     recvUniquePacketsTotal: number;
     recvLossTotal: number;
@@ -41,7 +42,6 @@ export interface SrtRelayService {
 interface RelayStatusResponse {
     pid?: number;
     startedAtMs?: number;
-    activeStreamIds?: string[];
     lastError?: string | null;
     streamStates?: Array<{
         streamId?: string;
@@ -51,6 +51,7 @@ interface RelayStatusResponse {
         forwardedPackets?: number;
         forwardedBytes?: number;
         lastPacketAt?: number;
+        lastInputPacketAt?: number;
         recvPacketsTotal?: number;
         recvUniquePacketsTotal?: number;
         recvLossTotal?: number;
@@ -68,6 +69,47 @@ function extractStreamResource(streamId: string): string | null {
     return match[1].replace(/^\/+/, '');
 }
 
+const EMPTY_STREAM_STATUS: SrtRelayStreamStatus = {
+    inputActive: false,
+    outputConnected: false,
+    retryFailures: 0,
+    forwardedPackets: 0,
+    forwardedBytes: 0,
+    lastPacketAt: null,
+    lastInputPacketAt: null,
+    recvPacketsTotal: 0,
+    recvUniquePacketsTotal: 0,
+    recvLossTotal: 0,
+    recvDropTotal: 0,
+    retransTotal: 0,
+    rttMs: null,
+    lastErrorAt: null,
+    lastError: null,
+};
+
+function parseStreamStatus(
+    s: NonNullable<RelayStatusResponse['streamStates']>[number],
+): SrtRelayStreamStatus {
+    return {
+        inputActive: !!s.inputActive,
+        outputConnected: !!s.outputConnected,
+        retryFailures: typeof s.retryFailures === 'number' ? s.retryFailures : 0,
+        forwardedPackets: typeof s.forwardedPackets === 'number' ? s.forwardedPackets : 0,
+        forwardedBytes: typeof s.forwardedBytes === 'number' ? s.forwardedBytes : 0,
+        lastPacketAt: typeof s.lastPacketAt === 'number' ? s.lastPacketAt : null,
+        lastInputPacketAt: typeof s.lastInputPacketAt === 'number' ? s.lastInputPacketAt : null,
+        recvPacketsTotal: typeof s.recvPacketsTotal === 'number' ? s.recvPacketsTotal : 0,
+        recvUniquePacketsTotal:
+            typeof s.recvUniquePacketsTotal === 'number' ? s.recvUniquePacketsTotal : 0,
+        recvLossTotal: typeof s.recvLossTotal === 'number' ? s.recvLossTotal : 0,
+        recvDropTotal: typeof s.recvDropTotal === 'number' ? s.recvDropTotal : 0,
+        retransTotal: typeof s.retransTotal === 'number' ? s.retransTotal : 0,
+        rttMs: typeof s.rttMs === 'number' ? s.rttMs : null,
+        lastErrorAt: typeof s.lastErrorAt === 'number' ? s.lastErrorAt : null,
+        lastError: s.lastError ?? null,
+    };
+}
+
 export function createSrtRelayService(): SrtRelayService {
     let stats: SrtRelayStats = {
         status: 'stopped',
@@ -75,7 +117,6 @@ export function createSrtRelayService(): SrtRelayService {
         startedAtMs: null,
         lastError: null,
     };
-    let activeStreamIds = new Set<string>();
     let streamStates = new Map<string, SrtRelayStreamStatus>();
     let pollTimer: NodeJS.Timeout | null = null;
     let everReachedRelay = false;
@@ -93,48 +134,13 @@ export function createSrtRelayService(): SrtRelayService {
                 const data = (await res.json()) as RelayStatusResponse;
                 const pid = typeof data.pid === 'number' ? data.pid : null;
                 const startedAtMs = typeof data.startedAtMs === 'number' ? data.startedAtMs : null;
-                activeStreamIds = new Set(
-                    (data.activeStreamIds ?? []).filter(
-                        (s): s is string => typeof s === 'string' && s.length > 0,
-                    ),
-                );
                 streamStates = new Map(
                     (data.streamStates ?? [])
                         .filter(
                             (s): s is typeof s & { streamId: string } =>
                                 typeof s.streamId === 'string' && s.streamId.length > 0,
                         )
-                        .map((s) => [
-                            s.streamId,
-                            {
-                                inputActive: !!s.inputActive,
-                                outputConnected: !!s.outputConnected,
-                                retryFailures:
-                                    typeof s.retryFailures === 'number' ? s.retryFailures : 0,
-                                forwardedPackets:
-                                    typeof s.forwardedPackets === 'number' ? s.forwardedPackets : 0,
-                                forwardedBytes:
-                                    typeof s.forwardedBytes === 'number' ? s.forwardedBytes : 0,
-                                lastPacketAt:
-                                    typeof s.lastPacketAt === 'number' ? s.lastPacketAt : null,
-                                recvPacketsTotal:
-                                    typeof s.recvPacketsTotal === 'number' ? s.recvPacketsTotal : 0,
-                                recvUniquePacketsTotal:
-                                    typeof s.recvUniquePacketsTotal === 'number'
-                                        ? s.recvUniquePacketsTotal
-                                        : 0,
-                                recvLossTotal:
-                                    typeof s.recvLossTotal === 'number' ? s.recvLossTotal : 0,
-                                recvDropTotal:
-                                    typeof s.recvDropTotal === 'number' ? s.recvDropTotal : 0,
-                                retransTotal:
-                                    typeof s.retransTotal === 'number' ? s.retransTotal : 0,
-                                rttMs: typeof s.rttMs === 'number' ? s.rttMs : null,
-                                lastErrorAt:
-                                    typeof s.lastErrorAt === 'number' ? s.lastErrorAt : null,
-                                lastError: s.lastError ?? null,
-                            },
-                        ]),
+                        .map((s) => [s.streamId, parseStreamStatus(s)]),
                 );
                 everReachedRelay = true;
                 stats = {
@@ -144,7 +150,6 @@ export function createSrtRelayService(): SrtRelayService {
                     lastError: data.lastError ?? null,
                 };
             } catch (err) {
-                activeStreamIds = new Set();
                 streamStates = new Map();
                 stats = {
                     status: everReachedRelay ? 'failed' : 'stopped',
@@ -165,6 +170,20 @@ export function createSrtRelayService(): SrtRelayService {
         pollTimer.unref?.();
     }
 
+    function getStreamStatus(streamId: string): SrtRelayStreamStatus {
+        const exact = streamStates.get(streamId);
+        if (exact) return exact;
+
+        const wantedResource = extractStreamResource(streamId);
+        if (wantedResource) {
+            for (const [rawStreamId, status] of streamStates) {
+                if (extractStreamResource(rawStreamId) === wantedResource) return status;
+            }
+        }
+
+        return { ...EMPTY_STREAM_STATUS };
+    }
+
     return {
         getPort(): number {
             return SRT_BONDING_PORT;
@@ -175,36 +194,11 @@ export function createSrtRelayService(): SrtRelayService {
         },
 
         isStreamActive(streamId: string): boolean {
-            return activeStreamIds.has(streamId);
+            return getStreamStatus(streamId).inputActive;
         },
 
         getStreamStatus(streamId: string): SrtRelayStreamStatus {
-            const exact = streamStates.get(streamId);
-            if (exact) return exact;
-
-            const wantedResource = extractStreamResource(streamId);
-            if (wantedResource) {
-                for (const [rawStreamId, status] of streamStates) {
-                    if (extractStreamResource(rawStreamId) === wantedResource) return status;
-                }
-            }
-
-            return {
-                inputActive: false,
-                outputConnected: false,
-                retryFailures: 0,
-                forwardedPackets: 0,
-                forwardedBytes: 0,
-                lastPacketAt: null,
-                recvPacketsTotal: 0,
-                recvUniquePacketsTotal: 0,
-                recvLossTotal: 0,
-                recvDropTotal: 0,
-                retransTotal: 0,
-                rttMs: null,
-                lastErrorAt: null,
-                lastError: null,
-            };
+            return getStreamStatus(streamId);
         },
 
         start,

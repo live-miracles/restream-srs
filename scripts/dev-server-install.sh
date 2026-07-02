@@ -13,6 +13,8 @@ fi
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SRS_OUT="$REPO_DIR/objs/srs"
+RELAY_REPO_DIR="${SRT_BONDING_RELAY_REPO_DIR:-$REPO_DIR/../srt-bonding-relay}"
+RELAY_REPO_URL="${SRT_BONDING_RELAY_REPO_URL:-https://github.com/live-miracles/srt-bonding-relay.git}"
 
 SRS_VERSION=6.0-r0
 SRS_RELEASE_TAG="v${SRS_VERSION}"
@@ -41,6 +43,26 @@ verify_sha256() {
         exit 1
     fi
     echo "Checksum OK: $(basename "$file")"
+}
+
+ensure_relay_repo() {
+    if [[ -d "$RELAY_REPO_DIR/.git" ]]; then
+        echo "Relay repo already present at $RELAY_REPO_DIR"
+        return
+    fi
+
+    if [[ -e "$RELAY_REPO_DIR" ]]; then
+        echo "ERROR: relay repo path exists but is not a git repo: $RELAY_REPO_DIR" >&2
+        exit 1
+    fi
+
+    if ! command -v git &>/dev/null; then
+        echo "ERROR: git is required to clone $RELAY_REPO_URL" >&2
+        exit 1
+    fi
+
+    echo "Cloning relay repo into $RELAY_REPO_DIR..."
+    git clone "$RELAY_REPO_URL" "$RELAY_REPO_DIR"
 }
 
 mkdir -p "$REPO_DIR/objs"
@@ -89,6 +111,8 @@ if [[ -z "${SRS_LOCAL_BIN:-}" ]]; then
         echo "Installed: $("$SRS_OUT" -v 2>&1 | head -1) ($SRS_RELEASE_TAG)"
     fi
 fi
+
+ensure_relay_repo
 
 echo ""
 echo "Run SRS:  npm run srs"

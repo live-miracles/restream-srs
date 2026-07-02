@@ -17,7 +17,7 @@ OBS / ffmpeg  ──RTMP────────►  SRS (1935)   ──FFmpeg�
 | Component | Description |
 |-----------|-------------|
 | SRS | Ingest broker — accepts RTMP and SRT streams |
-| srt-bonding-relay | Shared SRT bonding relay into SRS |
+| srt-bonding-relay | Standalone bonded SRT relay (GitHub release in prod, sibling repo in dev) |
 | Node.js app | REST API + dashboard on port 8080 |
 | FFmpeg | One process per output, spawned and managed by the app |
 | SQLite | Persistent state for pipelines, outputs, stream keys, settings |
@@ -73,7 +73,7 @@ This app now runs natively on Linux. The production setup uses two systemd servi
 | `srt-bonding-relay.service` | Shared SRT bonding relay, started on UDP port 10081 |
 | `restream-srs.service` | Node.js dashboard/API, started from `/opt/restream-srs/dist/index.js` |
 
-The installer downloads the official SRS release binary and a pinned `srt-bonding-relay` binary from this project's GitHub releases. The relay asset is built separately from Haivision's official SRT source and verified by SHA256 during install.
+The installer downloads the official SRS release binary and a pinned `srt-bonding-relay` binary from the standalone [`live-miracles/srt-bonding-relay`](https://github.com/live-miracles/srt-bonding-relay) GitHub releases. The relay asset is built separately from Haivision's official SRT source and verified by SHA256 during install when a hash is configured.
 
 **Production install:**
 ```bash
@@ -106,7 +106,7 @@ Open the dashboard: `http://SERVER_IP:8080` — default password is `admin`.
 
 The app writes both SRT runtime config files together:
 - `/etc/restream-srs/srs.conf`
-- `/etc/restream-srs/srt-bonding-relay.env`
+- `/etc/restream-srs/srt-bonding-relay.json`
 
 SRS only reads its config at startup, and the SRT bonding relay only reads its
 env file at startup, so SRT passphrase changes require:
@@ -264,19 +264,7 @@ To use a local SRS binary:
 SRS_LOCAL_BIN=./build/srs npm run dev-install
 ```
 
-**Publishing a new pinned `srt-bonding-relay` release asset** (requires Docker and `gh`):
-```bash
-bash scripts/build-srt-bonding-relay.sh
-
-# Upload to GitHub releases (bump the tag for each new build).
-gh release create srt-v1.5.5-2 "./build/srt-bonding-relay-linux-x86_64.tar.gz" \
-  --repo live-miracles/restream-srs \
-  --title "srt-bonding-relay v1.5.5" \
-  --notes "Built from Haivision/srt v1.5.5 for restream-srs."
-
-# Update SRT_RELEASE_TAG and SRT_SHA256 in scripts/server-install.sh
-# if the version or hash changed.
-```
+The standalone relay now lives in the sibling `../srt-bonding-relay` repo during development and in `live-miracles/srt-bonding-relay` GitHub Releases for production installs.
 
 **2. Start SRS** (terminal 1):
 ```bash
@@ -285,7 +273,7 @@ npm run srs           # runs ./objs/srs -c srs.conf in the foreground
 
 **3. Start the SRT bonding relay** (terminal 2):
 ```bash
-npm run relay         # Docker-builds the relay, runs it, and rebuilds/restarts on native/ changes
+npm run relay         # auto-clones ../srt-bonding-relay if missing, builds it, runs it, and rebuilds on source changes
 ```
 
 The relay also exposes a local HTTP status endpoint on `127.0.0.1:10082` in
@@ -297,7 +285,7 @@ relay health and the per-pipeline bonded-input status.
 npm run dev           # tsx watch + tsc watch + tailwind watch
 ```
 
-If the app rewrites `srs.conf` and `srt-bonding-relay.env` after a passphrase change, restart SRS and the relay:
+If the app rewrites `srs.conf` and `srt-bonding-relay.json` after a passphrase change, restart SRS and the relay:
 ```bash
 Ctrl-C  # in terminal 1
 npm run srs
@@ -321,7 +309,7 @@ npm run relay
 | `FFMPEG_PATH` | `ffmpeg` | FFmpeg binary (uses `$PATH` if unset) |
 | `FFPROBE_PATH` | `ffprobe` | FFprobe binary (uses `$PATH` if unset) |
 | `SRT_BONDING_PORT` | `10081` | Shared SRT bonding listener port |
-| `SRT_BONDING_RELAY_ENV_PATH` | beside `srs.conf` | Env file consumed by `srt-bonding-relay.service` |
+| `SRT_BONDING_RELAY_CONFIG_PATH` | beside `srs.conf` | JSON config file consumed by `srt-bonding-relay.service` |
 | `PORT` | `8080` | App HTTP port |
 
 ## Known issues

@@ -34,13 +34,11 @@ SRS_FILENAME="SRS-CentOS7-x86_64-${SRS_VERSION}.zip"
 SRS_SHA256="1eb20245a76643b2d32a1be85e71015079689a0733a10f79964f9a8189c21609"
 SRS_URL="https://github.com/ossrs/srs/releases/download/${SRS_RELEASE_TAG}/${SRS_FILENAME}"
 
-# Pinned srt-bonding-relay binary — built once with scripts/build-srt-bonding-relay.sh
-# and published as a release asset in this project.
-SRT_VERSION=1.5.5
-SRT_RELEASE_TAG="srt-v${SRT_VERSION}-2"
+# Pinned srt-bonding-relay binary — published from the standalone relay repo.
+SRT_RELEASE_TAG="${SRT_RELEASE_TAG:-v1.0.0}"
 SRT_FILENAME="srt-bonding-relay-linux-x86_64.tar.gz"
-SRT_SHA256=""   # TODO: run scripts/build-srt-bonding-relay.sh, publish the asset, fill in SHA256
-SRT_URL="https://github.com/live-miracles/restream-srs/releases/download/${SRT_RELEASE_TAG}/${SRT_FILENAME}"
+SRT_SHA256="${SRT_SHA256:-}"   # Fill with the standalone repo asset hash to enforce verification.
+SRT_URL="${SRT_URL:-https://github.com/live-miracles/srt-bonding-relay/releases/download/${SRT_RELEASE_TAG}/${SRT_FILENAME}}"
 
 # FFmpeg is pinned to a specific immutable BtbN build (a month-end autobuild tag,
 # which BtbN retains for 2 years) instead of the floating "latest" tag, so installs
@@ -125,9 +123,9 @@ else
 fi
 
 SRT_VERSION_MARKER=/usr/local/bin/.srt-bonding-relay-version
-step "5/10 srt-bonding-relay $SRT_VERSION"
+step "5/10 srt-bonding-relay $SRT_RELEASE_TAG"
 if [[ -x /usr/local/bin/srt-bonding-relay && -f "$SRT_VERSION_MARKER" && "$(cat "$SRT_VERSION_MARKER")" == "$SRT_RELEASE_TAG" ]]; then
-    echo "srt-bonding-relay $SRT_VERSION already installed."
+    echo "srt-bonding-relay $SRT_RELEASE_TAG already installed."
 else
     echo "Downloading $SRT_FILENAME ($SRT_RELEASE_TAG)..."
     curl -fsSL "$SRT_URL" -o "$WORK/$SRT_FILENAME"
@@ -225,13 +223,19 @@ if [[ -s "$DB_FILE" ]]; then
     fi
 fi
 touch "$DB_FILE"
-if [[ ! -f "$CONF_DIR/srt-bonding-relay.env" ]]; then
-    cat > "$CONF_DIR/srt-bonding-relay.env" <<EOF
-SRT_BONDING_INPUT_URI="srt://0.0.0.0:10081?mode=listener&groupconnect=1&transtype=live&latency=240"
-SRT_BONDING_OUTPUT_URI="srt://127.0.0.1:10080?transtype=live&latency=200"
+if [[ ! -f "$CONF_DIR/srt-bonding-relay.json" ]]; then
+    cat > "$CONF_DIR/srt-bonding-relay.json" <<EOF
+{
+  "input_host": "0.0.0.0",
+  "input_port": 10081,
+  "output_host": "127.0.0.1",
+  "output_port": 10080,
+  "status_port": 10082,
+  "passphrase": ""
+}
 EOF
 fi
-chown "$SERVICE_USER:$SERVICE_USER" "$CONF_DIR/srs.conf" "$CONF_DIR/srt-bonding-relay.env" "$DB_FILE"
+chown "$SERVICE_USER:$SERVICE_USER" "$CONF_DIR/srs.conf" "$CONF_DIR/srt-bonding-relay.json" "$DB_FILE"
 echo "Config: $CONF_DIR/srs.conf"
 echo "Data:   $DB_FILE"
 
@@ -285,9 +289,7 @@ Type=simple
 User=$SERVICE_USER
 Group=$SERVICE_USER
 WorkingDirectory=$DATA_DIR
-EnvironmentFile=$CONF_DIR/srt-bonding-relay.env
-Environment=SRT_BONDING_STATUS_PORT=10082
-ExecStart=/usr/local/bin/srt-bonding-relay \${SRT_BONDING_INPUT_URI} \${SRT_BONDING_OUTPUT_URI}
+ExecStart=/usr/local/bin/srt-bonding-relay $CONF_DIR/srt-bonding-relay.json
 Restart=always
 RestartSec=2
 LimitNOFILE=1048576
@@ -323,7 +325,7 @@ Environment=SRS_SRT_PORT=10080
 Environment=SRT_BONDING_PORT=10081
 Environment=SRT_BONDING_STATUS_PORT=10082
 Environment=SRT_BONDING_RELAY_PATH=/usr/local/bin/srt-bonding-relay
-Environment=SRT_BONDING_RELAY_ENV_PATH=$CONF_DIR/srt-bonding-relay.env
+Environment=SRT_BONDING_RELAY_CONFIG_PATH=$CONF_DIR/srt-bonding-relay.json
 Environment=FFMPEG_PATH=/usr/local/bin/ffmpeg
 Environment=FFPROBE_PATH=/usr/local/bin/ffprobe
 ExecStart=/usr/bin/node $APP_DIR/dist/index.js

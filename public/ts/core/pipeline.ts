@@ -26,6 +26,7 @@ const EMPTY_BONDING: SrtBondingStatus = {
     forwardedPackets: 0,
     forwardedBytes: 0,
     lastPacketAt: null,
+    lastInputPacketAt: null,
     recvPacketsTotal: 0,
     recvUniquePacketsTotal: 0,
     recvLossTotal: 0,
