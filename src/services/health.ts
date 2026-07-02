@@ -11,7 +11,7 @@ import {
 } from '../utils/srs.js';
 import type { Db } from '../types.js';
 import type { OutputService } from './outputs.js';
-import type { SrtRelayService, SrtRelayStats } from './srtRelay.js';
+import type { SrtRelayService, SrtRelayStats, SrtRelayStreamStatus } from './srtRelay.js';
 
 const FFPROBE_CMD = process.env.FFPROBE_PATH || 'ffprobe';
 const FFPROBE_DELAYS_MS = [3000, 10000, 20000, 40000];
@@ -54,7 +54,7 @@ interface OutputHealth {
 interface PipelineHealth {
     input: InputHealth;
     outputs: Record<string, OutputHealth>;
-    srtRelay: SrtRelayStats;
+    srtBonding: SrtRelayStreamStatus;
 }
 
 export interface HealthSnapshot {
@@ -358,7 +358,7 @@ export function createHealthService(
             const srtStream = nowLive && s?.tcUrl?.startsWith('srt://');
             const probe = ffprobeResults.get(pipeline.id) ?? null;
             const bondingStreamId = `#!::r=live/${pipeline.streamKey},m=publish`;
-            const bondingActive = srtRelayService.isStreamActive(bondingStreamId);
+            const bondingStatus = srtRelayService.getStreamStatus(bondingStreamId);
 
             pipelinesHealth[String(pipeline.id)] = {
                 input: {
@@ -375,14 +375,7 @@ export function createHealthService(
                     audioTracks: probe?.audioTracks ?? [],
                 },
                 outputs: outputsHealth,
-                srtRelay: {
-                    ...relayStats,
-                    status: bondingActive
-                        ? 'running'
-                        : relayStats.status === 'running'
-                          ? 'stopped'
-                          : relayStats.status,
-                },
+                srtBonding: bondingStatus,
             };
         }
 

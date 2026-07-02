@@ -4,7 +4,7 @@ import type {
     InputHealth,
     PipelineView,
     OutputView,
-    SrtRelayStatus,
+    SrtBondingStatus,
 } from '../types.js';
 
 const EMPTY_INPUT: InputHealth = {
@@ -19,10 +19,11 @@ const EMPTY_INPUT: InputHealth = {
     audioTracks: [],
 };
 
-const EMPTY_RELAY: SrtRelayStatus = {
-    status: 'stopped',
-    pid: null,
-    startedAtMs: null,
+const EMPTY_BONDING: SrtBondingStatus = {
+    inputActive: false,
+    outputConnected: false,
+    retryFailures: 0,
+    lastErrorAt: null,
     lastError: null,
 };
 
@@ -66,6 +67,12 @@ export function parsePipelines(
             };
         });
 
-        return { ...p, id: String(p.id), input, outs, srtRelay: ph?.srtRelay ?? EMPTY_RELAY };
+        return {
+            ...p,
+            id: String(p.id),
+            input,
+            outs,
+            srtBonding: ph?.srtBonding ?? EMPTY_BONDING,
+        };
     });
 }

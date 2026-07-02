@@ -7,16 +7,20 @@ const SRT_BONDING_PORT = parseInt(process.env.SRT_BONDING_PORT || '10081');
 const RELAY_ENV_PATH =
     process.env.SRT_BONDING_RELAY_ENV_PATH ??
     path.join(path.dirname(CONF_PATH), 'srt-bonding-relay.env');
-const SRT_BONDING_STATE_PATH =
-    process.env.SRT_BONDING_STATE_PATH ||
-    path.join(process.cwd(), 'objs', 'srt-bonding-relay.state');
 export const SRS_LOG_PATH = process.env.SRS_LOG_PATH ?? path.join(process.cwd(), 'objs', 'srs.log');
+
+function writeFileAtomic(targetPath: string, contents: string): void {
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    const tmpPath = `${targetPath}.tmp`;
+    fs.writeFileSync(tmpPath, contents, 'utf8');
+    fs.renameSync(tmpPath, targetPath);
+}
 
 function quoteSrsString(value: string): string {
     return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
-export function writeSrsConf(passphrase?: string | null): void {
+function renderSrsConf(passphrase?: string | null): string {
     let conf = fs.readFileSync(CONF_PATH, 'utf8');
 
     // Remove any previously injected passphrase/pbkeylen lines
@@ -25,10 +29,14 @@ export function writeSrsConf(passphrase?: string | null): void {
 
     if (passphrase) {
         const lines = `    passphrase      ${quoteSrsString(passphrase)};\n    pbkeylen        16;\n`;
-        conf = conf.replace(/(srt_server\s*\{[^}]*)(\})/s, `$1${lines}$2`);
+        const next = conf.replace(/(srt_server\s*\{[^}]*)(\})/s, `$1${lines}$2`);
+        if (next === conf) {
+            throw new Error(`srt_server block not found in ${CONF_PATH}`);
+        }
+        conf = next;
     }
 
-    fs.writeFileSync(CONF_PATH, conf, 'utf8');
+    return conf;
 }
 
 function srtUrl(base: string, params: Record<string, string | number | boolean>): string {
@@ -42,7 +50,7 @@ function quoteEnv(value: string): string {
     return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
-export function writeSrtBondingRelayEnv(passphrase?: string | null): void {
+function renderSrtBondingRelayEnv(passphrase?: string | null): string {
     const inputParams: Record<string, string | number | boolean> = {
         mode: 'listener',
         groupconnect: 1,
@@ -64,12 +72,13 @@ export function writeSrtBondingRelayEnv(passphrase?: string | null): void {
     const inputUri = srtUrl(`srt://0.0.0.0:${SRT_BONDING_PORT}`, inputParams);
     const outputUri = srtUrl(`srt://127.0.0.1:${SRS_SRT_PORT}`, outputParams);
 
-    fs.mkdirSync(path.dirname(RELAY_ENV_PATH), { recursive: true });
-    fs.writeFileSync(
-        RELAY_ENV_PATH,
+    return (
         `SRT_BONDING_INPUT_URI=${quoteEnv(inputUri)}\n` +
-            `SRT_BONDING_OUTPUT_URI=${quoteEnv(outputUri)}\n` +
-            `SRT_BONDING_STATE_PATH=${quoteEnv(SRT_BONDING_STATE_PATH)}\n`,
-        'utf8',
+        `SRT_BONDING_OUTPUT_URI=${quoteEnv(outputUri)}\n`
     );
+}
+
+export function writeSrtRuntimeConfigs(passphrase?: string | null): void {
+    writeFileAtomic(CONF_PATH, renderSrsConf(passphrase));
+    writeFileAtomic(RELAY_ENV_PATH, renderSrtBondingRelayEnv(passphrase));
 }

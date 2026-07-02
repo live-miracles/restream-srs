@@ -120,12 +120,8 @@ function renderPipelineList(): void {
                     ? `<span class="font-mono text-xs opacity-60 shrink-0">${formatUptime(p.input.uptimeMs)}</span>`
                     : '';
             const inputTypeBadge = p.input.live
-                ? `<span class="badge badge-sm badge-outline shrink-0">${p.input.isSrt ? 'SRT' : 'RTMP'}</span>`
+                ? `<span class="badge badge-sm badge-outline shrink-0">${p.srtBonding.inputActive ? 'Relay' : p.input.isSrt ? 'SRT' : 'RTMP'}</span>`
                 : '';
-            const relayBadge =
-                p.srtRelay.status === 'running'
-                    ? `<span class="badge badge-sm badge-info shrink-0">Relay</span>`
-                    : '';
 
             return `<li>
             <div class="flex items-center gap-2 ${selected} cursor-pointer js-select-pipeline" data-id="${p.id}">
@@ -137,7 +133,6 @@ function renderPipelineList(): void {
                 <a class="truncate min-w-0">${p.name}</a>
                 ${uptimeSpan}
                 ${inputTypeBadge}
-                ${relayBadge}
             </div>
         </li>`;
         })
@@ -407,20 +402,17 @@ function renderOverview(): void {
                 : isWarn
                   ? `<span class="badge badge-sm badge-warning">Low Bitrate</span>`
                   : `<span class="badge badge-sm badge-success">Live</span>`;
-            const relayBadge =
-                p.srtRelay.status === 'running'
-                    ? ` <span class="badge badge-sm badge-info">Relay</span>`
-                    : '';
+            const protocolLabel = p.srtBonding.inputActive ? 'Relay' : inp.isSrt ? 'SRT' : 'RTMP';
             const audioTracks = inp.audioTracks.length > 0 ? inp.audioTracks : null;
             const rowspan =
                 audioTracks && audioTracks.length > 1 ? ` rowspan="${audioTracks.length}"` : '';
             const rowAttr = `class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(false, isWarn)}`;
             const sharedCells = `
                 <td class="font-semibold"${rowspan}>${p.name}</td>
-                <td${rowspan}>${badge}${relayBadge}</td>
+                <td${rowspan}>${badge}</td>
                 <td class="font-mono text-xs"${rowspan}>${inp.live ? formatUptime(inp.uptimeMs) : '—'}</td>
                 <td class="font-mono text-xs"${rowspan}>${inp.live ? formatBitrate(inp.recvBitrateKbps) : '—'}</td>
-                <td class="font-mono text-xs"${rowspan}>${inp.live ? (inp.isSrt ? 'SRT' : 'RTMP') : '—'}</td>
+                <td class="font-mono text-xs"${rowspan}>${inp.live ? protocolLabel : '—'}</td>
                 <td class="font-mono text-xs"${rowspan}>${inp.video?.codec ?? '—'}</td>
                 <td class="font-mono text-xs"${rowspan}>${inp.video ? `${inp.video.width}×${inp.video.height}` : '—'}</td>
                 <td class="font-mono text-xs"${rowspan}>${inp.video?.fps ?? '—'}</td>
@@ -645,7 +637,11 @@ function renderPipelineInfo(selectedId: string | null): void {
     const bondingCard = document.getElementById('srt-bonding-card');
     const bondingDot = document.getElementById('srt-bonding-status-dot');
     const bondingUrl = document.getElementById('srt-bonding-url');
-    const bondingActive = pipeline.srtRelay.status === 'running';
+    const bondingErrWrap = document.getElementById('srt-bonding-last-error-wrap');
+    const bondingErrTs = document.getElementById('srt-bonding-last-error-ts');
+    const bondingErr = document.getElementById('srt-bonding-last-error');
+    const bondingInputActive = pipeline.srtBonding.inputActive;
+    const bondingOutputConnected = pipeline.srtBonding.outputConnected;
     const relayProcessRunning = state.health.srtRelay?.status === 'running';
     const bondingHost = state.config.publicHost || 'localhost';
     const bondingPortValue = SRT_BONDING_PORT;
@@ -658,16 +654,33 @@ function renderPipelineInfo(selectedId: string | null): void {
             : '');
     bondingCard?.classList.remove('opacity-60');
     if (bondingDot) {
-        bondingDot.style.backgroundColor = bondingActive
+        const leftColor = bondingInputActive
             ? STATUS_COLOR_GOOD
             : !relayProcessRunning
               ? STATUS_COLOR_ERROR
               : STATUS_COLOR_OFF;
-        bondingDot.title = bondingActive
-            ? 'Bonded SRT input active for this stream key'
-            : relayProcessRunning
-              ? 'No bonded SRT input for this stream key'
-              : 'SRT bonding relay is not running';
+        const rightColor = !relayProcessRunning
+            ? STATUS_COLOR_ERROR
+            : bondingOutputConnected
+              ? STATUS_COLOR_GOOD
+              : bondingInputActive
+                ? pipeline.srtBonding.lastError
+                    ? STATUS_COLOR_ERROR
+                    : STATUS_COLOR_WARN
+                : STATUS_COLOR_OFF;
+        bondingDot.style.backgroundColor = 'transparent';
+        bondingDot.style.backgroundImage =
+            `linear-gradient(90deg, ` +
+            `${leftColor} 0 45%, ` +
+            `#242933 45% 55%, ` +
+            `${rightColor} 55% 100%)`;
+        bondingDot.title = !relayProcessRunning
+            ? 'SRT bonding relay is not running'
+            : bondingInputActive && bondingOutputConnected
+              ? 'Bonded SRT input active and forwarding into SRS'
+              : bondingInputActive
+                ? `Bonded SRT input active, relay output reconnecting${pipeline.srtBonding.retryFailures > 0 ? ` (${pipeline.srtBonding.retryFailures} retries)` : ''}`
+                : 'No bonded SRT input for this stream key';
     }
     if (bondingUrl) {
         bondingUrl.textContent = bondingUrlValue.replace(pipeline.streamKey, masked);
@@ -675,6 +688,22 @@ function renderPipelineInfo(selectedId: string | null): void {
         bondingUrl.dataset.ip = bondingHost;
         bondingUrl.dataset.port = String(bondingPortValue);
         bondingUrl.dataset.streamId = bondingStreamId;
+    }
+    if (bondingErrWrap && bondingErr && bondingErrTs) {
+        const msg = pipeline.srtBonding.lastError;
+        const lastErrorLine = msg
+            ? (msg
+                  .split('\n')
+                  .filter((l) => l.trim())
+                  .slice(-1)[0] ?? '')
+            : '';
+        bondingErrWrap.classList.toggle('hidden', !msg);
+        bondingErrTs.textContent = pipeline.srtBonding.lastErrorAt
+            ? new Date(pipeline.srtBonding.lastErrorAt).toLocaleTimeString(undefined, {
+                  hour12: false,
+              })
+            : '';
+        bondingErr.textContent = lastErrorLine;
     }
 
     renderPreview(pipeline);

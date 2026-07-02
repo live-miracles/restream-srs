@@ -104,14 +104,20 @@ Open the dashboard: `http://SERVER_IP:8080` — default password is `admin`.
 
 ### SRS config reload
 
-The app writes SRS settings to `/etc/restream-srs/srs.conf`. SRS only reads this file at startup, so changes such as the SRT passphrase require:
+The app writes both SRT runtime config files together:
+- `/etc/restream-srs/srs.conf`
+- `/etc/restream-srs/srt-bonding-relay.env`
+
+SRS only reads its config at startup, and the SRT bonding relay only reads its
+env file at startup, so SRT passphrase changes require:
 
 ```bash
 sudo systemctl restart srs.service
 ```
 
-The SRT bonding relay also reads the passphrase when it starts. After a
-passphrase change, restart `srt-bonding-relay.service` and `srs.service`.
+```bash
+sudo systemctl restart srs.service srt-bonding-relay.service
+```
 
 ---
 
@@ -219,7 +225,7 @@ RTMP input → RTMP pull), so there is no pull-method setting.
 | GET | `/api/metrics/system` | Host CPU, RAM, disk and network stats |
 | GET | `/api/srs-logs` | Recent SRS up/down events and a tail of the SRS log |
 | POST | `/api/pipelines` | Create pipeline (auto-names and assigns stream key) |
-| GET | `/api/pipelines/:id` | Pipeline details including SRT bonding runtime state |
+| GET | `/api/pipelines/:id` | Pipeline details including relay health and bonded-input activity |
 | POST | `/api/pipelines/:id` | Rename pipeline `{ name }`, optionally reassign key `{ name, streamKeyId }` |
 | DELETE | `/api/pipelines/:id` | Delete pipeline (stream key is freed, not deleted) |
 | GET | `/api/pipelines/:id/logs` | Pipeline online/offline event log |
@@ -250,21 +256,12 @@ Prerequisites: Node.js 22+, FFmpeg.
 **1. Install dependencies and local media binaries:**
 ```bash
 npm install
-npm run dev-install   # downloads SRS and srt-bonding-relay into ./objs, no root required
+npm run dev-install   # downloads SRS into ./objs, no root required
 ```
 
 To use a local SRS binary:
 ```bash
 SRS_LOCAL_BIN=./build/srs npm run dev-install
-```
-
-To test a locally built relay before publishing a GitHub release:
-```bash
-# From the release tarball produced by scripts/build-srt-bonding-relay.sh
-SRT_LOCAL_TGZ=./build/srt-bonding-relay-linux-x86_64.tar.gz npm run dev-install
-
-# Or from a raw local binary
-SRT_LOCAL_BIN=/path/to/srt-bonding-relay npm run dev-install
 ```
 
 **Publishing a new pinned `srt-bonding-relay` release asset** (requires Docker and `gh`):
@@ -278,7 +275,7 @@ gh release create srt-v1.5.5-2 "./build/srt-bonding-relay-linux-x86_64.tar.gz" \
   --notes "Built from Haivision/srt v1.5.5 for restream-srs."
 
 # Update SRT_RELEASE_TAG and SRT_SHA256 in scripts/server-install.sh
-# and scripts/dev-server-install.sh if the version or hash changed.
+# if the version or hash changed.
 ```
 
 **2. Start SRS** (terminal 1):
@@ -288,27 +285,19 @@ npm run srs           # runs ./objs/srs -c srs.conf in the foreground
 
 **3. Start the SRT bonding relay** (terminal 2):
 ```bash
-npm run relay         # runs ./objs/srt-bonding-relay on UDP/SRT 10081
+npm run relay         # Docker-builds the relay, runs it, and rebuilds/restarts on native/ changes
 ```
 
-The relay writes its runtime state to `./objs/srt-bonding-relay.state` in
-development, including a heartbeat and the active incoming bonding stream IDs.
-The dashboard uses that file to show the top-level relay status and the
-per-pipeline SRT Bonding status.
-
-After changing relay C code, rebuild and reinstall the local relay before
-testing:
-```bash
-bash scripts/build-srt-bonding-relay.sh
-SRT_LOCAL_TGZ=./build/srt-bonding-relay-linux-x86_64.tar.gz npm run dev-install
-```
+The relay also exposes a local HTTP status endpoint on `127.0.0.1:10082` in
+development. The dashboard backend polls that endpoint to show the top-level
+relay health and the per-pipeline bonded-input status.
 
 **4. Start the app** (terminal 3):
 ```bash
 npm run dev           # tsx watch + tsc watch + tailwind watch
 ```
 
-If the app rewrites `srs.conf` or `srt-bonding-relay.env` after a passphrase change, restart SRS and the relay:
+If the app rewrites `srs.conf` and `srt-bonding-relay.env` after a passphrase change, restart SRS and the relay:
 ```bash
 Ctrl-C  # in terminal 1
 npm run srs

@@ -229,7 +229,6 @@ if [[ ! -f "$CONF_DIR/srt-bonding-relay.env" ]]; then
     cat > "$CONF_DIR/srt-bonding-relay.env" <<EOF
 SRT_BONDING_INPUT_URI="srt://0.0.0.0:10081?mode=listener&groupconnect=1&transtype=live&latency=240"
 SRT_BONDING_OUTPUT_URI="srt://127.0.0.1:10080?transtype=live&latency=200"
-SRT_BONDING_STATE_PATH="$DATA_DIR/srt-bonding-relay.state"
 EOF
 fi
 chown "$SERVICE_USER:$SERVICE_USER" "$CONF_DIR/srs.conf" "$CONF_DIR/srt-bonding-relay.env" "$DB_FILE"
@@ -287,7 +286,7 @@ User=$SERVICE_USER
 Group=$SERVICE_USER
 WorkingDirectory=$DATA_DIR
 EnvironmentFile=$CONF_DIR/srt-bonding-relay.env
-Environment=SRT_BONDING_STATE_PATH=$DATA_DIR/srt-bonding-relay.state
+Environment=SRT_BONDING_STATUS_PORT=10082
 ExecStart=/usr/local/bin/srt-bonding-relay \${SRT_BONDING_INPUT_URI} \${SRT_BONDING_OUTPUT_URI}
 Restart=always
 RestartSec=2
@@ -322,9 +321,9 @@ Environment=SRS_RTMP_HOST=127.0.0.1
 Environment=SRS_RTMP_PORT=1935
 Environment=SRS_SRT_PORT=10080
 Environment=SRT_BONDING_PORT=10081
+Environment=SRT_BONDING_STATUS_PORT=10082
 Environment=SRT_BONDING_RELAY_PATH=/usr/local/bin/srt-bonding-relay
 Environment=SRT_BONDING_RELAY_ENV_PATH=$CONF_DIR/srt-bonding-relay.env
-Environment=SRT_BONDING_STATE_PATH=$DATA_DIR/srt-bonding-relay.state
 Environment=FFMPEG_PATH=/usr/local/bin/ffmpeg
 Environment=FFPROBE_PATH=/usr/local/bin/ffprobe
 ExecStart=/usr/bin/node $APP_DIR/dist/index.js

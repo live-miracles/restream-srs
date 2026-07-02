@@ -100,8 +100,15 @@ async function fetchAndRender(): Promise<void> {
         !!state.health.srtRelay &&
         state.health.srtRelay.status !== 'running';
     const srtRelayBanner = document.getElementById('srt-relay-banner');
+    const srtRelayBannerText = document.getElementById('srt-relay-banner-text');
     srtRelayBanner?.classList.toggle('hidden', !showSrtRelayBanner);
     srtRelayBanner?.classList.toggle('flex', showSrtRelayBanner);
+    if (srtRelayBannerText) {
+        srtRelayBannerText.textContent =
+            state.health.srtRelay?.lastError && state.health.srtRelay.status !== 'running'
+                ? `SRT bonding relay is not responding: ${state.health.srtRelay.lastError}`
+                : 'SRT bonding relay is not running — bonded SRT input unavailable';
+    }
     if (metricsResult) state.metrics = metricsResult;
     if (historyResult) state.metricsHistory = historyResult;
     state.pipelines = parsePipelines(state.config, state.health);

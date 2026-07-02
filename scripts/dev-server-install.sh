@@ -1,13 +1,9 @@
 #!/usr/bin/env bash
-# Install SRS and srt-bonding-relay locally inside the repo for development.
-# No root, no systemd, no auto-start — just places binaries in ./objs.
+# Install SRS locally inside the repo for development.
+# No root, no systemd, no auto-start.
 #
 # Usage:
 #   bash scripts/dev-server-install.sh
-#
-# Optional local SRT relay install:
-#   SRT_LOCAL_BIN=./path/to/srt-bonding-relay bash scripts/dev-server-install.sh
-#   SRT_LOCAL_TGZ=./build/srt-bonding-relay-linux-x86_64.tar.gz bash scripts/dev-server-install.sh
 set -euo pipefail
 
 if [[ "$(uname -m)" != "x86_64" ]]; then
@@ -17,19 +13,12 @@ fi
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SRS_OUT="$REPO_DIR/objs/srs"
-SRT_OUT="$REPO_DIR/objs/srt-bonding-relay"
 
 SRS_VERSION=6.0-r0
 SRS_RELEASE_TAG="v${SRS_VERSION}"
 SRS_FILENAME="SRS-CentOS7-x86_64-${SRS_VERSION}.zip"
 SRS_SHA256="1eb20245a76643b2d32a1be85e71015079689a0733a10f79964f9a8189c21609"
 SRS_URL="https://github.com/ossrs/srs/releases/download/${SRS_RELEASE_TAG}/${SRS_FILENAME}"
-
-SRT_VERSION=1.5.5
-SRT_RELEASE_TAG="srt-v${SRT_VERSION}-2"
-SRT_FILENAME="srt-bonding-relay-linux-x86_64.tar.gz"
-SRT_SHA256=""
-SRT_URL="https://github.com/live-miracles/restream-srs/releases/download/${SRT_RELEASE_TAG}/${SRT_FILENAME}"
 
 # Verify a downloaded file against an expected SHA256 (sha256sum on Linux,
 # shasum on macOS). An empty expected hash skips the check.
@@ -57,8 +46,6 @@ verify_sha256() {
 mkdir -p "$REPO_DIR/objs"
 
 SRS_VERSION_MARKER="$REPO_DIR/objs/.srs-version"
-SRT_VERSION_MARKER="$REPO_DIR/objs/.srt-bonding-relay-version"
-
 if [[ -n "${SRS_LOCAL_BIN:-}" ]]; then
     # Install from a local SRS binary.
     if [[ ! -x "$SRS_LOCAL_BIN" ]]; then
@@ -69,28 +56,6 @@ if [[ -n "${SRS_LOCAL_BIN:-}" ]]; then
     echo "local-${SRS_VERSION}" > "$SRS_VERSION_MARKER"
     echo "Installed from local build: $("$SRS_OUT" -v 2>&1 | head -1)"
 fi
-
-install_local_srt_bin() {
-    local bin="$1"
-    if [[ ! -x "$bin" ]]; then
-        echo "ERROR: local srt-bonding-relay is not executable: $bin" >&2
-        exit 1
-    fi
-    install -m 755 "$bin" "$SRT_OUT"
-    echo "local-${SRT_VERSION}" > "$SRT_VERSION_MARKER"
-    echo "Installed local srt-bonding-relay: $SRT_OUT"
-}
-
-install_local_srt_libs() {
-    local root="$1"
-    local lib_dir="$root/lib"
-    if [[ ! -d "$lib_dir" ]]; then
-        return
-    fi
-    install -d -m 755 "$REPO_DIR/objs/lib"
-    install -m 755 "$lib_dir"/* "$REPO_DIR/objs/lib/"
-    echo "Installed local SRT relay libs: $REPO_DIR/objs/lib"
-}
 
 if ! command -v curl &>/dev/null; then
     echo "ERROR: curl is required" >&2
@@ -125,42 +90,7 @@ if [[ -z "${SRS_LOCAL_BIN:-}" ]]; then
     fi
 fi
 
-if [[ -n "${SRT_LOCAL_BIN:-}" ]]; then
-    install_local_srt_bin "$SRT_LOCAL_BIN"
-elif [[ -n "${SRT_LOCAL_TGZ:-}" ]]; then
-    if [[ ! -f "$SRT_LOCAL_TGZ" ]]; then
-        echo "ERROR: SRT_LOCAL_TGZ does not exist: $SRT_LOCAL_TGZ" >&2
-        exit 1
-    fi
-    echo "Installing local srt-bonding-relay archive: $SRT_LOCAL_TGZ"
-    tar -xzf "$SRT_LOCAL_TGZ" -C "$WORK"
-    SRT_BIN="$(find "$WORK" -type f -name srt-bonding-relay -perm -111 | head -1)"
-    if [[ -z "$SRT_BIN" ]]; then
-        echo "ERROR: could not find srt-bonding-relay binary in $SRT_LOCAL_TGZ" >&2
-        exit 1
-    fi
-    install_local_srt_libs "$WORK"
-    install_local_srt_bin "$SRT_BIN"
-elif [[ -x "$SRT_OUT" && -f "$SRT_VERSION_MARKER" && "$(cat "$SRT_VERSION_MARKER")" == "$SRT_RELEASE_TAG" ]]; then
-    echo "srt-bonding-relay $SRT_VERSION ($SRT_RELEASE_TAG) already installed at $SRT_OUT"
-else
-    echo "Downloading srt-bonding-relay $SRT_VERSION ($SRT_RELEASE_TAG)..."
-    curl -fsSL "$SRT_URL" -o "$WORK/$SRT_FILENAME"
-
-    verify_sha256 "$WORK/$SRT_FILENAME" "$SRT_SHA256"
-
-    tar -xzf "$WORK/$SRT_FILENAME" -C "$WORK"
-    SRT_BIN="$(find "$WORK" -type f -name srt-bonding-relay -perm -111 | head -1)"
-    if [[ -z "$SRT_BIN" ]]; then
-        echo "ERROR: could not find srt-bonding-relay binary in $SRT_FILENAME" >&2
-        exit 1
-    fi
-    install_local_srt_libs "$WORK"
-    install -m 755 "$SRT_BIN" "$SRT_OUT"
-    echo "$SRT_RELEASE_TAG" > "$SRT_VERSION_MARKER"
-    echo "Installed: $SRT_OUT ($SRT_RELEASE_TAG)"
-fi
-
 echo ""
 echo "Run SRS:  npm run srs"
 echo "Run app:  npm run dev"
+echo "Run relay watcher: npm run relay"

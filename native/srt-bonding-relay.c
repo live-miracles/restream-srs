@@ -24,9 +24,11 @@
 #include <netinet/in.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
@@ -37,12 +39,25 @@
 #define LISTEN_BACKLOG 64
 #define MAX_EVENTS 16
 #define MAX_ACTIVE_SESSIONS 256
+#define LAST_ERROR_MAX 512
+
+static const int RETRY_DELAYS_MS[] = {1000, 2000, 4000, 8000, 16000};
+
+typedef struct relay_stream_state {
+    char streamid[1024];
+    int input_active;
+    int output_connected;
+    int retry_failures;
+    char last_error[LAST_ERROR_MAX];
+    long long last_error_at_ms;
+} relay_stream_state_t;
 
 static volatile sig_atomic_t g_running = 1;
 static pthread_mutex_t g_sessions_mu = PTHREAD_MUTEX_INITIALIZER;
-static char g_state_path[512] = "/tmp/restream-srs-srt-bonding-relay.state";
-static char g_active_streamids[MAX_ACTIVE_SESSIONS][1024];
+static char g_last_error[512];
+static relay_stream_state_t g_stream_states[MAX_ACTIVE_SESSIONS];
 static long long g_started_at_ms = 0;
+static int g_status_port = 10082;
 
 static void on_signal(int s)
 {
@@ -95,68 +110,241 @@ static void json_write_escaped(FILE *f, const char *s)
     }
 }
 
-static void write_state_locked(void)
-{
-    char tmp_path[600];
-    snprintf(tmp_path, sizeof tmp_path, "%s.tmp", g_state_path);
-
-    FILE *f = fopen(tmp_path, "w");
-    if (!f) return;
-    fprintf(f,
-            "{\n"
-            "  \"pid\": %ld,\n"
-            "  \"startedAtMs\": %lld,\n"
-            "  \"updatedAtMs\": %lld,\n"
-            "  \"activeStreamIds\": [",
-            (long)getpid(),
-            g_started_at_ms,
-            now_ms());
-
-    int first = 1;
-    for (int i = 0; i < MAX_ACTIVE_SESSIONS; ++i) {
-        if (!g_active_streamids[i][0]) continue;
-        fprintf(f, "%s\n    \"", first ? "\n" : ",\n");
-        json_write_escaped(f, g_active_streamids[i]);
-        fputc('"', f);
-        first = 0;
-    }
-    fprintf(f, "%s\n  ]\n}\n", first ? "" : "\n");
-    fclose(f);
-    rename(tmp_path, g_state_path);
-}
-
-static void write_state(void)
+static void set_last_errorf(const char *fmt, ...)
 {
     pthread_mutex_lock(&g_sessions_mu);
-    write_state_locked();
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(g_last_error, sizeof g_last_error, fmt, ap);
+    va_end(ap);
     pthread_mutex_unlock(&g_sessions_mu);
 }
 
-static int add_active_streamid(const char *streamid)
+static void set_stream_errorf(int slot, const char *fmt, ...)
+{
+    if (slot < 0 || slot >= MAX_ACTIVE_SESSIONS) return;
+    pthread_mutex_lock(&g_sessions_mu);
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(g_stream_states[slot].last_error, sizeof g_stream_states[slot].last_error, fmt, ap);
+    va_end(ap);
+    g_stream_states[slot].last_error_at_ms = now_ms();
+    pthread_mutex_unlock(&g_sessions_mu);
+}
+
+static int add_stream_state(const char *streamid)
 {
     if (!streamid || !streamid[0]) return -1;
     pthread_mutex_lock(&g_sessions_mu);
     int slot = -1;
     for (int i = 0; i < MAX_ACTIVE_SESSIONS; ++i) {
-        if (!g_active_streamids[i][0]) {
+        if (g_stream_states[i].streamid[0] &&
+            strcmp(g_stream_states[i].streamid, streamid) == 0) {
             slot = i;
-            strncpy(g_active_streamids[i], streamid, sizeof g_active_streamids[i] - 1);
-            g_active_streamids[i][sizeof g_active_streamids[i] - 1] = '\0';
+            g_stream_states[i].input_active = 1;
+            g_stream_states[i].output_connected = 0;
+            g_stream_states[i].retry_failures = 0;
             break;
         }
     }
-    write_state_locked();
+    if (slot == -1) {
+        for (int i = 0; i < MAX_ACTIVE_SESSIONS; ++i) {
+            if (!g_stream_states[i].streamid[0]) {
+                slot = i;
+                memset(&g_stream_states[i], 0, sizeof g_stream_states[i]);
+                strncpy(g_stream_states[i].streamid, streamid, sizeof g_stream_states[i].streamid - 1);
+                g_stream_states[i].input_active = 1;
+                break;
+            }
+        }
+    }
     pthread_mutex_unlock(&g_sessions_mu);
     return slot;
 }
 
-static void remove_active_streamid(int slot)
+static void remove_stream_state(int slot)
 {
     if (slot < 0 || slot >= MAX_ACTIVE_SESSIONS) return;
     pthread_mutex_lock(&g_sessions_mu);
-    g_active_streamids[slot][0] = '\0';
-    write_state_locked();
+    g_stream_states[slot].input_active = 0;
+    g_stream_states[slot].output_connected = 0;
+    g_stream_states[slot].retry_failures = 0;
+    if (!g_stream_states[slot].last_error[0]) {
+        memset(&g_stream_states[slot], 0, sizeof g_stream_states[slot]);
+    }
     pthread_mutex_unlock(&g_sessions_mu);
+}
+
+static void set_stream_output_connected(int slot, int connected)
+{
+    if (slot < 0 || slot >= MAX_ACTIVE_SESSIONS) return;
+    pthread_mutex_lock(&g_sessions_mu);
+    g_stream_states[slot].output_connected = connected;
+    if (connected) {
+        g_stream_states[slot].retry_failures = 0;
+        g_stream_states[slot].last_error[0] = '\0';
+        g_stream_states[slot].last_error_at_ms = 0;
+    }
+    pthread_mutex_unlock(&g_sessions_mu);
+}
+
+static void increment_stream_retry_failures(int slot)
+{
+    if (slot < 0 || slot >= MAX_ACTIVE_SESSIONS) return;
+    pthread_mutex_lock(&g_sessions_mu);
+    g_stream_states[slot].retry_failures++;
+    pthread_mutex_unlock(&g_sessions_mu);
+}
+
+static int get_stream_retry_failures(int slot)
+{
+    if (slot < 0 || slot >= MAX_ACTIVE_SESSIONS) return 0;
+    pthread_mutex_lock(&g_sessions_mu);
+    int failures = g_stream_states[slot].retry_failures;
+    pthread_mutex_unlock(&g_sessions_mu);
+    return failures;
+}
+
+static int stream_input_still_connected(SRTSOCKET conn)
+{
+    SRT_SOCKSTATUS st = srt_getsockstate(conn);
+    return st == SRTS_CONNECTED || st == SRTS_LISTENING || st == SRTS_CONNECTING;
+}
+
+static int sleep_interruptible_ms(int delay_ms, SRTSOCKET conn)
+{
+    int remaining = delay_ms;
+    while (g_running && remaining > 0) {
+        int step = remaining > 200 ? 200 : remaining;
+        usleep((useconds_t)step * 1000);
+        remaining -= step;
+        if (!stream_input_still_connected(conn)) return 0;
+    }
+    return g_running;
+}
+
+static void write_status_response(int client_fd)
+{
+    FILE *f = fdopen(dup(client_fd), "w");
+    if (!f) return;
+
+    pthread_mutex_lock(&g_sessions_mu);
+    fprintf(f,
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json\r\n"
+            "Cache-Control: no-store\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "{\n"
+            "  \"pid\": %ld,\n"
+            "  \"startedAtMs\": %lld,\n"
+            "  \"updatedAtMs\": %lld,\n"
+            "  \"lastError\": ",
+            (long)getpid(),
+            g_started_at_ms,
+            now_ms());
+    if (g_last_error[0]) {
+        fputc('"', f);
+        json_write_escaped(f, g_last_error);
+        fputs("\",\n", f);
+    } else {
+        fputs("null,\n", f);
+    }
+    fputs("  \"activeStreamIds\": [", f);
+
+    int first = 1;
+    for (int i = 0; i < MAX_ACTIVE_SESSIONS; ++i) {
+        if (!g_stream_states[i].streamid[0] || !g_stream_states[i].input_active) continue;
+        fprintf(f, "%s\n    \"", first ? "\n" : ",\n");
+        json_write_escaped(f, g_stream_states[i].streamid);
+        fputc('"', f);
+        first = 0;
+    }
+    fprintf(f, "%s\n  ],\n  \"streamStates\": [", first ? "" : "\n");
+
+    first = 1;
+    for (int i = 0; i < MAX_ACTIVE_SESSIONS; ++i) {
+        if (!g_stream_states[i].streamid[0]) continue;
+        fprintf(f,
+                "%s\n    {\n      \"streamId\": \"",
+                first ? "\n" : ",\n");
+        json_write_escaped(f, g_stream_states[i].streamid);
+        fprintf(f,
+                "\",\n      \"inputActive\": %s,\n      \"outputConnected\": %s,\n      \"retryFailures\": %d,\n      \"lastErrorAt\": %lld,\n      \"lastError\": ",
+                g_stream_states[i].input_active ? "true" : "false",
+                g_stream_states[i].output_connected ? "true" : "false",
+                g_stream_states[i].retry_failures,
+                g_stream_states[i].last_error_at_ms);
+        if (g_stream_states[i].last_error[0]) {
+            fputc('"', f);
+            json_write_escaped(f, g_stream_states[i].last_error);
+            fputs("\"\n    }", f);
+        } else {
+            fputs("null\n    }", f);
+        }
+        first = 0;
+    }
+    fprintf(f, "%s\n  ]\n}\n", first ? "" : "\n");
+    pthread_mutex_unlock(&g_sessions_mu);
+    fclose(f);
+}
+
+static void *status_http_main(void *arg)
+{
+    (void)arg;
+
+    int srv = socket(AF_INET, SOCK_STREAM, 0);
+    if (srv < 0) {
+        set_last_errorf("status socket(): %s", strerror(errno));
+        perror("status socket");
+        return NULL;
+    }
+
+    int one = 1;
+    setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sin_family = AF_INET;
+    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    sa.sin_port = htons((unsigned short)g_status_port);
+
+    if (bind(srv, (struct sockaddr *)&sa, sizeof sa) < 0) {
+        set_last_errorf("status bind :%d failed: %s", g_status_port, strerror(errno));
+        fprintf(stderr, "status bind :%d failed: %s\n", g_status_port, strerror(errno));
+        close(srv);
+        return NULL;
+    }
+    if (listen(srv, 16) < 0) {
+        set_last_errorf("status listen failed: %s", strerror(errno));
+        fprintf(stderr, "status listen failed: %s\n", strerror(errno));
+        close(srv);
+        return NULL;
+    }
+
+    fprintf(stderr, "Status HTTP listening on 127.0.0.1:%d\n", g_status_port);
+
+    while (g_running) {
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(srv, &rfds);
+        struct timeval tv;
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+        int ready = select(srv + 1, &rfds, NULL, NULL, &tv);
+        if (ready <= 0) continue;
+
+        int client = accept(srv, NULL, NULL);
+        if (client < 0) continue;
+
+        char req[1024];
+        recv(client, req, sizeof req, 0);
+        write_status_response(client);
+        close(client);
+    }
+
+    close(srv);
+    return NULL;
 }
 
 /* ---- URI parsing -------------------------------------------------------- */
@@ -224,6 +412,25 @@ static int get_param(const char *query, const char *key, char *val, size_t val_s
             if (vlen >= val_sz) vlen = val_sz - 1;
             memcpy(val, v, vlen);
             val[vlen] = '\0';
+            char *src = val;
+            char *dst = val;
+            while (*src) {
+                if (src[0] == '%' &&
+                    ((src[1] >= '0' && src[1] <= '9') || (src[1] >= 'A' && src[1] <= 'F') ||
+                     (src[1] >= 'a' && src[1] <= 'f')) &&
+                    ((src[2] >= '0' && src[2] <= '9') || (src[2] >= 'A' && src[2] <= 'F') ||
+                     (src[2] >= 'a' && src[2] <= 'f'))) {
+                    char hex[3];
+                    hex[0] = src[1];
+                    hex[1] = src[2];
+                    hex[2] = '\0';
+                    *dst++ = (char)strtol(hex, NULL, 16);
+                    src += 3;
+                    continue;
+                }
+                *dst++ = *src++;
+            }
+            *dst = '\0';
             return 1;
         }
         p = strchr(p, '&');
@@ -281,6 +488,7 @@ static SRTSOCKET connect_srt_output(const relay_config_t *cfg, const char *strea
 {
     SRTSOCKET srt_out = srt_create_socket();
     if (srt_out == SRT_INVALID_SOCK) {
+        set_last_errorf("srt_create_socket(out): %s", srt_getlasterror_str());
         fprintf(stderr, "srt_create_socket(out): %s\n", srt_getlasterror_str());
         return SRT_INVALID_SOCK;
     }
@@ -297,12 +505,36 @@ static SRTSOCKET connect_srt_output(const relay_config_t *cfg, const char *strea
     srt_setsockflag(srt_out, SRTO_CONNTIMEO, &cto, sizeof cto);
 
     if (srt_connect(srt_out, (struct sockaddr *)&cfg->out_addr, (int)cfg->out_addrlen) == SRT_ERROR) {
+        set_last_errorf("srt_connect: %s", srt_getlasterror_str());
         fprintf(stderr, "srt_connect: %s\n", srt_getlasterror_str());
         srt_close(srt_out);
         return SRT_INVALID_SOCK;
     }
 
     return srt_out;
+}
+
+static SRTSOCKET connect_srt_output_with_retry(const relay_config_t *cfg, const char *streamid,
+                                               int state_slot, SRTSOCKET conn)
+{
+    while (g_running && stream_input_still_connected(conn)) {
+        SRTSOCKET srt_out = connect_srt_output(cfg, streamid);
+        if (srt_out != SRT_INVALID_SOCK) {
+            set_stream_output_connected(state_slot, 1);
+            return srt_out;
+        }
+
+        increment_stream_retry_failures(state_slot);
+        int failures = get_stream_retry_failures(state_slot);
+        int delay_ms = RETRY_DELAYS_MS[(failures - 1) < 0
+                                           ? 0
+                                           : ((failures - 1) >= (int)(sizeof RETRY_DELAYS_MS / sizeof RETRY_DELAYS_MS[0])
+                                                  ? (int)(sizeof RETRY_DELAYS_MS / sizeof RETRY_DELAYS_MS[0]) - 1
+                                                  : (failures - 1))];
+        set_stream_errorf(state_slot, "Failed to publish into SRS; retrying in %d ms", delay_ms);
+        if (!sleep_interruptible_ms(delay_ms, conn)) break;
+    }
+    return SRT_INVALID_SOCK;
 }
 
 static void *session_main(void *arg)
@@ -320,7 +552,7 @@ static void *session_main(void *arg)
     }
 
     fprintf(stderr, "Accepted bonded SRT source streamid=%s\n", streamid[0] ? streamid : "(empty)");
-    int state_slot = add_active_streamid(streamid);
+    int state_slot = add_stream_state(streamid);
 
     int udp_fd = -1;
     SRTSOCKET srt_out = SRT_INVALID_SOCK;
@@ -328,25 +560,37 @@ static void *session_main(void *arg)
     if (cfg->udp_out) {
         udp_fd = socket(AF_INET, SOCK_DGRAM, 0);
         if (udp_fd < 0) {
+            set_last_errorf("socket(UDP): %s", strerror(errno));
+            set_stream_errorf(state_slot, "socket(UDP): %s", strerror(errno));
             perror("socket(UDP)");
             srt_close(conn);
+            remove_stream_state(state_slot);
             return NULL;
         }
     } else {
-        srt_out = connect_srt_output(cfg, streamid);
+        srt_out = connect_srt_output_with_retry(cfg, streamid, state_slot, conn);
         if (srt_out == SRT_INVALID_SOCK) {
             srt_close(conn);
+            remove_stream_state(state_slot);
             return NULL;
         }
     }
 
     char buf[CHUNK];
     while (g_running) {
+        if (!cfg->udp_out && srt_out == SRT_INVALID_SOCK) {
+            set_stream_output_connected(state_slot, 0);
+            srt_out = connect_srt_output_with_retry(cfg, streamid, state_slot, conn);
+            if (srt_out == SRT_INVALID_SOCK) break;
+        }
+
         SRT_MSGCTRL mc = srt_msgctrl_default;
         int r = srt_recvmsg2(conn, buf, CHUNK, &mc);
         if (r == SRT_ERROR) {
             int err = srt_getlasterror(NULL);
             if (err != SRT_ECONNLOST && err != SRT_ENOCONN) {
+                set_last_errorf("srt_recvmsg2: %s", srt_getlasterror_str());
+                set_stream_errorf(state_slot, "Input error: %s", srt_getlasterror_str());
                 fprintf(stderr, "srt_recvmsg2: %s\n", srt_getlasterror_str());
             }
             break;
@@ -357,8 +601,14 @@ static void *session_main(void *arg)
             sendto(udp_fd, buf, (size_t)r, 0, (struct sockaddr *)&cfg->out_addr, cfg->out_addrlen);
         } else if (srt_out != SRT_INVALID_SOCK) {
             if (srt_sendmsg2(srt_out, buf, r, NULL) == SRT_ERROR) {
+                set_last_errorf("srt_sendmsg2: %s", srt_getlasterror_str());
+                set_stream_errorf(state_slot, "Relay output error: %s", srt_getlasterror_str());
+                increment_stream_retry_failures(state_slot);
+                set_stream_output_connected(state_slot, 0);
                 fprintf(stderr, "srt_sendmsg2: %s\n", srt_getlasterror_str());
-                break;
+                srt_close(srt_out);
+                srt_out = SRT_INVALID_SOCK;
+                continue;
             }
         }
     }
@@ -366,7 +616,7 @@ static void *session_main(void *arg)
     if (udp_fd >= 0) close(udp_fd);
     if (srt_out != SRT_INVALID_SOCK) srt_close(srt_out);
     srt_close(conn);
-    remove_active_streamid(state_slot);
+    remove_stream_state(state_slot);
     fprintf(stderr, "Connection closed streamid=%s\n", streamid[0] ? streamid : "(empty)");
     return NULL;
 }
@@ -434,13 +684,12 @@ int main(int argc, char *argv[])
     strncpy(cfg.out_query, out_query, sizeof cfg.out_query - 1);
 
     if (resolve_output(out_host, out_port, &cfg) < 0) return 1;
-    const char *state_path = getenv("SRT_BONDING_STATE_PATH");
-    if (state_path && state_path[0]) {
-        strncpy(g_state_path, state_path, sizeof g_state_path - 1);
-        g_state_path[sizeof g_state_path - 1] = '\0';
+    const char *status_port = getenv("SRT_BONDING_STATUS_PORT");
+    if (status_port && status_port[0]) {
+        int port = atoi(status_port);
+        if (port > 0 && port <= 65535) g_status_port = port;
     }
     g_started_at_ms = now_ms();
-    unlink(g_state_path);
 
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
@@ -449,6 +698,7 @@ int main(int argc, char *argv[])
 
     SRTSOCKET srv = srt_create_socket();
     if (srv == SRT_INVALID_SOCK) {
+        set_last_errorf("srt_create_socket: %s", srt_getlasterror_str());
         fprintf(stderr, "srt_create_socket: %s\n", srt_getlasterror_str());
         srt_cleanup();
         return 1;
@@ -463,12 +713,14 @@ int main(int argc, char *argv[])
     sa.sin_port = htons(in_port);
 
     if (srt_bind(srv, (struct sockaddr *)&sa, sizeof sa) == SRT_ERROR) {
+        set_last_errorf("srt_bind :%d: %s", in_port, srt_getlasterror_str());
         fprintf(stderr, "srt_bind :%d: %s\n", in_port, srt_getlasterror_str());
         srt_close(srv);
         srt_cleanup();
         return 1;
     }
     if (srt_listen(srv, LISTEN_BACKLOG) == SRT_ERROR) {
+        set_last_errorf("srt_listen: %s", srt_getlasterror_str());
         fprintf(stderr, "srt_listen: %s\n", srt_getlasterror_str());
         srt_close(srv);
         srt_cleanup();
@@ -477,20 +729,19 @@ int main(int argc, char *argv[])
 
     fprintf(stderr, "Listening on bonded SRT :%d (backlog=%d) -> %s\n", in_port, LISTEN_BACKLOG,
             out_uri);
-    write_state();
+
+    pthread_t status_tid;
+    int status_thread_started = pthread_create(&status_tid, NULL, status_http_main, NULL) == 0;
+    if (!status_thread_started) {
+        set_last_errorf("pthread_create(status) failed");
+        fprintf(stderr, "pthread_create(status) failed\n");
+    }
 
     int ep = srt_epoll_create();
     int ep_events = SRT_EPOLL_IN | SRT_EPOLL_ERR;
     srt_epoll_add_usock(ep, srv, &ep_events);
 
-    long long last_state_write_ms = g_started_at_ms;
-
     while (g_running) {
-        long long now = now_ms();
-        if (now - last_state_write_ms >= 1000) {
-            write_state();
-            last_state_write_ms = now;
-        }
         SRT_EPOLL_EVENT ev[MAX_EVENTS];
         int n = srt_epoll_uwait(ep, ev, MAX_EVENTS, 1000);
         if (n <= 0) continue;
@@ -502,12 +753,14 @@ int main(int argc, char *argv[])
             int plen = (int)sizeof peer;
             SRTSOCKET conn = srt_accept(srv, (struct sockaddr *)&peer, &plen);
             if (conn == SRT_INVALID_SOCK) {
+                set_last_errorf("srt_accept: %s", srt_getlasterror_str());
                 fprintf(stderr, "srt_accept: %s\n", srt_getlasterror_str());
                 continue;
             }
 
             session_args_t *args = (session_args_t *)calloc(1, sizeof *args);
             if (!args) {
+                set_last_errorf("calloc(session): %s", strerror(errno));
                 fprintf(stderr, "calloc(session): %s\n", strerror(errno));
                 srt_close(conn);
                 continue;
@@ -517,6 +770,7 @@ int main(int argc, char *argv[])
 
             pthread_t tid;
             if (pthread_create(&tid, NULL, session_main, args) != 0) {
+                set_last_errorf("pthread_create(session) failed");
                 fprintf(stderr, "pthread_create failed\n");
                 srt_close(conn);
                 free(args);
@@ -528,7 +782,7 @@ int main(int argc, char *argv[])
 
     srt_epoll_release(ep);
     srt_close(srv);
-    unlink(g_state_path);
+    if (status_thread_started) pthread_join(status_tid, NULL);
     srt_cleanup();
     return 0;
 }

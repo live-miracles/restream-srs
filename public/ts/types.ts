@@ -84,6 +84,14 @@ export interface SrtRelayStatus {
     lastError: string | null;
 }
 
+export interface SrtBondingStatus {
+    inputActive: boolean;
+    outputConnected: boolean;
+    retryFailures: number;
+    lastErrorAt: number | null;
+    lastError: string | null;
+}
+
 export interface SrsLogEvent {
     ts: number;
     type: 'up' | 'down';
@@ -119,7 +127,7 @@ export interface InputHealth {
 export interface PipelineHealth {
     input: InputHealth;
     outputs: Record<string, OutputStatus>;
-    srtRelay: SrtRelayStatus;
+    srtBonding: SrtBondingStatus;
 }
 
 export interface HealthData {
@@ -163,7 +171,7 @@ export interface PipelineView {
     name: string;
     streamKey: string;
     streamKeyId: number;
-    srtRelay: SrtRelayStatus;
+    srtBonding: SrtBondingStatus;
     rtmpPublishUrl: string;
     srtPublishUrl: string;
     input: InputHealth & { live: boolean };

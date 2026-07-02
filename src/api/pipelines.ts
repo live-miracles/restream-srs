@@ -21,9 +21,11 @@ export function registerPipelineApi(
         if (isNaN(id)) return res.status(400).json({ error: 'invalid id' });
         const pipeline = db.getPipeline(id);
         if (!pipeline) return res.status(404).json({ error: 'Pipeline not found' });
+        const streamId = `#!::r=live/${pipeline.streamKey},m=publish`;
         return res.json({
             ...pipeline,
             srtRelay: srtRelayService.getStats(),
+            srtBonding: srtRelayService.getStreamStatus(streamId),
         });
     });
 

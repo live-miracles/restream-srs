@@ -1,6 +1,6 @@
 import type { Express } from 'express';
 import type { Db } from '../types.js';
-import { writeSrsConf, writeSrtBondingRelayEnv } from '../utils/conf.js';
+import { writeSrtRuntimeConfigs } from '../utils/conf.js';
 
 const SRT_PASSPHRASE_MIN_LEN = 10;
 const SRT_PASSPHRASE_MAX_LEN = 79;
@@ -43,8 +43,7 @@ export function registerSettingsApi(app: Express, db: Db): void {
         if (srtChanged) {
             db.setSetting('srtPassphrase', passphrase ?? '');
             try {
-                writeSrsConf(passphrase);
-                writeSrtBondingRelayEnv(passphrase);
+                writeSrtRuntimeConfigs(passphrase);
             } catch (e) {
                 return res
                     .status(500)

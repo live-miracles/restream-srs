@@ -1,20 +1,9 @@
 'use strict';
 
-const { after, before, describe, test } = require('node:test');
+const { afterEach, describe, test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'restream-srt-relay-'));
-const statePath = path.join(tmp, 'srt-bonding-relay.state');
-process.env.SRT_BONDING_STATE_PATH = statePath;
 
 const { createSrtRelayService } = require('../src/services/srtRelay');
-
-after(() => {
-    fs.rmSync(tmp, { recursive: true, force: true });
-});
 
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -31,56 +20,99 @@ async function waitFor(fn, timeoutMs = 3000) {
 }
 
 describe('SRT relay service', () => {
-    let service;
+    const cleanup = [];
 
-    before(() => {
-        service = null;
+    afterEach(async () => {
+        while (cleanup.length) {
+            await cleanup.pop()();
+        }
+        delete process.env.SRT_BONDING_STATUS_URL;
+        global.fetch = originalFetch;
     });
 
-    after(() => {
-        service?.shutdown();
-        delete process.env.SRT_BONDING_STATE_PATH;
-    });
+    const originalFetch = global.fetch;
 
-    test('reports the relay as running when its state file is fresh', async () => {
-        service = createSrtRelayService();
+    test('reports the relay as running when the status endpoint responds', async () => {
         const startedAtMs = Date.now() - 1000;
-        fs.writeFileSync(
-            statePath,
-            JSON.stringify({
-                pid: 12345,
-                startedAtMs,
-                updatedAtMs: Date.now(),
-                activeStreamIds: ['#!::r=live/key01,m=publish'],
-            }),
-        );
+        const lastErrorAt = Date.now() - 500;
+        global.fetch = async () =>
+            new Response(
+                JSON.stringify({
+                    pid: 12345,
+                    startedAtMs,
+                    updatedAtMs: Date.now(),
+                    activeStreamIds: ['#!::r=live/key01,m=publish'],
+                    lastError: null,
+                    streamStates: [
+                        {
+                            streamId: '#!::r=live/key01,m=publish',
+                            inputActive: true,
+                            outputConnected: true,
+                            retryFailures: 0,
+                            lastErrorAt,
+                            lastError: null,
+                        },
+                    ],
+                }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } },
+            );
+
+        const service = createSrtRelayService();
+        cleanup.push(async () => service.shutdown());
+        service.start();
 
         await waitFor(() => service.getStats().pid === 12345);
         assert.equal(service.getStats().status, 'running');
         assert.equal(service.getStats().startedAtMs, startedAtMs);
         assert.equal(service.isStreamActive('#!::r=live/key01,m=publish'), true);
-
-        service.shutdown();
-        service = null;
+        assert.deepEqual(service.getStreamStatus('#!::r=live/key01,m=publish'), {
+            inputActive: true,
+            outputConnected: true,
+            retryFailures: 0,
+            lastErrorAt,
+            lastError: null,
+        });
     });
 
-    test('treats stale relay state as stopped and exposes the fixed port', () => {
-        service = createSrtRelayService();
-        fs.writeFileSync(
-            statePath,
-            JSON.stringify({
-                pid: 999,
-                startedAtMs: Date.now() - 20000,
-                updatedAtMs: Date.now() - 20000,
-                activeStreamIds: ['#!::r=live/key02,m=publish'],
-            }),
-        );
+    test('reports an unreachable relay as stopped before any successful poll', async () => {
+        global.fetch = async () => {
+            throw new Error('connect ECONNREFUSED 127.0.0.1:10082');
+        };
+        const service = createSrtRelayService();
+        cleanup.push(async () => service.shutdown());
+        service.start();
 
+        await waitFor(() => service.getStats().lastError);
         assert.equal(service.getStats().status, 'stopped');
         assert.equal(service.getPort(), 10081);
         assert.equal(service.isStreamActive('#!::r=live/key02,m=publish'), false);
+    });
 
-        service.shutdown();
-        service = null;
+    test('reports a previously reachable relay as failed when the endpoint goes away', async () => {
+        let calls = 0;
+        global.fetch = async () => {
+            calls += 1;
+            if (calls === 1) {
+                return new Response(
+                    JSON.stringify({
+                        pid: 222,
+                        startedAtMs: Date.now() - 5000,
+                        updatedAtMs: Date.now(),
+                        activeStreamIds: [],
+                        lastError: null,
+                        streamStates: [],
+                    }),
+                    { status: 200, headers: { 'Content-Type': 'application/json' } },
+                );
+            }
+            throw new Error('connect ECONNREFUSED 127.0.0.1:10082');
+        };
+        const service = createSrtRelayService();
+        cleanup.push(async () => service.shutdown());
+        service.start();
+
+        await waitFor(() => service.getStats().status === 'running');
+        await waitFor(() => service.getStats().status === 'failed', 8000);
+        assert.match(service.getStats().lastError || '', /fetch|connect|ECONNREFUSED/i);
     });
 });

@@ -1,11 +1,9 @@
-import fs from 'fs';
-import path from 'path';
-
 const SRT_BONDING_PORT = parseInt(process.env.SRT_BONDING_PORT || '10081');
-const SRT_BONDING_STATE_PATH =
-    process.env.SRT_BONDING_STATE_PATH ||
-    path.join(process.cwd(), 'objs', 'srt-bonding-relay.state');
-const SRT_BONDING_STATE_STALE_MS = 15000;
+const SRT_BONDING_STATUS_PORT = parseInt(process.env.SRT_BONDING_STATUS_PORT || '10082');
+const SRT_BONDING_STATUS_URL =
+    process.env.SRT_BONDING_STATUS_URL || `http://127.0.0.1:${SRT_BONDING_STATUS_PORT}/status`;
+const SRT_BONDING_POLL_MS = 5000;
+const SRT_BONDING_FETCH_TIMEOUT_MS = 2000;
 
 export interface SrtRelayStats {
     status: 'running' | 'stopping' | 'stopped' | 'failed';
@@ -14,42 +12,114 @@ export interface SrtRelayStats {
     lastError: string | null;
 }
 
+export interface SrtRelayStreamStatus {
+    inputActive: boolean;
+    outputConnected: boolean;
+    retryFailures: number;
+    lastErrorAt: number | null;
+    lastError: string | null;
+}
+
 export interface SrtRelayService {
     getPort(): number;
     getStats(): SrtRelayStats;
     isStreamActive(streamId: string): boolean;
+    getStreamStatus(streamId: string): SrtRelayStreamStatus;
+    start(): void;
     shutdown(): void;
 }
 
-interface RelayStateFile {
+interface RelayStatusResponse {
     pid?: number;
     startedAtMs?: number;
-    updatedAtMs?: number;
     activeStreamIds?: string[];
-}
-
-function readRelayState(): RelayStateFile | null {
-    try {
-        const raw = fs.readFileSync(SRT_BONDING_STATE_PATH, 'utf8');
-        return JSON.parse(raw) as RelayStateFile;
-    } catch {
-        return null;
-    }
+    lastError?: string | null;
+    streamStates?: Array<{
+        streamId?: string;
+        inputActive?: boolean;
+        outputConnected?: boolean;
+        retryFailures?: number;
+        lastErrorAt?: number;
+        lastError?: string | null;
+    }>;
 }
 
 export function createSrtRelayService(): SrtRelayService {
-    function activeStreamIds(state: RelayStateFile | null): Set<string> {
-        return new Set(
-            (state?.activeStreamIds ?? []).filter((s): s is string => typeof s === 'string'),
-        );
+    let stats: SrtRelayStats = {
+        status: 'stopped',
+        pid: null,
+        startedAtMs: null,
+        lastError: null,
+    };
+    let activeStreamIds = new Set<string>();
+    let streamStates = new Map<string, SrtRelayStreamStatus>();
+    let pollTimer: NodeJS.Timeout | null = null;
+    let everReachedRelay = false;
+    let refreshInFlight: Promise<void> | null = null;
+
+    async function refresh(): Promise<void> {
+        if (refreshInFlight) return refreshInFlight;
+        refreshInFlight = (async () => {
+            try {
+                const res = await fetch(SRT_BONDING_STATUS_URL, {
+                    signal: AbortSignal.timeout(SRT_BONDING_FETCH_TIMEOUT_MS),
+                    headers: { Connection: 'close' },
+                });
+                if (!res.ok) throw new Error(`Relay status HTTP ${res.status}`);
+                const data = (await res.json()) as RelayStatusResponse;
+                const pid = typeof data.pid === 'number' ? data.pid : null;
+                const startedAtMs = typeof data.startedAtMs === 'number' ? data.startedAtMs : null;
+                activeStreamIds = new Set(
+                    (data.activeStreamIds ?? []).filter(
+                        (s): s is string => typeof s === 'string' && s.length > 0,
+                    ),
+                );
+                streamStates = new Map(
+                    (data.streamStates ?? [])
+                        .filter(
+                            (s): s is typeof s & { streamId: string } =>
+                                typeof s.streamId === 'string' && s.streamId.length > 0,
+                        )
+                        .map((s) => [
+                            s.streamId,
+                            {
+                                inputActive: !!s.inputActive,
+                                outputConnected: !!s.outputConnected,
+                                retryFailures:
+                                    typeof s.retryFailures === 'number' ? s.retryFailures : 0,
+                                lastErrorAt:
+                                    typeof s.lastErrorAt === 'number' ? s.lastErrorAt : null,
+                                lastError: s.lastError ?? null,
+                            },
+                        ]),
+                );
+                everReachedRelay = true;
+                stats = {
+                    status: 'running',
+                    pid,
+                    startedAtMs,
+                    lastError: data.lastError ?? null,
+                };
+            } catch (err) {
+                activeStreamIds = new Set();
+                streamStates = new Map();
+                stats = {
+                    status: everReachedRelay ? 'failed' : 'stopped',
+                    pid: null,
+                    startedAtMs: null,
+                    lastError: err instanceof Error ? err.message : String(err),
+                };
+            } finally {
+                refreshInFlight = null;
+            }
+        })();
+        return refreshInFlight;
     }
 
-    function currentState(): RelayStateFile | null {
-        const state = readRelayState();
-        if (!state?.updatedAtMs || Date.now() - state.updatedAtMs > SRT_BONDING_STATE_STALE_MS) {
-            return null;
-        }
-        return state;
+    function start(): void {
+        void refresh();
+        pollTimer = setInterval(() => void refresh(), SRT_BONDING_POLL_MS);
+        pollTimer.unref?.();
     }
 
     return {
@@ -58,22 +128,36 @@ export function createSrtRelayService(): SrtRelayService {
         },
 
         getStats(): SrtRelayStats {
-            const state = currentState();
-            const pid = typeof state?.pid === 'number' ? state.pid : null;
-            return {
-                status: state ? 'running' : 'stopped',
-                pid,
-                startedAtMs: typeof state?.startedAtMs === 'number' ? state.startedAtMs : null,
-                lastError: null,
-            };
+            return stats;
         },
 
         isStreamActive(streamId: string): boolean {
-            return activeStreamIds(currentState()).has(streamId);
+            return activeStreamIds.has(streamId);
         },
 
+        getStreamStatus(streamId: string): SrtRelayStreamStatus {
+            return (
+                streamStates.get(streamId) ?? {
+                    inputActive: false,
+                    outputConnected: false,
+                    retryFailures: 0,
+                    lastErrorAt: null,
+                    lastError: null,
+                }
+            );
+        },
+
+        start,
+
         shutdown(): void {
-            // systemd owns srt-bonding-relay.service; the Node app never stops it.
+            if (pollTimer) clearInterval(pollTimer);
+            pollTimer = null;
+            stats = {
+                status: 'stopping',
+                pid: stats.pid,
+                startedAtMs: stats.startedAtMs,
+                lastError: stats.lastError,
+            };
         },
     };
 }
