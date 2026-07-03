@@ -82,7 +82,7 @@ export function createPreviewService(
             '-tune',
             'zerolatency',
             '-vf',
-            'scale=w=trunc(min(854\\,iw)/2)*2:h=trunc(ow/a/2)*2:force_original_aspect_ratio=decrease,fps=25',
+            'scale=w=854:h=480:force_original_aspect_ratio=decrease,scale=w=trunc(iw/2)*2:h=trunc(ih/2)*2,fps=25',
             '-pix_fmt',
             'yuv420p',
             '-crf',
