@@ -71,23 +71,27 @@ export function createPreviewService(
         fs.mkdirSync(outDir, { recursive: true });
 
         // An SRT pull is raw MPEG-TS that often starts mid-GOP, so stream-copying
-        // video yields keyframe-misaligned HLS segments that stall the player —
-        // transcode with forced 2 s keyframes on that path. RTMP inputs arrive
-        // GOP-aligned with clean timestamps, so they take the cheap copy path.
+        // video yields keyframe-misaligned HLS segments that stall the player.
+        // Keep the dashboard preview intentionally lightweight; small cloud VMs
+        // cannot transcode a full 1080p50 contribution feed in realtime.
         const videoArgs = isSrt
             ? [
                   '-c:v',
                   'libx264',
                   '-preset',
-                  'veryfast',
+                  'ultrafast',
                   '-tune',
                   'zerolatency',
+                  '-vf',
+                  'scale=w=min(1280\\,iw):h=-2:force_original_aspect_ratio=decrease,fps=25',
                   '-pix_fmt',
                   'yuv420p',
+                  '-crf',
+                  '28',
                   '-g',
-                  '48',
+                  '50',
                   '-keyint_min',
-                  '48',
+                  '50',
                   '-sc_threshold',
                   '0',
                   '-force_key_frames',
