@@ -68,6 +68,7 @@ export function createPreviewService(
         if (procs.has(pipelineId)) return { hlsUrl };
 
         const outDir = path.join(baseDir, String(pipelineId));
+        fs.rmSync(outDir, { recursive: true, force: true });
         fs.mkdirSync(outDir, { recursive: true });
 
         // An SRT pull is raw MPEG-TS that often starts mid-GOP, so stream-copying
