@@ -71,34 +71,31 @@ export function createPreviewService(
         fs.rmSync(outDir, { recursive: true, force: true });
         fs.mkdirSync(outDir, { recursive: true });
 
-        // An SRT pull is raw MPEG-TS that often starts mid-GOP, so stream-copying
-        // video yields keyframe-misaligned HLS segments that stall the player.
-        // Keep the dashboard preview intentionally lightweight; small cloud VMs
-        // cannot transcode a full 1080p50 contribution feed in realtime.
-        const videoArgs = isSrt
-            ? [
-                  '-c:v',
-                  'libx264',
-                  '-preset',
-                  'ultrafast',
-                  '-tune',
-                  'zerolatency',
-                  '-vf',
-                  'scale=w=min(1280\\,iw):h=-2:force_original_aspect_ratio=decrease,fps=25',
-                  '-pix_fmt',
-                  'yuv420p',
-                  '-crf',
-                  '28',
-                  '-g',
-                  '50',
-                  '-keyint_min',
-                  '50',
-                  '-sc_threshold',
-                  '0',
-                  '-force_key_frames',
-                  'expr:gte(t,n_forced*2)',
-              ]
-            : ['-c:v', 'copy'];
+        // Keep dashboard preview intentionally lightweight for small cloud VMs.
+        // Always transcode to a low-res HLS rendition, independent of the ingest
+        // protocol; production outputs still use their own output settings.
+        const videoArgs = [
+            '-c:v',
+            'libx264',
+            '-preset',
+            'ultrafast',
+            '-tune',
+            'zerolatency',
+            '-vf',
+            'scale=w=min(854\\,iw):h=-2:force_original_aspect_ratio=decrease,fps=25',
+            '-pix_fmt',
+            'yuv420p',
+            '-crf',
+            '30',
+            '-g',
+            '50',
+            '-keyint_min',
+            '50',
+            '-sc_threshold',
+            '0',
+            '-force_key_frames',
+            'expr:gte(t,n_forced*2)',
+        ];
 
         // SRT/MPEG-TS sources deliver audio with jittery, occasionally discontinuous
         // timestamps (PCR rounding + SRT packet-loss gaps). Re-encoding those 1:1
