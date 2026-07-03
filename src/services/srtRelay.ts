@@ -52,12 +52,12 @@ interface RelayStatusResponse {
         forwardedBytes?: number;
         lastPacketAt?: number;
         lastInputPacketAt?: number;
-        recvPacketsTotal?: number;
+        recvPacketsTotal?: number | null;
         recvUniquePacketsTotal?: number;
         recvLossTotal?: number;
         recvDropTotal?: number;
         retransTotal?: number;
-        rttMs?: number;
+        rttMs?: number | null;
         lastErrorAt?: number;
         lastError?: string | null;
     }>;
