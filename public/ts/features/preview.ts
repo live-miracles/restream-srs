@@ -284,9 +284,11 @@ function startPlayback(video: HTMLVideoElement, hlsUrl: string): void {
         const hls = new Hls({
             // Always start at the live edge — no DVR.
             startPosition: -1,
-            liveSyncDurationCount: 3,
-            liveMaxLatencyDurationCount: 6,
-            maxBufferLength: 10,
+            // Allow a slightly deeper live buffer on deployed servers so short
+            // manifest/segment fetch hiccups do not force a stop near the edge.
+            liveSyncDurationCount: 5,
+            liveMaxLatencyDurationCount: 12,
+            maxBufferLength: 20,
             fragLoadingMaxRetry: 10,
             fragLoadingRetryDelay: 500,
             manifestLoadingMaxRetry: 6,

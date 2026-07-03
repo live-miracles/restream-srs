@@ -118,7 +118,10 @@ export function createPreviewService(
             '-hls_time',
             '2',
             '-hls_list_size',
-            '10',
+            // Keep a larger live window on deployed servers so brief fetch/cache
+            // hiccups do not push the player out of range. Tradeoff: slightly
+            // more live delay and a few more short-lived segment files on disk.
+            '20',
             '-hls_flags',
             'delete_segments+independent_segments',
         ];

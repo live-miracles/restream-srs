@@ -28,7 +28,17 @@ const PORT = parseInt(process.env.PORT || '8080');
 // gzip responses. The /api/config and /api/health JSON for 50 inputs / 500
 // outputs is large and re-fetched by every dashboard client on the 5s poll;
 // JSON compresses very well, so this cuts response size and bandwidth sharply.
-app.use(compression());
+app.use(
+    compression({
+        // HLS playlists/segments are latency-sensitive live media; letting a
+        // proxy/browser transform or buffer them like normal text/static assets
+        // increases the odds of stale manifest reuse and live-edge stalls.
+        filter(req, res) {
+            if (req.path.startsWith('/hls/')) return false;
+            return compression.filter(req, res);
+        },
+    }),
+);
 app.use(express.json());
 
 const db = createDb();
@@ -65,10 +75,22 @@ registerSrsLogsApi(app, healthService.getSrsEvents);
 app.use(
     '/hls',
     (_req, res, next) => {
-        res.setHeader('Cache-Control', 'no-cache');
+        // Live HLS must never be cached by browsers or intermediaries; a stale
+        // manifest is enough to make playback freeze on every refresh and then
+        // fall out of the live window entirely.
+        res.setHeader(
+            'Cache-Control',
+            'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0, no-transform',
+        );
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        res.setHeader('Surrogate-Control', 'no-store');
         next();
     },
-    express.static(previewService.baseDir),
+    express.static(previewService.baseDir, {
+        etag: false,
+        lastModified: false,
+    }),
 );
 
 const publicDir = path.join(__dirname, '..', 'public');

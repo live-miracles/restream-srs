@@ -296,13 +296,19 @@ function renderInputStats(input: InputHealth): string {
 }
 
 function renderCompactMetaRow(
-    items: Array<{ label: string; value: string | number | null | undefined }>,
+    items: Array<{
+        label: string;
+        labelTitle?: string;
+        value: string | number | null | undefined;
+    }>,
     className = '',
 ): string {
     return `<div class="input-meta-row ${className}">${items
         .map(
             (item) =>
-                `<span class="input-meta-item"><span class="input-meta-label">${item.label}</span><span class="input-meta-value">${item.value ?? '—'}</span></span>`,
+                `<span class="input-meta-item"><span class="input-meta-label"${
+                    item.labelTitle ? ` title="${item.labelTitle.replace(/"/g, '&quot;')}"` : ''
+                }>${item.label}</span><span class="input-meta-value">${item.value ?? '—'}</span></span>`,
         )
         .join('')}</div>`;
 }
@@ -768,27 +774,34 @@ function renderPipelineInfo(selectedId: string | null): void {
         bondingStats.innerHTML = hasSessionStats
             ? renderCompactMetaRow(
                   [
-                      { label: 'Rx', value: `${formatCompactCount(rxPkts)} pkts` },
+                      {
+                          label: 'Rx',
+                          labelTitle:
+                              'Unique data packets received from the upstream bonded SRT input, with a fallback to total received packets when needed.',
+                          value: `${formatCompactCount(rxPkts)} pkts`,
+                      },
                       {
                           label: 'Loss',
+                          labelTitle:
+                              'Packets detected as missing on the upstream bonded SRT input receiver.',
                           value: formatCompactCount(pipeline.srtBonding.recvLossTotal),
                       },
                       {
                           label: 'Rexmit',
+                          labelTitle:
+                              'Receive-side retransmission metric from the upstream bonded SRT input. Depending on the SRT library build, this may behave like a local/windowed stat rather than a lifetime total.',
                           value: formatCompactCount(pipeline.srtBonding.retransTotal),
                       },
-                      ...(pipeline.srtBonding.recvDropTotal > 0
-                          ? [
-                                {
-                                    label: 'Drop',
-                                    value: formatCompactCount(pipeline.srtBonding.recvDropTotal),
-                                },
-                            ]
-                          : []),
+                      {
+                          label: 'Drop',
+                          value: formatCompactCount(pipeline.srtBonding.recvDropTotal),
+                      },
                       ...(pipeline.srtBonding.rttMs != null
                           ? [
                                 {
                                     label: 'RTT',
+                                    labelTitle:
+                                        'Estimated round-trip time between the upstream bonded SRT sender and this relay.',
                                     value: `${pipeline.srtBonding.rttMs.toFixed(
                                         pipeline.srtBonding.rttMs >= 10 ? 0 : 1,
                                     )}ms`,
