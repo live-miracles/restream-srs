@@ -28,7 +28,7 @@ OBS / ffmpeg  ──RTMP────────►  SRS (1935)   ──FFmpeg�
 
 The server is built and operated for the envelope below. It has **not** been
 tested or designed for anything beyond it — treat these as the supported ceiling,
-not a target to exceed.
+not a target to exceed :)
 
 | Limit | Supported ceiling |
 |-------|-------------------|
@@ -50,22 +50,17 @@ encoding at any one time**; everything else should be `copy`. Putting many outpu
 into custom-encoding mode will saturate the CPU long before the 500-output ceiling
 and starve the `copy` outputs and the dashboard alike.
 
-**Parallel dashboard clients.** The dashboard fans out cheaply to multiple
-viewers: input/output health is computed once per 5s on the server and cached, so
-additional browser clients read that shared snapshot rather than multiplying
-SRS/FFprobe work. API responses are gzip-compressed to keep the per-client
-bandwidth low. When one client changes the configuration (adds/edits/removes a
-pipeline or output, etc.), the others detect it via a config revision carried on
-the health poll and show a "Configuration was changed in another session" banner
-with a Reload button, so no client silently shows stale structure. Around 10
-simultaneous dashboard clients is fine within the limits above; the server has not
-been tuned or tested for substantially more.
+**Parallel dashboard clients.** Health is computed once every 5s and shared by
+all clients, so extra browser tabs do not multiply SRS/FFprobe work. API
+responses are gzip-compressed, and config changes from another session show a
+reload banner via the health poll's config revision. Around 10 simultaneous
+dashboard clients is fine; higher counts are not tuned or tested.
 
 ---
 
 ## Running
 
-This app now runs natively on Linux. The production setup uses two systemd services:
+This app now runs natively on Linux. The production setup uses three systemd services:
 
 | Service | Purpose |
 |---------|---------|
@@ -73,7 +68,12 @@ This app now runs natively on Linux. The production setup uses two systemd servi
 | `srt-bonding-relay.service` | Shared SRT bonding relay, started on UDP port 10081 |
 | `restream-srs.service` | Node.js dashboard/API, started from `/opt/restream-srs/dist/index.js` |
 
-The installer downloads the official SRS release binary and a pinned `srt-bonding-relay` binary from the standalone [`live-miracles/srt-bonding-relay`](https://github.com/live-miracles/srt-bonding-relay) GitHub releases. The relay asset is built separately from Haivision's official SRT source and verified by SHA256 during install when a hash is configured.
+The installer downloads the official SRS release binary and a pinned `srt-bonding-relay` binary from the standalone [`live-miracles/srt-bonding-relay`](https://github.com/live-miracles/srt-bonding-relay) GitHub releases.
+
+Startup is ordered so the Node.js control plane is reachable before SRS accepts
+publishes. `srs.service` waits for the unauthenticated readiness endpoint
+`http://127.0.0.1:8080/api/ready` before starting; this prevents SRS publish
+hooks from racing the dashboard/API process during boot.
 
 **Production install:**
 ```bash
@@ -109,21 +109,14 @@ The app writes both SRT runtime config files together:
 - `/etc/restream-srs/srt-bonding-relay.json`
 
 SRS only reads its config at startup, and the SRT bonding relay only reads its
-env file at startup, so SRT passphrase changes require:
-
-```bash
-sudo systemctl restart srs.service
-```
-
-```bash
-sudo systemctl restart srs.service srt-bonding-relay.service
-```
+JSON config file at startup, so SRT passphrase changes require restarting the media
+services.
 
 ---
 
 ## Authentication
 
-The dashboard is protected by a password. Default password on first run is `admin`. Change it in **Settings → Change Password** after logging in. Logout is also available from Settings.
+The dashboard is protected by a password (default is `admin`). Change it in **Settings → Change Password** after logging in.
 
 To reset a forgotten password:
 ```bash
@@ -134,30 +127,6 @@ This resets the password to `admin` and restarts the service.
 ---
 
 ## Publishing to a pipeline
-
-The dashboard shows publish URLs for each pipeline. The stream key is pre-assigned and shown in the pipeline info panel. The host in the URLs reflects the **Public Host** set in Settings (defaults to `localhost` — set it to your server IP or domain after install).
-
-**RTMP:**
-```
-rtmp://YOUR_HOST:1935/live/key01_<random>
-```
-
-**SRT:**
-```
-srt://YOUR_HOST:10080?streamid=#!::r=live/key01_<random>,m=publish
-```
-
-When an SRT passphrase is configured, the dashboard appends `passphrase` and `pbkeylen=16` to the publish URL. Clients without the matching passphrase are rejected by SRS during the SRT handshake.
-
-**SRT bonding (path redundancy):** `srt-bonding-relay.service` starts on boot and listens on UDP port `10081`. It accepts bonded SRT groups, forwards the deduplicated stream into SRS on `10080`, and preserves the incoming SRT stream ID. Configure all redundant encoder paths to the bonding URL shown in the pipeline details, for example:
-
-```
-srt://YOUR_HOST:10081?mode=caller&grouptype=broadcast&streamid=#!::r=live/key01_<random>,m=publish
-```
-
-The dashboard exposes copy buttons for the bonding IP, port and full URL.
-
-When an SRT passphrase is configured, the dashboard appends `passphrase` and `pbkeylen=16` to the bonding URL and the relay also uses that passphrase when publishing into SRS.
 
 ffmpeg test commands:
 
@@ -184,13 +153,7 @@ ffmpeg -re -stream_loop -1 -i video.mp4 \
   -f mpegts 'srt://localhost:10080?streamid=#!::r=live/<stream-key>,m=publish&passphrase=<srt-passphrase>&pbkeylen=16'
 ```
 
-SRT with multiple audio tracks (use `-map 0` to include all streams from the source).
-`-force_key_frames`/`-tune zerolatency` keep a self-contained keyframe every 2s so
-late-joining SRT readers (VLC, ffplay, the dashboard preview) can sync quickly — without
-it they stall waiting for the source's sparse keyframes.
-`-x264-params "repeat-headers=1"` embeds SPS/PPS in every IDR frame so players that
-join mid-stream (or reconnect) can decode immediately without missing the parameter sets
-sent at stream start:
+SRT with multiple audio tracks:
 ```bash
 ffmpeg -re -stream_loop -1 -i video.mp4 \
   -map 0 \
@@ -201,21 +164,16 @@ ffmpeg -re -stream_loop -1 -i video.mp4 \
   -f mpegts 'srt://localhost:10080?streamid=#!::r=live/<stream-key>,m=publish'
 ```
 
-To pull the stream back for inspection (e.g. VLC, ffplay), encode the `#` in the
-streamid as `%23` — VLC otherwise treats it as a URL fragment:
-```
-srt://localhost:10080?streamid=%23!::r=live/<stream-key>,m=request
-```
-
 ---
 
 ## API
 
-All routes below sit behind the session-cookie auth middleware (except the SRS
-hook). An output fans out to one or more **sinks**; each sink has its own `url`
-and `audioEncoding`, while `videoEncoding` is shared per output. The input is
-pulled back over whatever protocol it was published with (SRT input → SRT pull,
-RTMP input → RTMP pull), so there is no pull-method setting.
+All routes below sit behind the session-cookie auth middleware except
+`/api/ready`, `/api/auth/login`, and the SRS publish hook. An output fans out to
+one or more **sinks**; each sink has its own `url` and `audioEncoding`, while
+`videoEncoding` is shared per output. The input is pulled back over whatever
+protocol it was published with (SRT input → SRT pull, RTMP input → RTMP pull),
+so there is no pull-method setting.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -224,6 +182,7 @@ RTMP input → RTMP pull), so there is no pull-method setting.
 | GET | `/api/version` | App version / build info |
 | GET | `/api/metrics/system` | Host CPU, RAM, disk and network stats |
 | GET | `/api/srs-logs` | Recent SRS up/down events and a tail of the SRS log |
+| GET | `/api/ready` | Unauthenticated readiness check used by systemd before starting SRS |
 | POST | `/api/pipelines` | Create pipeline (auto-names and assigns stream key) |
 | GET | `/api/pipelines/:id` | Pipeline details including relay health and bonded-input activity |
 | POST | `/api/pipelines/:id` | Rename pipeline `{ name }`, optionally reassign key `{ name, streamKeyId }` |
@@ -245,7 +204,7 @@ RTMP input → RTMP pull), so there is no pull-method setting.
 | POST | `/api/auth/login` | Login `{ password }` — sets session cookie |
 | POST | `/api/auth/logout` | Logout — clears session cookie |
 | POST | `/api/auth/change-password` | Change password `{ currentPassword, newPassword }` |
-| POST | `/api/srs/on_publish` | SRS publish hook (called by SRS, not the dashboard) |
+| POST | `/api/srs/on_publish` | Unauthenticated SRS publish hook (called by SRS, not the dashboard) |
 
 ---
 
@@ -287,32 +246,45 @@ relay health and the per-pipeline bonded-input status.
 npm run dev           # tsx watch + tsc watch + tailwind watch
 ```
 
-If the app rewrites `srs.conf` and `srt-bonding-relay.json` after a passphrase change, restart SRS and the relay:
-```bash
-Ctrl-C  # in terminal 1
-npm run srs
-Ctrl-C  # in terminal 2
-npm run relay
-```
-
 ---
 
 ## Environment variables
 
+Runtime app/service variables:
+
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `NODE_ENV` | unset (`production` in systemd) | Node/Express runtime environment |
+| `PORT` | `8080` | App HTTP port |
+| `DB_PATH` | `./db.sqlite` | SQLite database path |
 | `SRS_API_URL` | `http://localhost:1985` | SRS HTTP API URL |
 | `SRS_RTMP_HOST` | `localhost` | SRS RTMP host (for FFmpeg to pull from) |
 | `SRS_RTMP_PORT` | `1935` | SRS RTMP port |
 | `SRS_SRT_PORT` | `10080` | SRS SRT port (for FFmpeg to pull from) |
-| `DB_PATH` | `./db.sqlite` | SQLite database path |
 | `SRS_CONF_PATH` | `./srs.conf` | SRS config path written by the app |
 | `SRS_LOG_PATH` | `./objs/srs.log` | SRS log path read for the dashboard log tail |
-| `FFMPEG_PATH` | `ffmpeg` | FFmpeg binary (uses `$PATH` if unset) |
-| `FFPROBE_PATH` | `ffprobe` | FFprobe binary (uses `$PATH` if unset) |
 | `SRT_BONDING_PORT` | `10081` | Shared SRT bonding listener port |
+| `SRT_BONDING_STATUS_PORT` | `10082` | Relay status HTTP port written into the relay config |
+| `SRT_BONDING_STATUS_URL` | `http://127.0.0.1:$SRT_BONDING_STATUS_PORT/status` | Relay status URL polled by the app |
 | `SRT_BONDING_RELAY_CONFIG_PATH` | beside `srs.conf` | JSON config file consumed by `srt-bonding-relay.service` |
-| `PORT` | `8080` | App HTTP port |
+| `SRT_BONDING_RELAY_PATH` | `/usr/local/bin/srt-bonding-relay` | Relay binary used for version reporting |
+| `SRT_BONDING_RELAY_LIB_DIR` | `/usr/local/lib/restream-srs-srt` | Relay library directory added to `LD_LIBRARY_PATH` for version reporting |
+| `FFMPEG_PATH` | `ffmpeg` | FFmpeg binary for outputs and previews |
+| `FFPROBE_PATH` | `ffprobe` | FFprobe binary for input media probing |
+
+Installer/development overrides:
+
+| Variable | Used by | Description |
+|----------|---------|-------------|
+| `REPO_URL` | `server-install.sh` | Repository URL cloned into `/opt/restream-srs` on first install |
+| `SRT_RELEASE_TAG` | `server-install.sh` | Relay GitHub release tag to install |
+| `SRT_URL` | `server-install.sh` | Custom relay release archive URL |
+| `SRT_SHA256` | `server-install.sh` | Expected SHA256 for the relay archive; blank skips verification |
+| `REGEN_CONF` | `server-install.sh` | Set `y`/`n` to force or skip regenerating `/etc/restream-srs/srs.conf` |
+| `WIPE_DB` | `server-install.sh` | Set `y`/`n` to force or skip wiping the existing SQLite DB |
+| `SRS_LOCAL_BIN` | `dev-server-install.sh` | Local executable SRS binary to copy into `./objs/srs` |
+| `SRT_BONDING_RELAY_REPO_DIR` | dev relay scripts | Local relay source repo path, default `../srt-bonding-relay` |
+| `SRT_BONDING_RELAY_REPO_URL` | `dev-server-install.sh` | Relay source repo URL used when cloning the dev relay repo |
 
 ## Known issues
 
