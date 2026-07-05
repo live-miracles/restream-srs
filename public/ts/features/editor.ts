@@ -245,10 +245,8 @@ function detectInstagramKey(url: string): string | null {
 
 function detectServer(url: string): { idx: number; key: string } {
     for (const p of state.config.pipelines ?? []) {
-        if (url === p.rtmpPublishUrl)
-            return { idx: RESTREAM_RTMP_IDX, key: String(p.id) };
-        if (url === p.srtPublishUrl)
-            return { idx: RESTREAM_SRT_IDX, key: String(p.id) };
+        if (url === p.rtmpPublishUrl) return { idx: RESTREAM_RTMP_IDX, key: String(p.id) };
+        if (url === p.srtPublishUrl) return { idx: RESTREAM_SRT_IDX, key: String(p.id) };
     }
     const instagramKey = detectInstagramKey(url);
     if (instagramKey !== null) return { idx: INSTAGRAM_RTMP_IDX, key: instagramKey };
@@ -518,9 +516,7 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
                 continue;
             }
             url =
-                serverIdx === RESTREAM_RTMP_IDX
-                    ? pipeline.rtmpPublishUrl
-                    : pipeline.srtPublishUrl;
+                serverIdx === RESTREAM_RTMP_IDX ? pipeline.rtmpPublishUrl : pipeline.srtPublishUrl;
         } else if (serverIdx === INSTAGRAM_RTMP_IDX) {
             if (keyEl instanceof HTMLInputElement) keyEl.classList.toggle('input-error', !key);
             if (!key) {
