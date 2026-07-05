@@ -535,7 +535,7 @@ function renderOverview(): void {
                 audioTracks && audioTracks.length > 1 ? ` rowspan="${audioTracks.length}"` : '';
             const rowAttr = `class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(isError, isWarn)}`;
             const sharedCells = `
-                <td class="font-semibold"${rowspan}>${p.name}</td>
+                <td class="overview-name-col font-semibold"${rowspan}>${p.name}</td>
                 <td${rowspan}>${badge}</td>
                 <td class="font-mono text-xs"${rowspan}>${inp.live ? formatUptime(inp.uptimeMs) : '—'}</td>
                 <td class="font-mono text-xs"${rowspan}>${inp.connected ? formatBitrate(inp.recvBitrateKbps) : '—'}</td>
@@ -597,7 +597,7 @@ function renderOverview(): void {
                 const src = isOn && o.videoEncoding === 'copy' ? p.input : null;
                 const outUptimeMs = o.startedAtMs !== null ? Date.now() - o.startedAtMs : null;
                 outputRows += `<tr class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(st === 'error', st === 'warn')}>
-                    <td><span class="opacity-40 text-xs">${p.name} ·</span> ${o.name}</td>
+                    <td class="overview-name-col"><span class="opacity-40 text-xs">${p.name} ·</span> ${o.name}</td>
                     <td>${badge}</td>
                     <td class="font-mono text-xs">${outUptimeMs !== null ? formatUptime(outUptimeMs) : '—'}</td>
                     ${td(formatBitrate(o.bitrateKbps))}
