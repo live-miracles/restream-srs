@@ -82,6 +82,7 @@ export interface SrtRelayStatus {
     pid: number | null;
     startedAtMs: number | null;
     lastError: string | null;
+    port: number;
 }
 
 export interface SrtBondingStatus {
@@ -123,8 +124,12 @@ export interface PipelineLog {
 }
 
 export interface InputHealth {
+    connected: boolean;
     live: boolean;
     isSrt: boolean;
+    mediaOk: boolean | null;
+    mediaCheckedAt: number | null;
+    mediaError: string | null;
     recvBitrateKbps: number | null;
     sendBitrateKbps: number | null;
     readers: number;

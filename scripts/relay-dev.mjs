@@ -6,9 +6,7 @@ const repoDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), '.
 const buildScript = path.join(repoDir, 'scripts', 'build-srt-bonding-relay-local.sh');
 const startScript = path.join(repoDir, 'scripts', 'srt-bonding-relay-start.sh');
 const devInstallScript = path.join(repoDir, 'scripts', 'dev-server-install.sh');
-const relayRepoDir = process.env.SRT_BONDING_RELAY_REPO_DIR
-    ? path.resolve(process.env.SRT_BONDING_RELAY_REPO_DIR)
-    : path.resolve(repoDir, '..', 'srt-bonding-relay');
+const relayRepoDir = path.resolve(repoDir, '..', 'srt-bonding-relay');
 const sourceFile = path.join(relayRepoDir, 'src', 'srt-bonding-relay.c');
 
 let relayProc = null;

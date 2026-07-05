@@ -13,8 +13,8 @@ fi
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SRS_OUT="$REPO_DIR/objs/srs"
-RELAY_REPO_DIR="${SRT_BONDING_RELAY_REPO_DIR:-$REPO_DIR/../srt-bonding-relay}"
-RELAY_REPO_URL="${SRT_BONDING_RELAY_REPO_URL:-https://github.com/live-miracles/srt-bonding-relay.git}"
+RELAY_REPO_DIR="$REPO_DIR/../srt-bonding-relay"
+RELAY_REPO_URL="https://github.com/live-miracles/srt-bonding-relay.git"
 
 SRS_VERSION=6.0-r0
 SRS_RELEASE_TAG="v${SRS_VERSION}"

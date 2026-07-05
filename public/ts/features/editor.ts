@@ -243,22 +243,11 @@ function detectInstagramKey(url: string): string | null {
     return m ? m[1] : null;
 }
 
-function restreamRtmpUrl(streamKey: string): string {
-    return `rtmp://localhost:1935/live/${streamKey}`;
-}
-
-function restreamSrtUrl(streamKey: string): string {
-    const passphrase = state.config.srtPassphrase;
-    const url = `srt://localhost:10080?streamid=#!::r=live/${streamKey},m=publish`;
-    if (!passphrase) return url;
-    return `${url}&passphrase=${encodeURIComponent(passphrase)}&pbkeylen=16`;
-}
-
 function detectServer(url: string): { idx: number; key: string } {
     for (const p of state.config.pipelines ?? []) {
-        if (url === restreamRtmpUrl(p.streamKey))
+        if (url === p.rtmpPublishUrl)
             return { idx: RESTREAM_RTMP_IDX, key: String(p.id) };
-        if (url === restreamSrtUrl(p.streamKey))
+        if (url === p.srtPublishUrl)
             return { idx: RESTREAM_SRT_IDX, key: String(p.id) };
     }
     const instagramKey = detectInstagramKey(url);
@@ -530,8 +519,8 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
             }
             url =
                 serverIdx === RESTREAM_RTMP_IDX
-                    ? restreamRtmpUrl(pipeline.streamKey)
-                    : restreamSrtUrl(pipeline.streamKey);
+                    ? pipeline.rtmpPublishUrl
+                    : pipeline.srtPublishUrl;
         } else if (serverIdx === INSTAGRAM_RTMP_IDX) {
             if (keyEl instanceof HTMLInputElement) keyEl.classList.toggle('input-error', !key);
             if (!key) {

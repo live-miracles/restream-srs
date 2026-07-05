@@ -1,12 +1,17 @@
 'use strict';
 
-const { describe, test } = require('node:test');
+const { after, describe, test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
-// Clear SRS env vars so module constants use their defaults
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'restream-srs-utils-'));
+process.env.SRS_CONF_PATH = path.join(tempDir, 'srs.conf');
+
+// Clear SRS env vars so module constants use their defaults.
 delete process.env.SRS_RTMP_HOST;
 delete process.env.SRS_RTMP_PORT;
-delete process.env.SRS_SRT_PORT;
 
 const {
     buildFfmpegArgs,
@@ -16,6 +21,10 @@ const {
 const { rtmpPullUrl, srtPullUrl, rtmpPublishUrl, srtPublishUrl } = require('../src/utils/srs');
 
 const sink = (url, audioEncoding = 'copy') => ({ url, audioEncoding });
+
+after(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+});
 
 // ── validateOutputUrl ─────────────────────────────────
 
@@ -243,6 +252,34 @@ describe('URL builders', () => {
         assert.equal(
             srtPublishUrl('mykey', 'myhost', 'secret value'),
             'srt://myhost:10080?streamid=#!::r=live/mykey,m=publish&passphrase=secret%20value&pbkeylen=16',
+        );
+    });
+
+    test('SRT URLs use relay JSON output_port', () => {
+        fs.writeFileSync(
+            path.join(tempDir, 'srt-bonding-relay.json'),
+            JSON.stringify(
+                {
+                    input_host: '0.0.0.0',
+                    input_port: 12081,
+                    output_host: '127.0.0.1',
+                    output_port: 12080,
+                    status_port: 12082,
+                    passphrase: '',
+                },
+                null,
+                4,
+            ).concat('\n'),
+            'utf8',
+        );
+
+        assert.equal(
+            srtPullUrl('mykey'),
+            'srt://localhost:12080?streamid=#!::r=live/mykey,m=request&latency=200000&transtype=live',
+        );
+        assert.equal(
+            srtPublishUrl('mykey', 'myhost'),
+            'srt://myhost:12080?streamid=#!::r=live/mykey,m=publish',
         );
     });
 });

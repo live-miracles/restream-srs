@@ -8,8 +8,12 @@ import type {
 } from '../types.js';
 
 const EMPTY_INPUT: InputHealth = {
+    connected: false,
     live: false,
     isSrt: false,
+    mediaOk: null,
+    mediaCheckedAt: null,
+    mediaError: null,
     recvBitrateKbps: null,
     sendBitrateKbps: null,
     readers: 0,

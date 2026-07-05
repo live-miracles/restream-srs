@@ -1,7 +1,8 @@
+import { readRelayConfig } from './relayConfig.js';
+
 const SRS_API_URL = process.env.SRS_API_URL || 'http://localhost:1985';
 const SRS_RTMP_HOST = process.env.SRS_RTMP_HOST || 'localhost';
 const SRS_RTMP_PORT = parseInt(process.env.SRS_RTMP_PORT || '1935');
-const SRS_SRT_PORT = parseInt(process.env.SRS_SRT_PORT || '10080');
 const SRS_CLIENT_FETCH_TIMEOUT_MS = 3000;
 const SRS_STREAMS_FETCH_TIMEOUT_MS = 5000;
 
@@ -96,7 +97,7 @@ export function rtmpPullUrl(streamKey: string): string {
 // so every audio track survives (RTMP/srt_to_rtmp would collapse to one) and
 // the timestamps stay clean (no srt_to_rtmp jitter — ffmpeg demuxes the TS).
 export function srtPullUrl(streamKey: string): string {
-    return `srt://${SRS_RTMP_HOST}:${SRS_SRT_PORT}?streamid=#!::r=live/${streamKey},m=request&latency=200000&transtype=live`;
+    return `srt://${SRS_RTMP_HOST}:${readRelayConfig().output_port}?streamid=#!::r=live/${streamKey},m=request&latency=200000&transtype=live`;
 }
 
 export function rtmpPublishUrl(streamKey: string, host: string): string {
@@ -104,7 +105,7 @@ export function rtmpPublishUrl(streamKey: string, host: string): string {
 }
 
 export function srtPublishUrl(streamKey: string, host: string, passphrase?: string | null): string {
-    const url = `srt://${host}:10080?streamid=#!::r=live/${streamKey},m=publish`;
+    const url = `srt://${host}:${readRelayConfig().output_port}?streamid=#!::r=live/${streamKey},m=publish`;
     if (!passphrase) return url;
     return `${url}&passphrase=${encodeURIComponent(passphrase)}&pbkeylen=16`;
 }

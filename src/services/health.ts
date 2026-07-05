@@ -14,8 +14,9 @@ import type { OutputService } from './outputs.js';
 import type { SrtRelayService, SrtRelayStats, SrtRelayStreamStatus } from './srtRelay.js';
 
 const FFPROBE_CMD = process.env.FFPROBE_PATH || 'ffprobe';
-const FFPROBE_DELAYS_MS = [3000, 10000, 20000, 40000];
 const FFPROBE_TIMEOUT_MS = 15000;
+const FFPROBE_FAST_REFRESH_MS = 15000;
+const FFPROBE_HEALTHY_REFRESH_MS = 30000;
 // Stagger concurrent ffprobe launches instead of capping concurrency with a
 // semaphore. The real risk is the thundering-herd burst (all N pipelines firing
 // at the same millisecond after a mass reconnect), not the sustained overlap —
@@ -27,8 +28,12 @@ const POLL_INTERVAL_MS = 5000;
 const MAX_SRS_EVENTS = 200;
 
 export interface InputHealth {
+    connected: boolean;
     live: boolean;
     isSrt: boolean;
+    mediaOk: boolean | null;
+    mediaCheckedAt: number | null;
+    mediaError: string | null;
     recvBitrateKbps: number | null;
     sendBitrateKbps: number | null;
     readers: number;
@@ -79,6 +84,32 @@ interface ProbeResult {
     video: SrsStreamVideo | null;
     audio: SrsStreamAudio | null;
     audioTracks: AudioTrackInfo[];
+}
+
+interface ProbeStatus {
+    result: ProbeResult | null;
+    checkedAt: number;
+    ok: boolean;
+    error: string | null;
+}
+
+export function isProbeUsable(result: ProbeResult | null): boolean {
+    const video = result?.video;
+    return !!video?.codec && video.width > 0 && video.height > 0;
+}
+
+function hasUsableSrsVideo(stream: SrsStream | undefined): boolean {
+    const video = stream?.video;
+    return !!video?.codec && video.width > 0 && video.height > 0;
+}
+
+function probeError(result: ProbeResult | null): string {
+    if (!result) return 'ffprobe did not detect a readable media stream';
+    const video = result.video;
+    if (!video) return 'ffprobe did not detect a video stream';
+    if (!video.codec) return 'ffprobe detected video without codec metadata';
+    if (video.width <= 0 || video.height <= 0) return 'ffprobe detected video without dimensions';
+    return 'ffprobe media validation failed';
 }
 
 function parseFrameRate(str: unknown): number | null {
@@ -173,6 +204,7 @@ export function createHealthService(
         if (srsEvents.length > MAX_SRS_EVENTS) srsEvents.shift();
     }
 
+    const inputConnected = new Map<number, boolean>();
     const inputLive = new Map<number, boolean>();
     // Protocol the live input is currently published with, detected from the SRS
     // stream's tcUrl. Consumed by the output and preview services to decide
@@ -181,44 +213,56 @@ export function createHealthService(
     // input is live, cleared when it drops.
     const inputProtocol = new Map<number, 'srt' | 'rtmp'>();
     const inputLiveStartMs = new Map<number, number>();
-    const ffprobeResults = new Map<number, ProbeResult>();
-    const ffprobeRetries = new Map<number, { timer: NodeJS.Timeout | null; attempt: number }>();
+    const ffprobeResults = new Map<number, ProbeStatus>();
+    const ffprobeTimers = new Map<number, NodeJS.Timeout>();
+    const ffprobeInFlight = new Set<number>();
+    const ffprobeGenerations = new Map<number, number>();
 
     function clearFfprobeState(pipelineId: number): void {
-        const entry = ffprobeRetries.get(pipelineId);
-        if (entry?.timer) clearTimeout(entry.timer);
-        ffprobeRetries.delete(pipelineId);
+        const timer = ffprobeTimers.get(pipelineId);
+        if (timer) clearTimeout(timer);
+        ffprobeTimers.delete(pipelineId);
+        ffprobeInFlight.delete(pipelineId);
         ffprobeResults.delete(pipelineId);
+        ffprobeGenerations.set(pipelineId, (ffprobeGenerations.get(pipelineId) ?? 0) + 1);
     }
 
-    function scheduleFfprobe(
+    function scheduleFfprobe(pipelineId: number, streamKey: string, isSrt: boolean, delayMs = 0) {
+        if (ffprobeTimers.has(pipelineId) || ffprobeInFlight.has(pipelineId)) return;
+        const url = isSrt ? srtPullUrl(streamKey) : rtmpPullUrl(streamKey);
+        const generation = ffprobeGenerations.get(pipelineId) ?? 0;
+        const timer = setTimeout(async () => {
+            ffprobeTimers.delete(pipelineId);
+            ffprobeInFlight.add(pipelineId);
+            try {
+                const result = await runFfprobe(url);
+                if ((ffprobeGenerations.get(pipelineId) ?? 0) !== generation) return;
+                const ok = isProbeUsable(result);
+                ffprobeResults.set(pipelineId, {
+                    result,
+                    checkedAt: Date.now(),
+                    ok,
+                    error: ok ? null : probeError(result),
+                });
+            } finally {
+                ffprobeInFlight.delete(pipelineId);
+            }
+        }, delayMs);
+        ffprobeTimers.set(pipelineId, timer);
+        timer.unref?.();
+    }
+
+    function schedulePeriodicFfprobe(
         pipelineId: number,
         streamKey: string,
         isSrt: boolean,
-        attempt = 0,
-        stagger = 0,
+        stagger: number,
     ): void {
-        if (attempt >= FFPROBE_DELAYS_MS.length) return;
-        const url = isSrt ? srtPullUrl(streamKey) : rtmpPullUrl(streamKey);
-        const entry: { timer: NodeJS.Timeout | null; attempt: number } = { timer: null, attempt };
-        ffprobeRetries.set(pipelineId, entry);
-        const delay = FFPROBE_DELAYS_MS[attempt] + stagger * FFPROBE_STAGGER_MS;
-        entry.timer = setTimeout(async () => {
-            entry.timer = null;
-            if (!ffprobeRetries.has(pipelineId)) return;
-            const result = await runFfprobe(url);
-            if (!ffprobeRetries.has(pipelineId)) return;
-            if (result) {
-                ffprobeResults.set(pipelineId, result);
-                ffprobeRetries.delete(pipelineId);
-            } else if (attempt + 1 < FFPROBE_DELAYS_MS.length) {
-                scheduleFfprobe(pipelineId, streamKey, isSrt, attempt + 1);
-            } else {
-                ffprobeRetries.delete(pipelineId);
-                console.warn(`[ffprobe] exhausted all attempts for pipeline ${pipelineId}`);
-            }
-        }, delay);
-        entry.timer?.unref?.();
+        if (ffprobeTimers.has(pipelineId) || ffprobeInFlight.has(pipelineId)) return;
+        const status = ffprobeResults.get(pipelineId);
+        const refreshMs = status?.ok ? FFPROBE_HEALTHY_REFRESH_MS : FFPROBE_FAST_REFRESH_MS;
+        if (status && Date.now() - status.checkedAt < refreshMs) return;
+        scheduleFfprobe(pipelineId, streamKey, isSrt, stagger * FFPROBE_STAGGER_MS);
     }
 
     // An output may only be (re)started when SRS is reachable and the pipeline's
@@ -291,19 +335,33 @@ export function createHealthService(
             // When SRS is unreachable we can't distinguish a real stream drop from a
             // transient API failure. Preserve the last known live state so we don't
             // fire spurious offline/online transitions or mass-restart all outputs.
+            const prevConnected = inputConnected.get(pipeline.id) ?? false;
             const prevLive = inputLive.get(pipeline.id) ?? false;
             const s = srsReachable ? liveByPath.get(path) : undefined;
-            const nowLive = srsReachable ? !!s : prevLive;
+            const nowConnected = srsReachable ? !!s : prevConnected;
+            const probe = ffprobeResults.get(pipeline.id) ?? null;
+            const nowLive = srsReachable
+                ? nowConnected && (probe?.ok ?? hasUsableSrsVideo(s))
+                : prevLive;
             // UI should reflect whether the input is currently usable through SRS.
             // Keep nowLive sticky internally for restart/logging behavior during an
             // SRS outage, but don't present a stale green input while SRS is down.
             const displayLive = srsReachable ? nowLive : false;
+            const displayConnected = srsReachable ? nowConnected : false;
 
             if (srsReachable) {
+                inputConnected.set(pipeline.id, nowConnected);
                 inputLive.set(pipeline.id, nowLive);
-                if (nowLive && s) {
+                if (nowConnected && s) {
                     inputProtocol.set(pipeline.id, s.tcUrl?.startsWith('srt://') ? 'srt' : 'rtmp');
-                } else if (!nowLive) {
+                    const isSrt = !!s.tcUrl?.startsWith('srt://');
+                    schedulePeriodicFfprobe(
+                        pipeline.id,
+                        pipeline.streamKey,
+                        isSrt,
+                        ffprobeStagger++,
+                    );
+                } else if (!nowConnected) {
                     inputProtocol.delete(pipeline.id);
                 }
 
@@ -313,30 +371,48 @@ export function createHealthService(
                         pipeline.id,
                         restartStagger,
                     );
-                    const isSrt = !!s?.tcUrl?.startsWith('srt://');
-                    scheduleFfprobe(pipeline.id, pipeline.streamKey, isSrt, 0, ffprobeStagger++);
                     try {
                         db.appendPipelineLog(
                             pipeline.id,
                             'online',
-                            `Input connected (${isSrt ? 'SRT' : 'RTMP'})`,
+                            `Input media detected (${inputProtocol.get(pipeline.id) ?? 'unknown'})`,
                         );
                     } catch {
                         /* non-critical */
                     }
                 }
 
-                if (prevLive && !nowLive) {
+                if (prevLive && !nowLive && nowConnected) {
                     const uptimeSec = Math.round(
                         (Date.now() - (inputLiveStartMs.get(pipeline.id) ?? Date.now())) / 1000,
                     );
+                    inputLiveStartMs.delete(pipeline.id);
+                    try {
+                        db.appendPipelineLog(
+                            pipeline.id,
+                            'media_lost',
+                            `Input media lost (was valid for ${uptimeSec}s)`,
+                        );
+                    } catch {
+                        /* non-critical */
+                    }
+                }
+
+                if (prevConnected && !nowConnected) {
+                    const liveStartMs = inputLiveStartMs.get(pipeline.id);
+                    const uptimeSec =
+                        liveStartMs != null ? Math.round((Date.now() - liveStartMs) / 1000) : null;
+                    inputConnected.delete(pipeline.id);
+                    inputLive.set(pipeline.id, false);
                     inputLiveStartMs.delete(pipeline.id);
                     clearFfprobeState(pipeline.id);
                     try {
                         db.appendPipelineLog(
                             pipeline.id,
                             'offline',
-                            `Input disconnected (was live for ${uptimeSec}s)`,
+                            uptimeSec == null
+                                ? 'Input disconnected'
+                                : `Input disconnected (was live for ${uptimeSec}s)`,
                         );
                     } catch {
                         /* non-critical */
@@ -360,23 +436,30 @@ export function createHealthService(
             }
 
             const srtStream = displayLive && s?.tcUrl?.startsWith('srt://');
-            const probe = ffprobeResults.get(pipeline.id) ?? null;
+            const mediaProbe = ffprobeResults.get(pipeline.id) ?? null;
             const bondingStreamId = `#!::r=live/${pipeline.streamKey},m=publish`;
             const bondingStatus = srtRelayService.getStreamStatus(bondingStreamId);
 
             pipelinesHealth[String(pipeline.id)] = {
                 input: {
+                    connected: displayConnected,
                     live: displayLive,
-                    isSrt: !!srtStream,
+                    isSrt:
+                        !!srtStream ||
+                        (displayConnected && inputProtocol.get(pipeline.id) === 'srt'),
+                    mediaOk: displayConnected ? (mediaProbe?.ok ?? null) : null,
+                    mediaCheckedAt: displayConnected ? (mediaProbe?.checkedAt ?? null) : null,
+                    mediaError: displayConnected ? (mediaProbe?.error ?? null) : null,
                     recvBitrateKbps: s?.kbps?.recv_30s ?? null,
                     sendBitrateKbps: s?.kbps?.send_30s ?? null,
                     readers: s ? Math.max(0, (s.clients ?? 0) - 1) : 0,
                     uptimeMs: displayLive
                         ? Date.now() - (inputLiveStartMs.get(pipeline.id) ?? Date.now())
                         : null,
-                    video: probe?.video ?? (s?.video ? { ...s.video, fps: null } : null),
-                    audio: probe?.audio ?? s?.audio ?? null,
-                    audioTracks: probe?.audioTracks ?? [],
+                    video:
+                        mediaProbe?.result?.video ?? (s?.video ? { ...s.video, fps: null } : null),
+                    audio: mediaProbe?.result?.audio ?? s?.audio ?? null,
+                    audioTracks: mediaProbe?.result?.audioTracks ?? [],
                 },
                 outputs: outputsHealth,
                 srtBonding: bondingStatus,

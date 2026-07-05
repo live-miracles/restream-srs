@@ -226,12 +226,12 @@ touch "$DB_FILE"
 if [[ ! -f "$CONF_DIR/srt-bonding-relay.json" ]]; then
     cat > "$CONF_DIR/srt-bonding-relay.json" <<EOF
 {
-  "input_host": "0.0.0.0",
-  "input_port": 10081,
-  "output_host": "127.0.0.1",
-  "output_port": 10080,
-  "status_port": 10082,
-  "passphrase": ""
+    "input_host": "0.0.0.0",
+    "input_port": 10081,
+    "output_host": "127.0.0.1",
+    "output_port": 10080,
+    "status_port": 8081,
+    "passphrase": ""
 }
 EOF
 fi
@@ -324,11 +324,6 @@ Environment=SRS_LOG_PATH=$LOG_DIR/srs.log
 Environment=SRS_API_URL=http://127.0.0.1:1985
 Environment=SRS_RTMP_HOST=127.0.0.1
 Environment=SRS_RTMP_PORT=1935
-Environment=SRS_SRT_PORT=10080
-Environment=SRT_BONDING_PORT=10081
-Environment=SRT_BONDING_STATUS_PORT=10082
-Environment=SRT_BONDING_RELAY_PATH=/usr/local/bin/srt-bonding-relay
-Environment=SRT_BONDING_RELAY_CONFIG_PATH=$CONF_DIR/srt-bonding-relay.json
 Environment=FFMPEG_PATH=/usr/local/bin/ffmpeg
 Environment=FFPROBE_PATH=/usr/local/bin/ffprobe
 ExecStart=/usr/bin/node $APP_DIR/dist/index.js

@@ -1,7 +1,36 @@
 'use strict';
 
-const { afterEach, describe, test } = require('node:test');
+const { after, afterEach, describe, test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'restream-srs-relay-'));
+process.env.SRS_CONF_PATH = path.join(tempDir, 'srs.conf');
+const relayConfigPath = path.join(tempDir, 'srt-bonding-relay.json');
+
+function writeRelayConfig(overrides = {}) {
+    fs.writeFileSync(
+        relayConfigPath,
+        JSON.stringify(
+            {
+                input_host: '0.0.0.0',
+                input_port: 10081,
+                output_host: '127.0.0.1',
+                output_port: 10080,
+                status_port: 8081,
+                passphrase: '',
+                ...overrides,
+            },
+            null,
+            4,
+        ).concat('\n'),
+        'utf8',
+    );
+}
+
+writeRelayConfig();
 
 const { createSrtRelayService } = require('../src/services/srtRelay');
 
@@ -26,11 +55,15 @@ describe('SRT relay service', () => {
         while (cleanup.length) {
             await cleanup.pop()();
         }
-        delete process.env.SRT_BONDING_STATUS_URL;
+        writeRelayConfig();
         global.fetch = originalFetch;
     });
 
     const originalFetch = global.fetch;
+
+    after(() => {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    });
 
     test('reports the relay as running when the status endpoint responds', async () => {
         const startedAtMs = Date.now() - 1000;
@@ -153,7 +186,7 @@ describe('SRT relay service', () => {
 
     test('reports an unreachable relay as stopped before any successful poll', async () => {
         global.fetch = async () => {
-            throw new Error('connect ECONNREFUSED 127.0.0.1:10082');
+            throw new Error('connect ECONNREFUSED 127.0.0.1:8081');
         };
         const service = createSrtRelayService();
         cleanup.push(async () => service.shutdown());
@@ -163,6 +196,31 @@ describe('SRT relay service', () => {
         assert.equal(service.getStats().status, 'stopped');
         assert.equal(service.getPort(), 10081);
         assert.equal(service.isStreamActive('#!::r=live/key02,m=publish'), false);
+    });
+
+    test('reads relay input and status ports from JSON config', async () => {
+        writeRelayConfig({ input_port: 12081, output_port: 12080, status_port: 12082 });
+        let fetchedUrl = '';
+        global.fetch = async (url) => {
+            fetchedUrl = String(url);
+            return new Response(
+                JSON.stringify({
+                    pid: 54321,
+                    startedAtMs: Date.now(),
+                    streamStates: [],
+                    lastError: null,
+                }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } },
+            );
+        };
+
+        const service = createSrtRelayService();
+        cleanup.push(async () => service.shutdown());
+        service.start();
+
+        await waitFor(() => service.getStats().pid === 54321);
+        assert.equal(service.getPort(), 12081);
+        assert.equal(fetchedUrl, 'http://127.0.0.1:12082/status');
     });
 
     test('reports a previously reachable relay as failed when the endpoint goes away', async () => {
@@ -182,7 +240,7 @@ describe('SRT relay service', () => {
                     { status: 200, headers: { 'Content-Type': 'application/json' } },
                 );
             }
-            throw new Error('connect ECONNREFUSED 127.0.0.1:10082');
+            throw new Error('connect ECONNREFUSED 127.0.0.1:8081');
         };
         const service = createSrtRelayService();
         cleanup.push(async () => service.shutdown());

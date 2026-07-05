@@ -5,9 +5,8 @@ import type { Express } from 'express';
 
 const VERSION_EXEC_TIMEOUT_MS = 3000;
 const VERSION_FETCH_TIMEOUT_MS = 2000;
-const SRT_RELAY_BIN = process.env.SRT_BONDING_RELAY_PATH ?? '/usr/local/bin/srt-bonding-relay';
-const SRT_RELAY_LIB_DIR =
-    process.env.SRT_BONDING_RELAY_LIB_DIR ?? '/usr/local/lib/restream-srs-srt';
+const SRT_RELAY_BIN_CANDIDATES = ['/usr/local/bin/srt-bonding-relay', './objs/srt-bonding-relay'];
+const SRT_RELAY_LIB_DIR_CANDIDATES = ['/usr/local/lib/restream-srs-srt', './objs/lib'];
 
 function exec(cmd: string, args: string[], cwd?: string, env?: NodeJS.ProcessEnv): Promise<string> {
     return new Promise((resolve) => {
@@ -46,15 +45,15 @@ async function getSrsVersion(): Promise<string> {
 }
 
 async function getSrtRelayVersion(): Promise<string> {
-    if (!fs.existsSync(SRT_RELAY_BIN)) return 'unknown';
+    const bin = SRT_RELAY_BIN_CANDIDATES.find((candidate) => fs.existsSync(candidate));
+    if (!bin) return 'unknown';
 
     const env = { ...process.env };
-    if (fs.existsSync(SRT_RELAY_LIB_DIR)) {
-        env.LD_LIBRARY_PATH = env.LD_LIBRARY_PATH
-            ? `${SRT_RELAY_LIB_DIR}:${env.LD_LIBRARY_PATH}`
-            : SRT_RELAY_LIB_DIR;
+    const libDir = SRT_RELAY_LIB_DIR_CANDIDATES.find((candidate) => fs.existsSync(candidate));
+    if (libDir) {
+        env.LD_LIBRARY_PATH = env.LD_LIBRARY_PATH ? `${libDir}:${env.LD_LIBRARY_PATH}` : libDir;
     }
-    const version = await exec(SRT_RELAY_BIN, ['--version'], undefined, env);
+    const version = await exec(bin, ['--version'], undefined, env);
     return version || 'unknown';
 }
 

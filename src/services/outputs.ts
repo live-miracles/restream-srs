@@ -295,7 +295,6 @@ export function createOutputService(db: Db): OutputService {
             for (const output of outputs) {
                 if (output.desiredState !== 'running') continue;
                 if (statuses.get(output.id)?.status === 'running') {
-                    startTimes.set(output.id, Date.now());
                     continue;
                 }
                 const r = getRetry(output.id);

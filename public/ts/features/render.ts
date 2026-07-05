@@ -1,6 +1,5 @@
 import {
     setInnerText,
-    statusColor,
     formatBitrate,
     formatBytesCompact,
     getUrlParam,
@@ -27,6 +26,7 @@ declare global {
 }
 
 type OutStatus = 'good' | 'warn' | 'error' | 'off';
+type InputStatus = 'good' | 'warn' | 'error' | 'off';
 type BondingIndicator = {
     leftColor: string;
     rightColor: string;
@@ -42,7 +42,6 @@ function fmtFieldOrder(fo: string | null | undefined): string | null {
 }
 
 const pendingOutputs = new Map<string, 'start' | 'stop'>();
-const SRT_BONDING_PORT = 10081;
 const RELAY_FLOW_STALE_MS = 15000;
 const METRIC_WARN_PERCENT = 70;
 const METRIC_ERROR_PERCENT = 90;
@@ -78,6 +77,25 @@ function outStatus(o: OutputView, inputLive: boolean): OutStatus {
     }
     // status === 'stopped' but desiredState === 'running': between retries
     return o.lastError !== null ? 'error' : 'warn';
+}
+
+function inputStatus(input: InputHealth): InputStatus {
+    if (input.live) {
+        return input.recvBitrateKbps !== null && input.recvBitrateKbps < LOW_BITRATE_KBPS
+            ? 'warn'
+            : 'good';
+    }
+    if (input.connected && input.mediaOk === false) return 'error';
+    if (input.connected) return 'warn';
+    return 'off';
+}
+
+function inputStatusColor(input: InputHealth): string {
+    const st = inputStatus(input);
+    if (st === 'good') return STATUS_COLOR_GOOD;
+    if (st === 'warn') return STATUS_COLOR_WARN;
+    if (st === 'error') return STATUS_COLOR_ERROR;
+    return STATUS_COLOR_OFF;
 }
 
 function getBondingIndicator(
@@ -147,13 +165,9 @@ function renderPipelineList(): void {
     const listEl = document.getElementById('pipelines');
     if (!listEl) return;
 
-    const inputsOn = state.pipelines.filter((p) => p.input.live).length;
-    const inputsWarn = state.pipelines.filter(
-        (p) =>
-            p.input.live &&
-            p.input.recvBitrateKbps !== null &&
-            p.input.recvBitrateKbps < LOW_BITRATE_KBPS,
-    ).length;
+    const inputsOn = state.pipelines.filter((p) => inputStatus(p.input) === 'good').length;
+    const inputsWarn = state.pipelines.filter((p) => inputStatus(p.input) === 'warn').length;
+    const inputsFailed = state.pipelines.filter((p) => inputStatus(p.input) === 'error').length;
     const totalOutputs = state.pipelines.reduce((s, p) => s + p.outs.length, 0);
     const outputsOn = state.pipelines.reduce(
         (s, p) => s + p.outs.filter((o) => outStatus(o, p.input.live) === 'good').length,
@@ -173,9 +187,9 @@ function renderPipelineList(): void {
     );
 
     setInnerText('pipe-cnt', state.pipelines.length);
-    setInnerText('pipe-oks', inputsOn - inputsWarn);
-    setInnerText('pipe-warns', inputsWarn);
-    setInnerText('pipe-offs', state.pipelines.length - inputsOn);
+    setInnerText('pipe-oks', inputsOn);
+    setInnerText('pipe-warns', inputsWarn + inputsFailed);
+    setInnerText('pipe-offs', state.pipelines.filter((p) => inputStatus(p.input) === 'off').length);
     setInnerText('out-cnt', totalOutputs);
     setInnerText('out-oks', outputsOn - outputsWarn);
     setInnerText('out-warns', outputsWarn);
@@ -191,7 +205,7 @@ function renderPipelineList(): void {
             const outFailed = p.outs.filter((o) => outStatus(o, p.input.live) === 'error').length;
             const outOff = p.outs.filter((o) => outStatus(o, p.input.live) === 'off').length;
 
-            const inColor = statusColor(p.input.live, p.input.recvBitrateKbps);
+            const inColor = inputStatusColor(p.input);
             const outColor =
                 outFailed > 0
                     ? STATUS_COLOR_ERROR
@@ -208,7 +222,7 @@ function renderPipelineList(): void {
                 p.input.live && p.input.uptimeMs !== null
                     ? `<span class="font-mono text-xs opacity-60 shrink-0">${formatUptime(p.input.uptimeMs)}</span>`
                     : '';
-            const inputTypeBadge = p.input.live
+            const inputTypeBadge = p.input.connected
                 ? `<span class="badge badge-sm badge-outline shrink-0">${p.srtBonding.inputActive ? 'Relay' : p.input.isSrt ? 'SRT' : 'RTMP'}</span>`
                 : '';
 
@@ -245,7 +259,13 @@ function formatUptime(ms: number | null): string {
 }
 
 function renderInputStats(input: InputHealth): string {
-    if (!input.live) return '';
+    if (!input.connected) return '';
+    if (!input.live) {
+        const checked = input.mediaCheckedAt
+            ? new Date(input.mediaCheckedAt).toLocaleTimeString(undefined, { hour12: false })
+            : null;
+        return `<p class="text-xs text-error mt-2">${input.mediaError ?? 'Input connected, waiting for valid media.'}${checked ? ` <span class="opacity-60">Last checked ${checked}</span>` : ''}</p>`;
+    }
 
     const v = input.video;
     const a = input.audio;
@@ -498,24 +518,28 @@ function renderOverview(): void {
     } else {
         for (const p of state.pipelines) {
             const inp = p.input;
-            const isWarn =
-                inp.live && inp.recvBitrateKbps !== null && inp.recvBitrateKbps < LOW_BITRATE_KBPS;
-            const badge = !inp.live
-                ? `<span class="badge badge-sm badge-neutral">Offline</span>`
-                : isWarn
-                  ? `<span class="badge badge-sm badge-warning">Low Bitrate</span>`
-                  : `<span class="badge badge-sm badge-success">Live</span>`;
+            const st = inputStatus(inp);
+            const isWarn = st === 'warn';
+            const isError = st === 'error';
+            const badge =
+                st === 'off'
+                    ? `<span class="badge badge-sm badge-neutral">Offline</span>`
+                    : st === 'error'
+                      ? `<span class="badge badge-sm badge-error">Media Error</span>`
+                      : st === 'warn'
+                        ? `<span class="badge badge-sm badge-warning">${inp.live ? 'Low Bitrate' : 'Probing'}</span>`
+                        : `<span class="badge badge-sm badge-success">Live</span>`;
             const protocolLabel = p.srtBonding.inputActive ? 'Relay' : inp.isSrt ? 'SRT' : 'RTMP';
             const audioTracks = inp.audioTracks.length > 0 ? inp.audioTracks : null;
             const rowspan =
                 audioTracks && audioTracks.length > 1 ? ` rowspan="${audioTracks.length}"` : '';
-            const rowAttr = `class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(false, isWarn)}`;
+            const rowAttr = `class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(isError, isWarn)}`;
             const sharedCells = `
                 <td class="font-semibold"${rowspan}>${p.name}</td>
                 <td${rowspan}>${badge}</td>
                 <td class="font-mono text-xs"${rowspan}>${inp.live ? formatUptime(inp.uptimeMs) : '—'}</td>
-                <td class="font-mono text-xs"${rowspan}>${inp.live ? formatBitrate(inp.recvBitrateKbps) : '—'}</td>
-                <td class="font-mono text-xs"${rowspan}>${inp.live ? protocolLabel : '—'}</td>
+                <td class="font-mono text-xs"${rowspan}>${inp.connected ? formatBitrate(inp.recvBitrateKbps) : '—'}</td>
+                <td class="font-mono text-xs"${rowspan}>${inp.connected ? protocolLabel : '—'}</td>
                 <td class="font-mono text-xs"${rowspan}>${inp.video?.codec ?? '—'}</td>
                 <td class="font-mono text-xs"${rowspan}>${inp.video ? `${inp.video.width}×${inp.video.height}` : '—'}</td>
                 <td class="font-mono text-xs"${rowspan}>${inp.video?.fps ?? '—'}</td>
@@ -571,8 +595,7 @@ function renderOverview(): void {
 
                 const isOn = o.status === 'running';
                 const src = isOn && o.videoEncoding === 'copy' ? p.input : null;
-                const outUptimeMs =
-                    st === 'good' && o.startedAtMs !== null ? Date.now() - o.startedAtMs : null;
+                const outUptimeMs = o.startedAtMs !== null ? Date.now() - o.startedAtMs : null;
                 outputRows += `<tr class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(st === 'error', st === 'warn')}>
                     <td><span class="opacity-40 text-xs">${p.name} ·</span> ${o.name}</td>
                     <td>${badge}</td>
@@ -700,7 +723,7 @@ function renderPipelineInfo(selectedId: string | null): void {
     const readersBadge = document.getElementById('pipe-readers-badge');
     if (readersBadge) {
         readersBadge.textContent = `${pipeline.input.readers} reader${pipeline.input.readers === 1 ? '' : 's'}`;
-        readersBadge.classList.toggle('hidden', !pipeline.input.live);
+        readersBadge.classList.toggle('hidden', !pipeline.input.connected);
     }
 
     const hasActiveOutputs = pipeline.outs.some((o) => o.desiredState !== 'stopped');
@@ -712,7 +735,7 @@ function renderPipelineInfo(selectedId: string | null): void {
     const statsContainer = document.getElementById('input-stats-container');
     const statsEl = document.getElementById('input-stats');
     const inputHtml = renderInputStats(pipeline.input);
-    if (statsContainer) statsContainer.classList.toggle('hidden', !pipeline.input.live);
+    if (statsContainer) statsContainer.classList.toggle('hidden', !pipeline.input.connected);
     if (statsEl) statsEl.innerHTML = inputHtml;
 
     const masked = maskStreamKey(pipeline.streamKey);
@@ -754,7 +777,7 @@ function renderPipelineInfo(selectedId: string | null): void {
     const bondingOutputConnected = pipeline.srtBonding.outputConnected;
     const relayProcessRunning = state.health.srtRelay?.status === 'running';
     const bondingHost = state.config.publicHost || 'localhost';
-    const bondingPortValue = SRT_BONDING_PORT;
+    const bondingPortValue = state.health.srtRelay?.port ?? 10081;
     const bondingStreamId = `#!::r=live/${pipeline.streamKey},m=publish`;
     const bondingUrlValue =
         `srt://${bondingHost}:${bondingPortValue}?mode=caller&grouptype=broadcast` +
@@ -898,7 +921,7 @@ function renderOutputCard(
               : st === 'error'
                 ? STATUS_COLOR_ERROR
                 : STATUS_COLOR_OFF;
-    const uptimeMs = st === 'good' && o.startedAtMs !== null ? Date.now() - o.startedAtMs : null;
+    const uptimeMs = o.startedAtMs !== null ? Date.now() - o.startedAtMs : null;
     const badges = [`<span class="badge badge-sm whitespace-nowrap">${o.videoEncoding}</span>`];
     if (uptimeMs !== null) {
         badges.push(

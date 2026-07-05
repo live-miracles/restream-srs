@@ -1,7 +1,5 @@
-const SRT_BONDING_PORT = parseInt(process.env.SRT_BONDING_PORT || '10081');
-const SRT_BONDING_STATUS_PORT = parseInt(process.env.SRT_BONDING_STATUS_PORT || '10082');
-const SRT_BONDING_STATUS_URL =
-    process.env.SRT_BONDING_STATUS_URL || `http://127.0.0.1:${SRT_BONDING_STATUS_PORT}/status`;
+import { readRelayConfig } from '../utils/relayConfig.js';
+
 const SRT_BONDING_POLL_MS = 5000;
 const SRT_BONDING_FETCH_TIMEOUT_MS = 2000;
 
@@ -10,6 +8,7 @@ export interface SrtRelayStats {
     pid: number | null;
     startedAtMs: number | null;
     lastError: string | null;
+    port: number;
 }
 
 export interface SrtRelayStreamStatus {
@@ -116,6 +115,7 @@ export function createSrtRelayService(): SrtRelayService {
         pid: null,
         startedAtMs: null,
         lastError: null,
+        port: readRelayConfig().input_port,
     };
     let streamStates = new Map<string, SrtRelayStreamStatus>();
     let pollTimer: NodeJS.Timeout | null = null;
@@ -126,7 +126,9 @@ export function createSrtRelayService(): SrtRelayService {
         if (refreshInFlight) return refreshInFlight;
         refreshInFlight = (async () => {
             try {
-                const res = await fetch(SRT_BONDING_STATUS_URL, {
+                const relayConfig = readRelayConfig();
+                const statusUrl = `http://127.0.0.1:${relayConfig.status_port}/status`;
+                const res = await fetch(statusUrl, {
                     signal: AbortSignal.timeout(SRT_BONDING_FETCH_TIMEOUT_MS),
                     headers: { Connection: 'close' },
                 });
@@ -148,14 +150,17 @@ export function createSrtRelayService(): SrtRelayService {
                     pid,
                     startedAtMs,
                     lastError: data.lastError ?? null,
+                    port: relayConfig.input_port,
                 };
             } catch (err) {
+                const relayConfig = readRelayConfig();
                 streamStates = new Map();
                 stats = {
                     status: everReachedRelay ? 'failed' : 'stopped',
                     pid: null,
                     startedAtMs: null,
                     lastError: err instanceof Error ? err.message : String(err),
+                    port: relayConfig.input_port,
                 };
             } finally {
                 refreshInFlight = null;
@@ -186,7 +191,7 @@ export function createSrtRelayService(): SrtRelayService {
 
     return {
         getPort(): number {
-            return SRT_BONDING_PORT;
+            return readRelayConfig().input_port;
         },
 
         getStats(): SrtRelayStats {
@@ -211,6 +216,7 @@ export function createSrtRelayService(): SrtRelayService {
                 pid: stats.pid,
                 startedAtMs: stats.startedAtMs,
                 lastError: stats.lastError,
+                port: stats.port,
             };
         },
     };

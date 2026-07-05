@@ -95,6 +95,8 @@ Open the dashboard: `http://SERVER_IP:8080` — default password is `admin`.
 
 ### Firewall ports needed
 
+Default ports from `srs.conf` and `srt-bonding-relay.json`:
+
 | Port | Protocol | Purpose |
 |------|----------|---------|
 | 1935 | TCP | RTMP input |
@@ -128,7 +130,8 @@ This resets the password to `admin` and restarts the service.
 
 ## Publishing to a pipeline
 
-ffmpeg test commands:
+ffmpeg test commands using the default SRT `output_port` (`10080`) from
+`srt-bonding-relay.json`:
 
 RTMP:
 ```bash
@@ -237,9 +240,10 @@ npm run srs           # runs ./objs/srs -c srs.conf in the foreground
 npm run relay         # auto-clones ../srt-bonding-relay if missing, builds it, runs it, and rebuilds on source changes
 ```
 
-The relay also exposes a local HTTP status endpoint on `127.0.0.1:10082` in
-development. The dashboard backend polls that endpoint to show the top-level
-relay health and the per-pipeline bonded-input status.
+The relay also exposes a local HTTP status endpoint on the default
+`status_port` (`127.0.0.1:8081`) in development. The dashboard backend polls
+that endpoint to show the top-level relay health and the per-pipeline
+bonded-input status.
 
 **4. Start the app** (terminal 3):
 ```bash
@@ -260,17 +264,12 @@ Runtime app/service variables:
 | `SRS_API_URL` | `http://localhost:1985` | SRS HTTP API URL |
 | `SRS_RTMP_HOST` | `localhost` | SRS RTMP host (for FFmpeg to pull from) |
 | `SRS_RTMP_PORT` | `1935` | SRS RTMP port |
-| `SRS_SRT_PORT` | `10080` | SRS SRT port (for FFmpeg to pull from) |
 | `SRS_CONF_PATH` | `./srs.conf` | SRS config path written by the app |
 | `SRS_LOG_PATH` | `./objs/srs.log` | SRS log path read for the dashboard log tail |
-| `SRT_BONDING_PORT` | `10081` | Shared SRT bonding listener port |
-| `SRT_BONDING_STATUS_PORT` | `10082` | Relay status HTTP port written into the relay config |
-| `SRT_BONDING_STATUS_URL` | `http://127.0.0.1:$SRT_BONDING_STATUS_PORT/status` | Relay status URL polled by the app |
-| `SRT_BONDING_RELAY_CONFIG_PATH` | beside `srs.conf` | JSON config file consumed by `srt-bonding-relay.service` |
-| `SRT_BONDING_RELAY_PATH` | `/usr/local/bin/srt-bonding-relay` | Relay binary used for version reporting |
-| `SRT_BONDING_RELAY_LIB_DIR` | `/usr/local/lib/restream-srs-srt` | Relay library directory added to `LD_LIBRARY_PATH` for version reporting |
 | `FFMPEG_PATH` | `ffmpeg` | FFmpeg binary for outputs and previews |
 | `FFPROBE_PATH` | `ffprobe` | FFprobe binary for input media probing |
+
+Relay ports and status polling are read from `srt-bonding-relay.json`, located beside `SRS_CONF_PATH`.
 
 Installer/development overrides:
 
@@ -283,8 +282,6 @@ Installer/development overrides:
 | `REGEN_CONF` | `server-install.sh` | Set `y`/`n` to force or skip regenerating `/etc/restream-srs/srs.conf` |
 | `WIPE_DB` | `server-install.sh` | Set `y`/`n` to force or skip wiping the existing SQLite DB |
 | `SRS_LOCAL_BIN` | `dev-server-install.sh` | Local executable SRS binary to copy into `./objs/srs` |
-| `SRT_BONDING_RELAY_REPO_DIR` | dev relay scripts | Local relay source repo path, default `../srt-bonding-relay` |
-| `SRT_BONDING_RELAY_REPO_URL` | `dev-server-install.sh` | Relay source repo URL used when cloning the dev relay repo |
 
 ## Known issues
 
