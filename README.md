@@ -316,6 +316,29 @@ npm run relay
 
 ## Known issues
 
+### Short CPU spikes from host package inventory checks every 10 min
+
+On GCP Ubuntu hosts, `google-osconfig-agent.service` may periodically run
+`apt-get update` / package inventory checks and briefly consume a large fraction
+of one vCPU. On a 4-vCPU VM this can show up as a ~25% CPU spike. This is host
+maintenance noise, not a restream pipeline failure.
+
+Temporary live-event mitigation, cleared automatically on reboot:
+
+```bash
+sudo systemctl stop google-osconfig-agent.service
+sudo systemctl mask --runtime google-osconfig-agent.service
+```
+
+If Ubuntu Pro APT/ESM jobs are also noisy:
+
+```bash
+sudo systemctl mask --runtime apt-news.service esm-cache.service
+```
+
+This temporarily affects GCP OS patch/inventory reporting or Ubuntu Pro update
+messaging; re-enable after the event or reboot.
+
 ### SRS `srt_to_rtmp` produces breaking audio (avoided, not used)
 
 SRS's native `srt_to_rtmp` feature (which remuxes an SRT publish into the RTMP

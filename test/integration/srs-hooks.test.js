@@ -78,14 +78,26 @@ function createHarness(assignedKeys) {
             })),
     };
     registerSrsHooks(app, db);
-    return { request: (body) => dispatch(app, 'POST', '/api/srs/on_publish', body) };
+    return {
+        publish: (body) => dispatch(app, 'POST', '/api/srs/on_publish', body),
+        ready: () => dispatch(app, 'GET', '/api/ready'),
+    };
 }
 
 describe('SRS publish hook integration', () => {
+    test('exposes an unauthenticated readiness endpoint', async () => {
+        const harness = createHarness([]);
+
+        const res = await harness.ready();
+
+        assert.equal(res.status, 200);
+        assert.deepEqual(res.body, { ok: true });
+    });
+
     test('allows an assigned stream key', async () => {
         const harness = createHarness(['key01_good']);
 
-        const res = await harness.request({ app: 'live', stream: 'key01_good' });
+        const res = await harness.publish({ app: 'live', stream: 'key01_good' });
 
         assert.equal(res.status, 200);
         assert.deepEqual(res.body, { code: 0 });
@@ -94,7 +106,7 @@ describe('SRS publish hook integration', () => {
     test('rejects an unassigned stream key', async () => {
         const harness = createHarness(['key01_good']);
 
-        const res = await harness.request({ app: 'live', stream: 'key99_bad' });
+        const res = await harness.publish({ app: 'live', stream: 'key99_bad' });
 
         assert.equal(res.status, 403);
         assert.deepEqual(res.body, { code: 403 });

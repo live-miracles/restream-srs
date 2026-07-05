@@ -44,12 +44,27 @@ function fmtFieldOrder(fo: string | null | undefined): string | null {
 const pendingOutputs = new Map<string, 'start' | 'stop'>();
 const SRT_BONDING_PORT = 10081;
 const RELAY_FLOW_STALE_MS = 15000;
+const METRIC_WARN_PERCENT = 70;
+const METRIC_ERROR_PERCENT = 90;
 
 function formatCompactCount(n: number): string {
     if (!Number.isFinite(n)) return '0';
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
     if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`;
     return String(Math.round(n));
+}
+
+function setMetricSeverity(id: string, percent: number | null): void {
+    const el = document.getElementById(id);
+    if (!el) return;
+
+    const isError = percent !== null && percent >= METRIC_ERROR_PERCENT;
+    const isWarning =
+        percent !== null && percent >= METRIC_WARN_PERCENT && percent < METRIC_ERROR_PERCENT;
+
+    el.classList.toggle('text-error', isError);
+    el.classList.toggle('text-warning', isWarning);
+    el.classList.toggle('font-semibold', isError || isWarning);
 }
 
 function outStatus(o: OutputView, inputLive: boolean): OutStatus {
@@ -1109,24 +1124,26 @@ export function renderMetrics(): void {
     const disk = m.disk ?? null;
     const net = m.net ?? null;
     const uptimeSecs = m.uptimeSeconds ?? null;
+    const cpuPercent = cpu ? cpu.percent : null;
+    const ramPercent = ram ? Math.round((ram.usedBytes / ram.totalBytes) * 100) : null;
+    const diskPercent = disk ? Math.round((disk.usedBytes / disk.totalBytes) * 100) : null;
 
     setInnerText(
         'navbar-uptime',
         uptimeSecs !== null ? `Up ${formatUptime(uptimeSecs * 1000)}` : 'Up —',
     );
-    setInnerText('navbar-cpu-value', cpu ? `${cpu.cores}c CPU: ${cpu.percent}%` : 'CPU —');
+    setInnerText('navbar-cpu-value', cpu ? `${cpu.cores}c CPU: ${cpuPercent}%` : 'CPU —');
+    setMetricSeverity('navbar-cpu-value', cpuPercent);
     setInnerText(
         'navbar-ram-value',
-        ram
-            ? `${formatBytesCompact(ram.totalBytes)} RAM: ${Math.round((ram.usedBytes / ram.totalBytes) * 100)}%`
-            : 'RAM —',
+        ram ? `${formatBytesCompact(ram.totalBytes)} RAM: ${ramPercent}%` : 'RAM —',
     );
+    setMetricSeverity('navbar-ram-value', ramPercent);
     setInnerText(
         'navbar-disk-value',
-        disk
-            ? `${formatBytesCompact(disk.totalBytes)} Disk: ${Math.round((disk.usedBytes / disk.totalBytes) * 100)}%`
-            : 'Disk —',
+        disk ? `${formatBytesCompact(disk.totalBytes)} Disk: ${diskPercent}%` : 'Disk —',
     );
+    setMetricSeverity('navbar-disk-value', diskPercent);
     setInnerText(
         'navbar-net-rx',
         net ? `↓ ${((net.rxBytesPerSec * 8) / 1_000_000).toFixed(1)} Mb/s` : '↓ —',

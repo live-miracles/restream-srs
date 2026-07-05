@@ -31,6 +31,10 @@ function readLogFileTail(maxLines: number): { lines: string[]; fileExists: boole
 }
 
 export function registerSrsHooks(app: Express, db: Db): void {
+    app.get('/api/ready', (_req, res) => {
+        res.json({ ok: true });
+    });
+
     app.post('/api/srs/on_publish', (req, res) => {
         const stream = req.body?.stream as string | undefined;
         const hookApp = req.body?.app as string | undefined;

@@ -257,14 +257,16 @@ step "10/10 Systemd"
 cat > /etc/systemd/system/srs.service <<EOF
 [Unit]
 Description=SRS Streaming Server
-After=network-online.target
+After=network-online.target restream-srs.service
 Wants=network-online.target
+Requires=restream-srs.service
 
 [Service]
 Type=simple
 User=$SERVICE_USER
 Group=$SERVICE_USER
 WorkingDirectory=$DATA_DIR
+ExecStartPre=/bin/sh -c 'for i in \$(seq 1 60); do curl -fsS http://127.0.0.1:8080/api/ready >/dev/null && exit 0; sleep 1; done; echo "restream-srs readiness check timed out" >&2; exit 1'
 ExecStart=/usr/local/bin/srs -c $CONF_DIR/srs.conf
 Restart=always
 RestartSec=2
@@ -281,8 +283,9 @@ EOF
 cat > /etc/systemd/system/srt-bonding-relay.service <<EOF
 [Unit]
 Description=Shared SRT Bonding Relay
-After=network-online.target srs.service
-Wants=network-online.target srs.service
+After=network-online.target restream-srs.service srs.service
+Wants=network-online.target
+Requires=restream-srs.service srs.service
 
 [Service]
 Type=simple
@@ -305,8 +308,8 @@ EOF
 cat > /etc/systemd/system/restream-srs.service <<EOF
 [Unit]
 Description=Restream SRS Control Plane
-After=network-online.target srs.service srt-bonding-relay.service
-Wants=network-online.target srt-bonding-relay.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
@@ -351,7 +354,10 @@ EOF
 
 systemctl daemon-reload
 systemctl enable srs.service srt-bonding-relay.service restream-srs.service
-systemctl restart srs.service srt-bonding-relay.service restream-srs.service
+systemctl stop srt-bonding-relay.service srs.service restream-srs.service 2>/dev/null || true
+systemctl start restream-srs.service
+systemctl start srs.service
+systemctl start srt-bonding-relay.service
 
 echo
 echo "=============================="
