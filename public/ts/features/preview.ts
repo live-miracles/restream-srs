@@ -223,6 +223,7 @@ function teardownHls(): void {
         video.removeAttribute('src');
         video.load();
     }
+    document.getElementById('preview-stage-host')?.classList.add('hidden');
     document.getElementById('preview-player')?.classList.add('hidden');
     syncPreviewControls(false);
 }
@@ -266,6 +267,7 @@ export function attachHls(pipelineId: string, hlsUrl: string): void {
 
     const video = document.getElementById('preview-video') as HTMLVideoElement | null;
     if (!video) return;
+    document.getElementById('preview-stage-host')?.classList.remove('hidden');
     document.getElementById('preview-player')?.classList.remove('hidden');
     syncPreviewControls(true);
     syncMuteIcon(previewMuted);
@@ -383,6 +385,7 @@ function setPreviewMaximized(on: boolean): void {
         // the player controls hard to read against it.
         card.classList.add('bg-base-100');
         card.classList.remove('rounded-xl', 'bg-base-100/50');
+        stageHost?.classList.remove('aspect-video');
         stageHost?.classList.add('flex-1', 'min-h-0');
         stage?.classList.add('h-full');
     } else {
@@ -390,6 +393,7 @@ function setPreviewMaximized(on: boolean): void {
         card.classList.add('rounded-xl', 'bg-base-100/50');
         card.classList.remove('bg-base-100');
         stageHost?.classList.remove('flex-1', 'min-h-0');
+        stageHost?.classList.add('aspect-video');
         stage?.classList.remove('h-full');
     }
 

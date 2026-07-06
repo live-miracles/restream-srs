@@ -1,15 +1,27 @@
-export const ENCODINGS: Record<string, string[]> = {
-    copy: ['-c:v', 'copy'],
-    '720p': ['-vf', 'scale=1280:720', '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '3000k'],
-    '1080p': ['-vf', 'scale=1920:1080', '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '5000k'],
-    vertical_rotate: [
-        '-vf',
-        'scale=720:-2:flags=fast_bilinear,transpose=1',
-        '-c:v',
-        'libx264',
-        '-preset',
-        'veryfast',
-    ],
+interface VideoEncodingPreset {
+    args: string[];
+}
+
+export const ENCODINGS: Record<string, VideoEncodingPreset> = {
+    copy: {
+        args: ['-c:v', 'copy'],
+    },
+    '720p': {
+        args: ['-vf', 'scale=1280:720', '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '3000k'],
+    },
+    '1080p': {
+        args: ['-vf', 'scale=1920:1080', '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '5000k'],
+    },
+    vertical_rotate: {
+        args: [
+            '-vf',
+            'scale=720:-2:flags=fast_bilinear,transpose=1',
+            '-c:v',
+            'libx264',
+            '-preset',
+            'veryfast',
+        ],
+    },
 };
 
 // SRT input is raw MPEG-TS whose audio timestamps jitter (PCR rounding, SRT
@@ -71,7 +83,7 @@ export function buildFfmpegArgs(
     sinks: SinkSpec[],
     videoEncoding = 'copy',
 ): string[] {
-    const encArgs = ENCODINGS[videoEncoding] ?? ENCODINGS.copy;
+    const encArgs = (ENCODINGS[videoEncoding] ?? ENCODINGS.copy).args;
     const args: string[] = [
         // Keep stderr quiet: '-nostats' drops the ~2/s "frame=…bitrate=…" line and
         // '-loglevel warning' the one-time info banner. With hundreds of outputs

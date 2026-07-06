@@ -11,7 +11,15 @@ import {
     STATUS_COLOR_OFF,
 } from '../core/utils.js';
 import { state } from '../core/state.js';
-import type { InputHealth, PipelineView, OutputView, MetricSample } from '../types.js';
+import type {
+    AudioInfo,
+    AudioTrackInfo,
+    InputHealth,
+    MetricSample,
+    OutputView,
+    PipelineView,
+    VideoInfo,
+} from '../types.js';
 import {
     stopCurrentPreview,
     populatePreviewTrackSelect,
@@ -31,6 +39,28 @@ type BondingIndicator = {
     leftColor: string;
     rightColor: string;
     title: string;
+};
+
+type OutputVideoResolution = { width: number; height: number };
+type OutputVideoContext = { input: InputHealth; output: OutputView };
+type OutputVideoValue<T> = T | 'copy' | ((ctx: OutputVideoContext) => T | null);
+type OutputVideoDisplayPreset = {
+    codec: OutputVideoValue<string>;
+    resolution?: OutputVideoValue<OutputVideoResolution>;
+    fps?: OutputVideoValue<number | null>;
+    fieldOrder?: OutputVideoValue<string | null>;
+};
+
+const OUTPUT_VIDEO_PRESETS: Record<string, OutputVideoDisplayPreset> = {
+    copy: { codec: 'copy', resolution: 'copy', fps: 'copy', fieldOrder: 'copy' },
+    '720p': { codec: 'h264', resolution: { width: 1280, height: 720 }, fps: 'copy' },
+    '1080p': { codec: 'h264', resolution: { width: 1920, height: 1080 }, fps: 'copy' },
+    vertical_rotate: {
+        codec: 'h264',
+        resolution: ({ input }) => rotatedScaleResolution(input.video, 720),
+        fps: 'copy',
+        fieldOrder: 'copy',
+    },
 };
 
 function fmtFieldOrder(fo: string | null | undefined): string | null {
@@ -98,6 +128,104 @@ function inputStatusColor(input: InputHealth): string {
     return STATUS_COLOR_OFF;
 }
 
+function selectedAudioTrack(
+    tracks: AudioTrackInfo[],
+    audioEncoding: string | null | undefined,
+): AudioTrackInfo | null {
+    if (tracks.length === 0) return null;
+    if (!audioEncoding || audioEncoding === 'copy') return tracks[0];
+
+    const firstTrack = audioEncoding
+        .split(',')
+        .map((part) => Number(part.trim()))
+        .find((idx) => Number.isInteger(idx) && idx >= 0);
+    return firstTrack == null ? tracks[0] : (tracks[firstTrack] ?? null);
+}
+
+function rotatedScaleResolution(
+    video: VideoInfo | null,
+    scaleWidth: number,
+): { width: number; height: number } | null {
+    if (!video?.width || !video.height) return null;
+    const scaledHeight = Math.max(2, Math.round((video.height * scaleWidth) / video.width / 2) * 2);
+    return { width: scaledHeight, height: scaleWidth };
+}
+
+function inputResolution(video: VideoInfo | null): OutputVideoResolution | null {
+    return video ? { width: video.width, height: video.height } : null;
+}
+
+function resolveOutputVideoValue<T>(
+    value: OutputVideoValue<T> | undefined,
+    copyValue: T | null,
+    ctx: OutputVideoContext,
+): T | null {
+    if (value === undefined) return null;
+    if (value === 'copy') return copyValue;
+    if (typeof value === 'function') return (value as (ctx: OutputVideoContext) => T | null)(ctx);
+    return value;
+}
+
+function deriveOutputMedia(
+    input: InputHealth,
+    output: OutputView,
+): {
+    video: Pick<VideoInfo, 'codec' | 'width' | 'height' | 'fps' | 'fieldOrder'> | null;
+    audio: Pick<AudioInfo, 'codec' | 'channel' | 'sample_rate'> | null;
+} {
+    const preset = OUTPUT_VIDEO_PRESETS[output.videoEncoding] ?? OUTPUT_VIDEO_PRESETS.copy;
+    const ctx = { input, output };
+    const codec = resolveOutputVideoValue(preset.codec, input.video?.codec ?? null, ctx);
+    const resolution = resolveOutputVideoValue(
+        preset.resolution ?? 'copy',
+        inputResolution(input.video),
+        ctx,
+    );
+    const fps = resolveOutputVideoValue(preset.fps ?? 'copy', input.video?.fps ?? null, ctx);
+    const fieldOrder = resolveOutputVideoValue(
+        preset.fieldOrder ?? 'copy',
+        input.video?.fieldOrder ?? null,
+        ctx,
+    );
+    const video = codec
+        ? {
+              codec,
+              width: resolution?.width ?? 0,
+              height: resolution?.height ?? 0,
+              fps,
+              fieldOrder,
+          }
+        : null;
+
+    const firstSink = output.sinks[0] ?? null;
+    if (!firstSink) return { video, audio: null };
+
+    if (!firstSink.url.startsWith('srt://')) {
+        return {
+            video,
+            audio: {
+                codec: 'aac',
+                channel: 2,
+                sample_rate: 48000,
+            },
+        };
+    }
+
+    const track = selectedAudioTrack(input.audioTracks, firstSink.audioEncoding);
+    if (track) {
+        return {
+            video,
+            audio: {
+                codec: track.codec,
+                channel: track.channels,
+                sample_rate: track.sampleRate,
+            },
+        };
+    }
+
+    return { video, audio: input.audio };
+}
+
 function getBondingIndicator(
     pipeline: PipelineView,
     relayProcessRunning: boolean,
@@ -113,9 +241,9 @@ function getBondingIndicator(
 
     if (!relayProcessRunning) {
         return {
-            leftColor: STATUS_COLOR_ERROR,
-            rightColor: STATUS_COLOR_ERROR,
-            title: 'SRT bonding relay is not running',
+            leftColor: STATUS_COLOR_OFF,
+            rightColor: STATUS_COLOR_OFF,
+            title: 'SRT bonding relay is not running; bonded input unavailable',
         };
     }
 
@@ -594,7 +722,7 @@ function renderOverview(): void {
                               : `<span class="badge badge-sm badge-error gap-1">${retryPrefix}Failed</span>`;
 
                 const isOn = o.status === 'running';
-                const src = isOn && o.videoEncoding === 'copy' ? p.input : null;
+                const media = isOn ? deriveOutputMedia(p.input, o) : null;
                 const outUptimeMs = o.startedAtMs !== null ? Date.now() - o.startedAtMs : null;
                 outputRows += `<tr class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(st === 'error', st === 'warn')}>
                     <td class="overview-name-col"><span class="opacity-40 text-xs">${p.name} ·</span> ${o.name}</td>
@@ -602,13 +730,13 @@ function renderOverview(): void {
                     <td class="font-mono text-xs">${outUptimeMs !== null ? formatUptime(outUptimeMs) : '—'}</td>
                     ${td(formatBitrate(o.bitrateKbps))}
                     ${td(isOn ? o.videoEncoding : null)}
-                    ${td(src?.video?.codec)}
-                    ${td(src?.video ? `${src.video.width}×${src.video.height}` : null)}
-                    ${td(src?.video?.fps)}
-                    ${td(fmtFieldOrder(src?.video?.fieldOrder))}
-                    ${td(src?.audio?.codec)}
-                    ${td(src?.audio?.channel)}
-                    ${td(isOn ? fmtHz(src?.audio?.sample_rate) : null)}
+                    ${td(media?.video?.codec)}
+                    ${td(media?.video?.width && media.video.height ? `${media.video.width}×${media.video.height}` : null)}
+                    ${td(media?.video?.fps)}
+                    ${td(fmtFieldOrder(media?.video?.fieldOrder))}
+                    ${td(media?.audio?.codec)}
+                    ${td(media?.audio?.channel)}
+                    ${td(fmtHz(media?.audio?.sample_rate))}
                 </tr>`;
             }
         }

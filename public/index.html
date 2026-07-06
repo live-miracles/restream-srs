@@ -665,14 +665,14 @@
                 </button>
               </div>
             </div>
-            <div id="preview-stage-host">
-              <div id="preview-stage" class="flex items-stretch gap-1">
-                <div id="preview-player" class="hidden min-w-0 flex-1">
-                  <video id="preview-video" class="max-h-[88vh] w-full rounded-lg bg-black object-contain" muted playsinline></video>
+            <div id="preview-stage-host" class="hidden aspect-video w-full">
+              <div id="preview-stage" class="flex h-full items-stretch gap-1">
+                <div id="preview-player" class="hidden h-full min-w-0 flex-1">
+                  <video id="preview-video" class="h-full w-full rounded-lg bg-black object-contain" muted playsinline></video>
                 </div>
                 <canvas
                   id="preview-meter"
-                  class="hidden max-h-[88vh] rounded-sm"
+                  class="hidden h-full rounded-sm"
                   style="width: 10px; flex-shrink: 0; background: rgba(0, 0, 0, 0.3)"></canvas>
               </div>
             </div>
