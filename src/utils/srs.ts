@@ -4,6 +4,8 @@ const SRS_API_URL = process.env.SRS_API_URL || 'http://localhost:1985';
 const SRS_RTMP_HOST = process.env.SRS_RTMP_HOST || 'localhost';
 const SRS_RTMP_PORT = parseInt(process.env.SRS_RTMP_PORT || '1935');
 const SRS_CLIENT_FETCH_TIMEOUT_MS = 3000;
+const SRS_CLIENT_HEALTH_FETCH_TIMEOUT_MS = 1000;
+const SRS_CLIENT_HEALTH_FETCH_COUNT = 1000;
 const SRS_STREAMS_FETCH_TIMEOUT_MS = 5000;
 
 export interface SrsStreamVideo {
@@ -50,6 +52,18 @@ export interface SrsStream {
     audio?: SrsStreamAudio;
 }
 
+export interface SrsClient {
+    id: string;
+    ip?: string;
+    type?: string;
+    app?: string;
+    stream?: string;
+    name?: string;
+    url?: string;
+    tcUrl?: string;
+    publish?: boolean;
+}
+
 export async function kickSrsClientsByStream(app: string, stream: string): Promise<void> {
     const PAGE_SIZE = 100;
     let start = 0;
@@ -73,6 +87,29 @@ export async function kickSrsClientsByStream(app: string, stream: string): Promi
         if (clients.length < PAGE_SIZE) break;
         start += PAGE_SIZE;
     }
+}
+
+export async function fetchSrsClientsForHealth(): Promise<SrsClient[]> {
+    const res = await fetch(
+        `${SRS_API_URL}/api/v1/clients?start=0&count=${SRS_CLIENT_HEALTH_FETCH_COUNT}`,
+        {
+            signal: AbortSignal.timeout(SRS_CLIENT_HEALTH_FETCH_TIMEOUT_MS),
+            headers: { Connection: 'close' },
+        },
+    );
+    if (!res.ok) throw new Error(`SRS clients API ${res.status}`);
+    const data = (await res.json()) as { code: number; clients?: SrsClient[] };
+    return data.clients || [];
+}
+
+export async function fetchSrsClients(): Promise<SrsClient[]> {
+    const res = await fetch(`${SRS_API_URL}/api/v1/clients/`, {
+        signal: AbortSignal.timeout(SRS_CLIENT_FETCH_TIMEOUT_MS),
+        headers: { Connection: 'close' },
+    });
+    if (!res.ok) throw new Error(`SRS clients API ${res.status}`);
+    const data = (await res.json()) as { code: number; clients?: SrsClient[] };
+    return data.clients || [];
 }
 
 export async function fetchSrsStreams(): Promise<SrsStream[]> {

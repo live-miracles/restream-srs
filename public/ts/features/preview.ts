@@ -376,6 +376,7 @@ function setPreviewMaximized(on: boolean): void {
     const card = document.getElementById('preview-card');
     const stageHost = document.getElementById('preview-stage-host');
     const stage = document.getElementById('preview-stage');
+    const player = document.getElementById('preview-player');
     if (!card) return;
 
     if (on) {
@@ -385,16 +386,18 @@ function setPreviewMaximized(on: boolean): void {
         // the player controls hard to read against it.
         card.classList.add('bg-base-100');
         card.classList.remove('rounded-xl', 'bg-base-100/50');
-        stageHost?.classList.remove('aspect-video');
         stageHost?.classList.add('flex-1', 'min-h-0');
         stage?.classList.add('h-full');
+        player?.classList.remove('aspect-video');
+        player?.classList.add('flex-1', 'h-full');
     } else {
         card.classList.remove('fixed', 'inset-0', 'z-50', 'flex', 'flex-col', 'rounded-none');
         card.classList.add('rounded-xl', 'bg-base-100/50');
         card.classList.remove('bg-base-100');
         stageHost?.classList.remove('flex-1', 'min-h-0');
-        stageHost?.classList.add('aspect-video');
         stage?.classList.remove('h-full');
+        player?.classList.remove('flex-1', 'h-full');
+        player?.classList.add('aspect-video');
     }
 
     document.getElementById('preview-icon-expand')?.classList.toggle('hidden', on);

@@ -69,15 +69,18 @@ describe('buildFfmpegArgs', () => {
         assert.equal(srt[srt.indexOf('-c:a') + 1], 'copy');
     });
 
-    test('tee path normalizes audio for FLV sinks', () => {
-        const mixed = buildFfmpegArgs(
+    test('mixed-protocol non-copy sinks fall back to per-output args', () => {
+        const args = buildFfmpegArgs(
             'rtmp://in',
             [sink('rtmp://out1'), sink('srt://out2:10080')],
             '720p',
         );
-        // has FLV sink → normalize
-        assert.ok(mixed.some((a) => String(a).includes('asetpts')));
-        assert.equal(mixed[mixed.indexOf('-c:a') + 1], 'aac');
+        assert.ok(!args.includes('tee'));
+        assert.equal(args.filter((a) => a === 'libx264').length, 2);
+        assert.equal(args.filter((a) => a === 'flv').length, 1);
+        assert.equal(args.filter((a) => a === 'mpegts').length, 1);
+        assert.ok(args.some((a) => String(a).includes('asetpts')));
+        assert.equal(args[args.lastIndexOf('-c:a') + 1], 'copy');
     });
 
     test('tee path copies audio when all sinks are SRT', () => {

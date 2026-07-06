@@ -114,6 +114,7 @@ export function buildFfmpegArgs(
     const useTee =
         videoEncoding !== 'copy' &&
         sinks.length > 1 &&
+        sinks.every((s) => s.url.startsWith('srt://') === firstSinkIsSrt) &&
         sinks.every((s) => s.audioEncoding === sinks[0].audioEncoding);
 
     if (useTee) {

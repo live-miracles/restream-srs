@@ -134,6 +134,8 @@ export interface InputHealth {
     sendBitrateKbps: number | null;
     readers: number;
     uptimeMs: number | null;
+    publisherIp: string | null;
+    publisherType: string | null;
     video: VideoInfo | null;
     audio: AudioInfo | null;
     audioTracks: AudioTrackInfo[];

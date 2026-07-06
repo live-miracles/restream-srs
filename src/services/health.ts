@@ -1,10 +1,12 @@
 import { execFile } from 'child_process';
 import type { Express } from 'express';
 import {
+    fetchSrsClientsForHealth,
     fetchSrsStreams,
     rtmpPullUrl,
     srtPullUrl,
     type SrsStream,
+    type SrsClient,
     type SrsStreamVideo,
     type SrsStreamAudio,
     type AudioTrackInfo,
@@ -38,6 +40,8 @@ export interface InputHealth {
     sendBitrateKbps: number | null;
     readers: number;
     uptimeMs: number | null;
+    publisherIp: string | null;
+    publisherType: string | null;
     video: SrsStreamVideo | null;
     audio: SrsStreamAudio | null;
     audioTracks: AudioTrackInfo[];
@@ -301,16 +305,25 @@ export function createHealthService(
         }
 
         let streams: SrsStream[] = [];
+        let clients: SrsClient[] = [];
         let srsReachable = true;
-        try {
-            streams = await fetchSrsStreams();
-        } catch (e) {
+        const [streamsResult, clientsResult] = await Promise.allSettled([
+            fetchSrsStreams(),
+            fetchSrsClientsForHealth(),
+        ]);
+        if (streamsResult.status === 'fulfilled') {
+            streams = streamsResult.value;
+        } else {
             srsReachable = false;
             if (prevSrsReachable !== false) {
-                const msg = `Unreachable: ${e instanceof Error ? e.message : String(e)}`;
+                const reason = streamsResult.reason;
+                const msg = `Unreachable: ${reason instanceof Error ? reason.message : String(reason)}`;
                 pushSrsEvent('down', msg);
                 console.warn(`[srs] ${msg}`);
             }
+        }
+        if (clientsResult.status === 'fulfilled') {
+            clients = clientsResult.value;
         }
         if (srsReachable && prevSrsReachable === false) {
             pushSrsEvent('up', 'SRS is reachable again');
@@ -324,6 +337,10 @@ export function createHealthService(
             if (s.publish?.active) {
                 liveByPath.set(`${s.app}/${s.name}`, s);
             }
+        }
+        const publisherByCid = new Map<string, SrsClient>();
+        for (const client of clients) {
+            if (client.publish && client.id) publisherByCid.set(client.id, client);
         }
 
         const pipelinesHealth: Record<string, PipelineHealth> = {};
@@ -439,6 +456,7 @@ export function createHealthService(
             const mediaProbe = ffprobeResults.get(pipeline.id) ?? null;
             const bondingStreamId = `#!::r=live/${pipeline.streamKey},m=publish`;
             const bondingStatus = srtRelayService.getStreamStatus(bondingStreamId);
+            const publisher = s?.publish?.cid ? publisherByCid.get(s.publish.cid) : undefined;
 
             pipelinesHealth[String(pipeline.id)] = {
                 input: {
@@ -456,6 +474,8 @@ export function createHealthService(
                     uptimeMs: displayLive
                         ? Date.now() - (inputLiveStartMs.get(pipeline.id) ?? Date.now())
                         : null,
+                    publisherIp: displayConnected ? (publisher?.ip ?? null) : null,
+                    publisherType: displayConnected ? (publisher?.type ?? null) : null,
                     video:
                         mediaProbe?.result?.video ?? (s?.video ? { ...s.video, fps: null } : null),
                     audio: mediaProbe?.result?.audio ?? s?.audio ?? null,

@@ -18,6 +18,8 @@ const EMPTY_INPUT: InputHealth = {
     sendBitrateKbps: null,
     readers: 0,
     uptimeMs: null,
+    publisherIp: null,
+    publisherType: null,
     video: null,
     audio: null,
     audioTracks: [],

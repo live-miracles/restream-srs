@@ -40,6 +40,7 @@ type BondingIndicator = {
     rightColor: string;
     title: string;
 };
+type RelayFlowStatus = 'good' | 'warn' | 'error' | 'off';
 
 type OutputVideoResolution = { width: number; height: number };
 type OutputVideoContext = { input: InputHealth; output: OutputView };
@@ -231,13 +232,11 @@ function getBondingIndicator(
     relayProcessRunning: boolean,
 ): BondingIndicator {
     const { srtBonding } = pipeline;
-    const hasRecentInputFlow =
-        srtBonding.lastInputPacketAt != null &&
-        Date.now() - srtBonding.lastInputPacketAt <= RELAY_FLOW_STALE_MS;
-    const hasRecentOutputFlow =
-        srtBonding.lastPacketAt != null &&
-        Date.now() - srtBonding.lastPacketAt <= RELAY_FLOW_STALE_MS;
+    const hasRecentInputFlow = relayHasRecentInputFlow(pipeline);
+    const hasRecentOutputFlow = relayHasRecentOutputFlow(pipeline);
     const hasForwardedData = srtBonding.forwardedPackets > 0;
+    const acceptedBySrs = isRelayAcceptedBySrs(pipeline);
+    const publishConflict = hasRelayPublishConflict(pipeline);
 
     if (!relayProcessRunning) {
         return {
@@ -250,6 +249,7 @@ function getBondingIndicator(
     if (
         srtBonding.inputActive &&
         srtBonding.outputConnected &&
+        acceptedBySrs &&
         hasRecentInputFlow &&
         hasRecentOutputFlow
     ) {
@@ -260,13 +260,23 @@ function getBondingIndicator(
         };
     }
 
+    if (publishConflict) {
+        return {
+            leftColor: hasRecentInputFlow ? STATUS_COLOR_GOOD : STATUS_COLOR_WARN,
+            rightColor: STATUS_COLOR_ERROR,
+            title: 'Bonded SRT input active, but SRS is already using another publisher for this stream key',
+        };
+    }
+
     if (srtBonding.inputActive && srtBonding.outputConnected) {
         return {
             leftColor: hasRecentInputFlow ? STATUS_COLOR_GOOD : STATUS_COLOR_WARN,
             rightColor: STATUS_COLOR_WARN,
-            title: hasForwardedData
-                ? 'Bonded SRT input connected, but media forwarding has stalled'
-                : 'Bonded SRT input connected, but no media has been received yet',
+            title: !acceptedBySrs
+                ? 'Bonded SRT input connected, but SRS has not reported it as the active pipeline input'
+                : hasForwardedData
+                  ? 'Bonded SRT input connected, but media forwarding has stalled'
+                  : 'Bonded SRT input connected, but no media has been received yet',
         };
     }
 
@@ -285,6 +295,88 @@ function getBondingIndicator(
         rightColor: STATUS_COLOR_OFF,
         title: 'No bonded SRT input for this stream key',
     };
+}
+
+function relayHasRecentInputFlow(pipeline: PipelineView): boolean {
+    return (
+        pipeline.srtBonding.lastInputPacketAt != null &&
+        Date.now() - pipeline.srtBonding.lastInputPacketAt <= RELAY_FLOW_STALE_MS
+    );
+}
+
+function relayHasRecentOutputFlow(pipeline: PipelineView): boolean {
+    return (
+        pipeline.srtBonding.lastPacketAt != null &&
+        Date.now() - pipeline.srtBonding.lastPacketAt <= RELAY_FLOW_STALE_MS
+    );
+}
+
+function isRelayAcceptedBySrs(pipeline: PipelineView): boolean {
+    if (
+        !pipeline.srtBonding.inputActive ||
+        !pipeline.srtBonding.outputConnected ||
+        !pipeline.input.live ||
+        !pipeline.input.isSrt
+    ) {
+        return false;
+    }
+
+    // The relay publishes into local SRS from loopback. If SRS client metadata is
+    // unavailable, fall back to protocol-level inference rather than showing a
+    // false error during a transient clients API failure.
+    return pipeline.input.publisherIp == null || isLoopbackIp(pipeline.input.publisherIp);
+}
+
+function hasRelayPublishConflict(pipeline: PipelineView): boolean {
+    if (!pipeline.srtBonding.inputActive || !pipeline.input.connected) return false;
+    if (!pipeline.input.isSrt) return true;
+    return pipeline.input.publisherIp != null && !isLoopbackIp(pipeline.input.publisherIp);
+}
+
+function isLoopbackIp(ip: string): boolean {
+    return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+}
+
+function relayInputStatus(pipeline: PipelineView, relayProcessRunning: boolean): RelayFlowStatus {
+    if (!relayProcessRunning) return 'off';
+    if (!pipeline.srtBonding.inputActive) return 'off';
+    return relayHasRecentInputFlow(pipeline) ? 'good' : 'warn';
+}
+
+function relayOutputStatus(pipeline: PipelineView, relayProcessRunning: boolean): RelayFlowStatus {
+    if (!relayProcessRunning) return 'off';
+    if (!pipeline.srtBonding.inputActive) return 'off';
+    if (hasRelayPublishConflict(pipeline)) return 'error';
+    if (!pipeline.srtBonding.outputConnected) return 'error';
+    if (!isRelayAcceptedBySrs(pipeline)) return 'warn';
+    return relayHasRecentOutputFlow(pipeline) ? 'good' : 'warn';
+}
+
+function relayStatusBadge(
+    status: RelayFlowStatus,
+    labels: Record<RelayFlowStatus, string>,
+): string {
+    if (status === 'good')
+        return `<span class="badge badge-sm badge-success">${labels.good}</span>`;
+    if (status === 'warn')
+        return `<span class="badge badge-sm badge-warning">${labels.warn}</span>`;
+    if (status === 'error')
+        return `<span class="badge badge-sm badge-error">${labels.error}</span>`;
+    return `<span class="badge badge-sm badge-neutral">${labels.off}</span>`;
+}
+
+function relayInputSeverityColor(
+    pipeline: PipelineView,
+    relayProcessRunning: boolean,
+    inputColor: string,
+): string {
+    if (inputStatus(pipeline.input) !== 'good') return inputColor;
+
+    const relayInput = relayInputStatus(pipeline, relayProcessRunning);
+    const relayOutput = relayOutputStatus(pipeline, relayProcessRunning);
+    if (relayInput === 'error' || relayOutput === 'error') return STATUS_COLOR_ERROR;
+    if (relayInput === 'warn' || relayOutput === 'warn') return STATUS_COLOR_WARN;
+    return inputColor;
 }
 
 // ── Pipeline list (left column) ───────────────────────
@@ -325,6 +417,7 @@ function renderPipelineList(): void {
     setInnerText('out-offs', outputsOff);
 
     const selectedId = getUrlParam('p');
+    const relayProcessRunning = state.health.srtRelay?.status === 'running';
 
     listEl.innerHTML = state.pipelines
         .map((p) => {
@@ -333,7 +426,11 @@ function renderPipelineList(): void {
             const outFailed = p.outs.filter((o) => outStatus(o, p.input.live) === 'error').length;
             const outOff = p.outs.filter((o) => outStatus(o, p.input.live) === 'off').length;
 
-            const inColor = inputStatusColor(p.input);
+            const inColor = relayInputSeverityColor(
+                p,
+                relayProcessRunning,
+                inputStatusColor(p.input),
+            );
             const outColor =
                 outFailed > 0
                     ? STATUS_COLOR_ERROR
@@ -351,7 +448,7 @@ function renderPipelineList(): void {
                     ? `<span class="font-mono text-xs opacity-60 shrink-0">${formatUptime(p.input.uptimeMs)}</span>`
                     : '';
             const inputTypeBadge = p.input.connected
-                ? `<span class="badge badge-sm badge-outline shrink-0">${p.srtBonding.inputActive ? 'Relay' : p.input.isSrt ? 'SRT' : 'RTMP'}</span>`
+                ? `<span class="badge badge-sm badge-outline shrink-0">${isRelayAcceptedBySrs(p) ? 'Relay' : p.input.isSrt ? 'SRT' : 'RTMP'}</span>`
                 : '';
 
             return `<li>
@@ -638,6 +735,45 @@ function renderOverview(): void {
               : '';
 
     const totalOuts = state.pipelines.reduce((s, p) => s + p.outs.length, 0);
+    const relayProcessRunning = state.health.srtRelay?.status === 'running';
+
+    // ── SRT Bonding Relay ───────────────────────────────
+    const activeRelayPipelines = state.pipelines.filter(
+        (p) =>
+            p.srtBonding.inputActive ||
+            p.srtBonding.outputConnected ||
+            p.srtBonding.forwardedPackets > 0 ||
+            p.srtBonding.recvPacketsTotal > 0 ||
+            p.srtBonding.recvUniquePacketsTotal > 0 ||
+            p.srtBonding.retransTotal > 0 ||
+            p.srtBonding.recvLossTotal > 0 ||
+            p.srtBonding.recvDropTotal > 0,
+    );
+    let relayRows = '';
+    if (activeRelayPipelines.length === 0) {
+        relayRows = `<tr><td colspan="10" class="py-4 text-center opacity-50">No active SRT bonding relay sessions.</td></tr>`;
+    } else {
+        for (const p of activeRelayPipelines) {
+            const inputSt = relayInputStatus(p, relayProcessRunning);
+            const outputSt = relayOutputStatus(p, relayProcessRunning);
+            const rowWarn = inputSt === 'warn' || outputSt === 'warn';
+            const rowError = inputSt === 'error' || outputSt === 'error';
+            const rxPackets = p.srtBonding.recvUniquePacketsTotal || p.srtBonding.recvPacketsTotal;
+
+            relayRows += `<tr class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(rowError, rowWarn)}>
+                <td class="overview-name-col font-semibold">${p.name}</td>
+                <td>${relayStatusBadge(inputSt, { good: 'Active', warn: 'Stalled', error: 'Error', off: 'Idle' })}</td>
+                <td>${relayStatusBadge(outputSt, { good: 'Forwarding', warn: 'Pending', error: 'Not accepted', off: 'Idle' })}</td>
+                <td class="font-mono text-xs">${formatCompactCount(rxPackets)}</td>
+                <td class="font-mono text-xs">${formatCompactCount(p.srtBonding.forwardedPackets)}</td>
+                <td class="font-mono text-xs">${formatCompactCount(p.srtBonding.retransTotal)}</td>
+                <td class="font-mono text-xs">${formatCompactCount(p.srtBonding.recvLossTotal)}</td>
+                <td class="font-mono text-xs">${formatCompactCount(p.srtBonding.recvDropTotal)}</td>
+                <td class="font-mono text-xs">${formatBytesCompact(p.srtBonding.forwardedBytes)}</td>
+                <td class="font-mono text-xs">${p.srtBonding.rttMs != null ? `${p.srtBonding.rttMs.toFixed(p.srtBonding.rttMs >= 10 ? 0 : 1)} ms` : '—'}</td>
+            </tr>`;
+        }
+    }
 
     // ── Inputs ────────────────────────────────────────────
     let inputRows = '';
@@ -657,7 +793,7 @@ function renderOverview(): void {
                       : st === 'warn'
                         ? `<span class="badge badge-sm badge-warning">${inp.live ? 'Low Bitrate' : 'Probing'}</span>`
                         : `<span class="badge badge-sm badge-success">Live</span>`;
-            const protocolLabel = p.srtBonding.inputActive ? 'Relay' : inp.isSrt ? 'SRT' : 'RTMP';
+            const protocolLabel = isRelayAcceptedBySrs(p) ? 'Relay' : inp.isSrt ? 'SRT' : 'RTMP';
             const audioTracks = inp.audioTracks.length > 0 ? inp.audioTracks : null;
             const rowspan =
                 audioTracks && audioTracks.length > 1 ? ` rowspan="${audioTracks.length}"` : '';
@@ -784,6 +920,13 @@ function renderOverview(): void {
 
     overviewEl.innerHTML = `
         ${chartsHtml}
+        <h2 class="mb-2 text-lg font-bold">SRT Bonding Relay <span class="badge badge-neutral badge-sm ml-1">${activeRelayPipelines.length}</span></h2>
+        <div class="overflow-x-auto mb-6">
+            <table class="table table-sm">
+                ${thead(['Pipeline', 'Input', 'Output', 'Rx', 'Fwd', 'Rexmit', 'Loss', 'Drop', 'Bytes', 'RTT'])}
+                <tbody>${relayRows}</tbody>
+            </table>
+        </div>
         <h2 class="mb-2 text-lg font-bold">Inputs <span class="badge badge-neutral badge-sm ml-1">${state.pipelines.length}</span></h2>
         <div class="overflow-x-auto mb-6">
             <table class="table table-sm">
