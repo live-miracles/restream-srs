@@ -334,14 +334,14 @@ The relay exists to work around two constraints:
 
 **How it is fixed:** `srt-bonding-relay` starts as its own systemd service, listens on `10081` with `SRTO_GROUPCONNECT=1`, accepts each bonded source session, reads its incoming `streamid`, and opens a normal SRT publisher connection to SRS using the same `streamid`. It only connects to SRS after an encoder connects, so SRS's idle-publisher timeout is not triggered by an empty boot-time publisher.
 
-### SRT-input outputs don't surface output errors (e.g. wrong stream key) (wontfix)
+### SRT-input output stalls are recovered by a watchdog
 
 The input is pulled back over its own protocol, so an output on an **SRT input**
 always pulls over SRT. When the destination rejects such a stream (e.g. a wrong
-YouTube stream key), the output gets stuck showing `running` (yellow) with no
-error in the logs. An output on an **RTMP input** (pulled over RTMP) exits ffmpeg
-immediately with a clear error (`Error opening output files: Input/output
-error`).
+YouTube stream key) or drops the RTMP connection mid-publish, ffmpeg can get
+stuck instead of exiting. An output on an **RTMP input** (pulled over RTMP)
+usually exits ffmpeg immediately with a clear error (`Error opening output files:
+Input/output error`).
 
 The difference is timing: with RTMP pull, input stream info is available right
 away, so ffmpeg opens the destination immediately and the rejection surfaces at
@@ -349,13 +349,18 @@ away, so ffmpeg opens the destination immediately and the rejection surfaces at
 MPEG-TS input; by the time it connects, the destination accepts the handshake
 then drops the connection mid-publish, and ffmpeg deadlocks — SRT's large input
 buffers keep the input thread fed, so the broken-pipe error on the output write
-never propagates. The process never exits, so no error is ever logged.
+may not propagate promptly. The process can stay alive while buffering input and
+consuming RAM even though the external output is no longer uploading.
 
-**Why wontfix:** this isn't fixable via ffmpeg flags — native RTMP ignores
-`rw_timeout`, and librtmp isn't compiled into the ffmpeg build; `linger=0` /
-input-side timeouts don't help because the input isn't the thing stalling. The
-only reliable fix is an app-side no-progress watchdog (kill an output that stays
-`running` with zero progress past a grace period), which adds complexity for a
-narrow misconfiguration case. Workaround: verify the destination stream key
-before starting an output on an SRT input (pull method is no longer selectable —
-it follows the input protocol).
+**How it is handled:** the output service tracks ffmpeg's `-progress pipe:1`
+fields (`total_size`, `out_time_ms`, and `bitrate`) plus the stderr tail. After a
+warmup period, if the input is live but output bytes/time have not advanced for a
+sustained window, the watchdog records `last_error`, kills that ffmpeg process,
+and lets the normal retry loop start a fresh output. The dashboard shows the
+restart reason and timestamp; the error details include the pid, stall duration,
+last ffmpeg progress values, and stderr tail.
+
+**Limitation:** the watchdog monitors aggregate ffmpeg output progress for the
+process. For an output that fans out to multiple sinks, a partial failure may not
+be detected if another sink keeps `total_size` / `out_time_ms` advancing. The
+common one-output-to-one-destination case is fully covered.

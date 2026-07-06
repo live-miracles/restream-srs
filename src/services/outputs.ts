@@ -18,12 +18,32 @@ const STDERR_TAIL_BYTES = 3000;
 const RESTART_STAGGER_MS = 200;
 const FFMPEG_CMD = process.env.FFMPEG_PATH || 'ffmpeg';
 
+function positiveMsFromEnv(name: string, fallback: number): number {
+    const raw = process.env[name];
+    if (raw == null) return fallback;
+    const value = Number(raw);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+const OUTPUT_WATCHDOG_WARMUP_MS = positiveMsFromEnv('OUTPUT_WATCHDOG_WARMUP_MS', 90_000);
+const OUTPUT_WATCHDOG_STALL_MS = positiveMsFromEnv('OUTPUT_WATCHDOG_STALL_MS', 45_000);
+const OUTPUT_WATCHDOG_INTERVAL_MS = positiveMsFromEnv('OUTPUT_WATCHDOG_INTERVAL_MS', 5_000);
+
 interface OutputStats {
     status: 'running' | 'stopped' | 'failed';
     pid: number | null;
     bitrateKbps: number | null;
     startedAtMs: number | null;
     failures: number;
+}
+
+interface OutputProgress {
+    lastProgressAtMs: number;
+    lastOutputProgressAtMs: number;
+    lastOutTimeMs: number | null;
+    lastTotalSize: number | null;
+    lastBitrateKbps: number | null;
+    stderrTail: string;
 }
 
 export interface OutputService {
@@ -46,9 +66,13 @@ export function createOutputService(db: Db): OutputService {
     >();
     const bitrates = new Map<string, number | null>();
     const startTimes = new Map<string, number>();
+    const progress = new Map<string, OutputProgress>();
     const stopRequested = new Set<string>();
+    const watchdogKills = new Set<string>();
     const startLocks = new Set<string>();
     const retryState = new Map<string, { failures: number; timer: NodeJS.Timeout | null }>();
+    const watchdogTimer = setInterval(checkOutputWatchdog, OUTPUT_WATCHDOG_INTERVAL_MS);
+    watchdogTimer.unref?.();
 
     // Whether an output's input is live and SRS is reachable. Wired up after
     // construction (the health service that knows this is created later). Defaults
@@ -82,6 +106,7 @@ export function createOutputService(db: Db): OutputService {
         } else {
             bitrates.delete(outputId);
             startTimes.delete(outputId);
+            progress.delete(outputId);
         }
     }
 
@@ -148,8 +173,96 @@ export function createOutputService(db: Db): OutputService {
         return match ? parseFloat(match[1]) : null;
     }
 
-    function killProcess(outputId: string, proc: ChildProcess): Promise<void> {
-        stopRequested.add(outputId);
+    function parseProgressNumber(line: string, prefix: string): number | null {
+        if (!line.startsWith(prefix)) return null;
+        const val = Number(line.slice(prefix.length).trim());
+        return Number.isFinite(val) ? val : null;
+    }
+
+    function noteOutputProgress(outputId: string, line: string): void {
+        const p = progress.get(outputId);
+        if (!p) return;
+        p.lastProgressAtMs = Date.now();
+
+        const totalSize = parseProgressNumber(line, 'total_size=');
+        if (totalSize != null && (p.lastTotalSize == null || totalSize > p.lastTotalSize)) {
+            p.lastTotalSize = totalSize;
+            p.lastOutputProgressAtMs = p.lastProgressAtMs;
+            return;
+        }
+
+        const outTimeMs = parseProgressNumber(line, 'out_time_ms=');
+        if (outTimeMs != null && (p.lastOutTimeMs == null || outTimeMs > p.lastOutTimeMs)) {
+            p.lastOutTimeMs = outTimeMs;
+            p.lastOutputProgressAtMs = p.lastProgressAtMs;
+            return;
+        }
+
+        if (line.startsWith('bitrate=')) {
+            p.lastBitrateKbps = parseBitrateKbps(line);
+        }
+    }
+
+    function formatNullable(value: number | null): string {
+        return value == null ? 'unknown' : String(value);
+    }
+
+    function buildWatchdogError(outputId: string, proc: ChildProcess, now: number): string {
+        const p = progress.get(outputId);
+        const stalledForSec = p
+            ? Math.round((now - p.lastOutputProgressAtMs) / 1000)
+            : Math.round(OUTPUT_WATCHDOG_STALL_MS / 1000);
+        const progressAgeSec = p ? Math.round((now - p.lastProgressAtMs) / 1000) : null;
+        const stderr = p?.stderrTail.trim();
+
+        return [
+            'watchdog: ffmpeg output stalled; restarting process',
+            `pid=${proc.pid ?? 'unknown'}`,
+            `no_output_progress_for=${stalledForSec}s`,
+            `last_progress_line_age=${progressAgeSec == null ? 'unknown' : `${progressAgeSec}s`}`,
+            `last_total_size=${formatNullable(p?.lastTotalSize ?? null)}`,
+            `last_out_time_ms=${formatNullable(p?.lastOutTimeMs ?? null)}`,
+            `last_bitrate_kbps=${formatNullable(p?.lastBitrateKbps ?? null)}`,
+            stderr ? `ffmpeg stderr tail:\n${stderr}` : 'ffmpeg stderr tail: <empty>',
+            `Restarting output: no ffmpeg output progress for ${stalledForSec}s`,
+        ].join('\n');
+    }
+
+    function checkOutputWatchdog(): void {
+        const now = Date.now();
+        for (const [outputId, proc] of processes) {
+            if (watchdogKills.has(outputId)) continue;
+            const output = db.getOutput(outputId);
+            if (!output || output.desiredState !== 'running') continue;
+
+            const startedAtMs = startTimes.get(outputId);
+            const p = progress.get(outputId);
+            if (!startedAtMs || !p) continue;
+            if (now - startedAtMs < OUTPUT_WATCHDOG_WARMUP_MS) continue;
+            if (!isInputReady(output.pipelineId)) continue;
+            if (now - p.lastOutputProgressAtMs <= OUTPUT_WATCHDOG_STALL_MS) continue;
+
+            try {
+                db.setOutputLastError(outputId, buildWatchdogError(outputId, proc, now));
+            } catch {
+                /* non-critical; still restart the stuck process */
+            }
+            console.warn(
+                `[outputs] ${outputId} stalled: no output progress for ${Math.round(
+                    (now - p.lastOutputProgressAtMs) / 1000,
+                )}s, killing pid=${proc.pid} for retry`,
+            );
+            watchdogKills.add(outputId);
+            void killProcess(outputId, proc, false);
+        }
+    }
+
+    function killProcess(
+        outputId: string,
+        proc: ChildProcess,
+        requestedStop = true,
+    ): Promise<void> {
+        if (requestedStop) stopRequested.add(outputId);
         proc.kill('SIGTERM');
         return new Promise<void>((resolve) => {
             const t = setTimeout(() => {
@@ -193,6 +306,14 @@ export function createOutputService(db: Db): OutputService {
 
         processes.set(output.id, child);
         setStatus(output.id, 'running', child.pid ?? null);
+        progress.set(output.id, {
+            lastProgressAtMs: Date.now(),
+            lastOutputProgressAtMs: Date.now(),
+            lastOutTimeMs: null,
+            lastTotalSize: null,
+            lastBitrateKbps: null,
+            stderrTail: '',
+        });
         console.log(`[outputs] ${output.id} started pid=${child.pid}`);
 
         let buf = '';
@@ -201,6 +322,7 @@ export function createOutputService(db: Db): OutputService {
             const lines = buf.split('\n');
             buf = lines.pop() ?? '';
             for (const line of lines) {
+                noteOutputProgress(output.id, line);
                 if (line.startsWith('bitrate=')) {
                     bitrates.set(output.id, parseBitrateKbps(line));
                 }
@@ -210,6 +332,8 @@ export function createOutputService(db: Db): OutputService {
         let stderrTail = '';
         child.stderr?.on('data', (d: Buffer) => {
             stderrTail = (stderrTail + d.toString()).slice(-STDERR_TAIL_BYTES);
+            const p = progress.get(output.id);
+            if (p) p.stderrTail = stderrTail;
         });
 
         child.on('error', (err) => {
@@ -218,6 +342,7 @@ export function createOutputService(db: Db): OutputService {
 
         child.on('close', (code, signal) => {
             const wasStop = stopRequested.delete(output.id);
+            const wasWatchdog = watchdogKills.delete(output.id);
             const status = wasStop ? 'stopped' : 'failed';
             processes.delete(output.id);
             setStatus(output.id, status, null);
@@ -227,9 +352,14 @@ export function createOutputService(db: Db): OutputService {
 
             if (!wasStop) {
                 try {
-                    const detail = stderrTail.trim();
-                    const exitStr = `exit=${code ?? signal}`;
-                    db.setOutputLastError(output.id, detail ? `${exitStr}\n${detail}` : exitStr);
+                    if (!wasWatchdog) {
+                        const detail = stderrTail.trim();
+                        const exitStr = `exit=${code ?? signal}`;
+                        db.setOutputLastError(
+                            output.id,
+                            detail ? `${exitStr}\n${detail}` : exitStr,
+                        );
+                    }
                 } catch {
                     /* non-critical */
                 }
@@ -323,6 +453,7 @@ export function createOutputService(db: Db): OutputService {
         },
 
         shutdown(): void {
+            clearInterval(watchdogTimer);
             for (const r of retryState.values()) {
                 if (r.timer) clearTimeout(r.timer);
             }
