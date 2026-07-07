@@ -80,6 +80,7 @@ function createHarness(assignedKeys) {
     registerSrsHooks(app, db);
     return {
         publish: (body) => dispatch(app, 'POST', '/api/srs/on_publish', body),
+        play: (body) => dispatch(app, 'POST', '/api/srs/on_play', body),
         ready: () => dispatch(app, 'GET', '/api/ready'),
     };
 }
@@ -110,5 +111,27 @@ describe('SRS publish hook integration', () => {
 
         assert.equal(res.status, 403);
         assert.deepEqual(res.body, { code: 403 });
+    });
+});
+
+describe('SRS play hook integration', () => {
+    test('allows plays from loopback (app ffmpeg pulls)', async () => {
+        const harness = createHarness(['key01_good']);
+
+        for (const ip of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) {
+            const res = await harness.play({ app: 'live', stream: 'key01_good', ip });
+            assert.equal(res.status, 200);
+            assert.deepEqual(res.body, { code: 0 });
+        }
+    });
+
+    test('rejects plays from any non-loopback address', async () => {
+        const harness = createHarness(['key01_good']);
+
+        for (const ip of ['203.0.113.5', '10.0.0.4', '::ffff:203.0.113.5', undefined]) {
+            const res = await harness.play({ app: 'live', stream: 'key01_good', ip });
+            assert.equal(res.status, 403);
+            assert.deepEqual(res.body, { code: 403 });
+        }
     });
 });

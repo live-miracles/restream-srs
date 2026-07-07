@@ -299,4 +299,20 @@ describe('URL builders', () => {
             'srt://myhost:12080?streamid=#!::r=live/mykey,m=publish',
         );
     });
+
+    test('srtPullUrl includes srt_server passphrase from srs.conf', () => {
+        fs.writeFileSync(
+            srsConfPath,
+            'listen 1935;\nsrs_log_file ./objs/srs.log;\nhttp_api {\n    enabled on;\n    listen 1985;\n}\nsrt_server {\n    enabled on;\n    listen 10080;\n    passphrase supersecretpass;\n}\n',
+            'utf8',
+        );
+        delete require.cache[require.resolve('../src/utils/srsConfig')];
+        delete require.cache[require.resolve('../src/utils/srs')];
+        const { srtPullUrl: configuredSrtPullUrl } = require('../src/utils/srs');
+
+        assert.equal(
+            configuredSrtPullUrl('mykey'),
+            'srt://127.0.0.1:10080?streamid=#!::r=live/mykey,m=request&latency=200000&transtype=live&passphrase=supersecretpass&pbkeylen=16',
+        );
+    });
 });

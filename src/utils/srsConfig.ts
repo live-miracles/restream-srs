@@ -7,6 +7,7 @@ export interface SrsConfigValues {
     rtmpHost: string;
     rtmpPort: number;
     srtPort: number;
+    srtPassphrase: string | null;
     logPath: string;
 }
 
@@ -73,6 +74,7 @@ export function readSrsConfigValues(): SrsConfigValues {
         parseDirective(srtServerBlock, 'listen') ?? undefined,
         DEFAULT_SRT_PORT,
     );
+    const srtPassphrase = parseDirective(srtServerBlock, 'passphrase');
     const logPath = resolveSrsPath(
         parseDirective(topLevelConf, 'srs_log_file'),
         srsConfigPath,
@@ -84,6 +86,7 @@ export function readSrsConfigValues(): SrsConfigValues {
         rtmpHost: DEFAULT_RTMP_HOST,
         rtmpPort,
         srtPort,
+        srtPassphrase: srtPassphrase || null,
         logPath,
     };
     return cachedValues;

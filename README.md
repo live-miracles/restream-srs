@@ -5,7 +5,7 @@ Minimal streaming server — takes RTMP/SRT inputs and restreams them to multipl
 Designed to handle tens of simultaneous pipelines (inputs) and hundreds of output forwards running continuously across long events. See [Capacity & Limits](#capacity--limits) for the tested envelope.
 
 ```
-OBS / ffmpeg  ──RTMP────────►  SRS (1935)   ──FFmpeg──►  YouTube / Facebook / ...
+OBS / ffmpeg  ──RTMP────────►  SRS (21935)  ──FFmpeg──►  YouTube / Facebook / ...
               ──SRT─────────►  SRS (10080)  ──FFmpeg──►  rtmp:// or srt://
               ──SRT bonding─►  srt-bonding-relay (10081) ──► SRS
 ```
@@ -99,10 +99,13 @@ Default ports from `srs.conf` and `srt-bonding-relay.json`:
 
 | Port | Protocol | Purpose |
 |------|----------|---------|
-| 1935 | TCP | RTMP input |
-| 10080 | UDP | SRT input |
-| 10081 | UDP | SRT bonding input |
+| 21935 | TCP | RTMP input (non-default port to avoid 1935 scanner noise) |
+| 10080 | UDP | SRT input (passphrase required) |
+| 10081 | UDP | SRT bonding input (passphrase required) |
 | 8080 | TCP | Dashboard + API |
+
+Do **not** expose 1985 (SRS HTTP API), 8080 (if the dashboard is served through
+a tunnel), or 8081 (relay status) — the app talks to those over loopback.
 
 ### SRS and SRT relay config
 
@@ -111,8 +114,20 @@ The repository copies both runtime config files during install:
 - `/etc/restream-srs/srt-bonding-relay.json`
 
 SRS only reads its config at startup, and the SRT bonding relay only reads its
-JSON config file at startup. To change the SRT passphrase, edit `srs.conf` and
-`srt-bonding-relay.json` in the repo, deploy them, and restart the media services.
+JSON config file at startup.
+
+The repo configs ship a public default SRT passphrase; the installer replaces
+it with a per-server secret (generated once, kept at
+`/etc/restream-srs/.srt-passphrase` and reused across reinstalls) in both
+deployed config files. SRS rejects SRT connections without the passphrase at
+the handshake, for publish and play alike; the dashboard's SRT publish URLs
+include it. To rotate it, delete `.srt-passphrase` and re-run the installer.
+
+Ingest is further locked down by SRS HTTP hooks handled by the app:
+`on_publish` rejects unknown stream keys, and `on_play` rejects any play not
+from loopback (only the app's own FFmpeg ever pulls streams), so the public
+ports are ingest-only. The installer also sets up a fail2ban jail that bans
+IPs after repeated rejected publishes/plays.
 
 ---
 
@@ -137,23 +152,15 @@ RTMP:
 ```bash
 ffmpeg -re -stream_loop -1 -i video.mp4 \
   -c:v libx264 -preset veryfast -b:v 2500k -c:a aac -b:a 128k \
-  -f flv rtmp://localhost:1935/live/<stream-key>
+  -f flv rtmp://localhost:21935/live/<stream-key>
 ```
 
-SRT:
+SRT (the passphrase must match `srt_server.passphrase` in `srs.conf`):
 ```bash
 ffmpeg -re -stream_loop -1 -i video.mp4 \
   -c:v libx264 -preset veryfast -b:v 2500k -x264-params "repeat-headers=1" \
   -c:a aac -b:a 128k \
-  -f mpegts 'srt://localhost:10080?streamid=#!::r=live/<stream-key>,m=publish'
-```
-
-SRT with passphrase:
-```bash
-ffmpeg -re -stream_loop -1 -i video.mp4 \
-  -c:v libx264 -preset veryfast -b:v 2500k -x264-params "repeat-headers=1" \
-  -c:a aac -b:a 128k \
-  -f mpegts 'srt://localhost:10080?streamid=#!::r=live/<stream-key>,m=publish&passphrase=<srt-passphrase>&pbkeylen=16'
+  -f mpegts 'srt://localhost:10080?streamid=#!::r=live/<stream-key>,m=publish&passphrase=<passphrase>&pbkeylen=16'
 ```
 
 SRT with multiple audio tracks:
@@ -164,7 +171,7 @@ ffmpeg -re -stream_loop -1 -i video.mp4 \
   -x264-params "repeat-headers=1" \
   -force_key_frames 'expr:gte(t,n_forced*2)' -g 60 -keyint_min 60 -sc_threshold 0 \
   -c:a aac -b:a 128k \
-  -f mpegts 'srt://localhost:10080?streamid=#!::r=live/<stream-key>,m=publish'
+  -f mpegts 'srt://localhost:10080?streamid=#!::r=live/<stream-key>,m=publish&passphrase=<passphrase>&pbkeylen=16'
 ```
 
 ---

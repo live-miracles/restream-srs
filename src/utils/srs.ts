@@ -137,7 +137,11 @@ export function rtmpPullUrl(streamKey: string): string {
 // the timestamps stay clean (no srt_to_rtmp jitter — ffmpeg demuxes the TS).
 export function srtPullUrl(streamKey: string): string {
     const srs = readSrsConfigValues();
-    return `srt://${srs.rtmpHost}:${srs.srtPort}?streamid=#!::r=live/${streamKey},m=request&latency=200000&transtype=live`;
+    let url = `srt://${srs.rtmpHost}:${srs.srtPort}?streamid=#!::r=live/${streamKey},m=request&latency=200000&transtype=live`;
+    if (srs.srtPassphrase) {
+        url += `&passphrase=${encodeURIComponent(srs.srtPassphrase)}&pbkeylen=16`;
+    }
+    return url;
 }
 
 export function rtmpPublishUrl(streamKey: string, host: string): string {
