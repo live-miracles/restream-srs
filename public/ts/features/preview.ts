@@ -208,7 +208,37 @@ function teardownMeter(): void {
 
 // ── HLS lifecycle ─────────────────────────────────────
 
+// The server reaps previews that receive no keepalive (so a closed tab cannot
+// leave a transcode running forever). Beat well inside the server's 90s TTL —
+// background tabs throttle timers to roughly one fire per minute, which still
+// keeps an intentionally-open preview alive.
+const KEEPALIVE_INTERVAL_MS = 15_000;
+let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+
+function startKeepalive(pipelineId: string): void {
+    stopKeepalive();
+    keepaliveTimer = setInterval(() => {
+        void import('../core/api.js').then(async ({ previewKeepalive }) => {
+            const result = await previewKeepalive(pipelineId);
+            // active=false means the server no longer has this preview
+            // (reaped, crashed, or restarted) — tear the player down instead of
+            // letting it stall on a dead playlist.
+            if (result && !result.active && previewPipelineId === pipelineId) {
+                stopCurrentPreview();
+            }
+        });
+    }, KEEPALIVE_INTERVAL_MS);
+}
+
+function stopKeepalive(): void {
+    if (keepaliveTimer) {
+        clearInterval(keepaliveTimer);
+        keepaliveTimer = null;
+    }
+}
+
 function teardownHls(): void {
+    stopKeepalive();
     if (hlsInstance) {
         hlsInstance.destroy();
         hlsInstance = null;
@@ -264,6 +294,7 @@ export function stopCurrentPreview(): void {
 export function attachHls(pipelineId: string, hlsUrl: string): void {
     previewPipelineId = pipelineId;
     previewHlsUrl = hlsUrl;
+    startKeepalive(pipelineId);
 
     const video = document.getElementById('preview-video') as HTMLVideoElement | null;
     if (!video) return;

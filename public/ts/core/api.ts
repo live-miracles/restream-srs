@@ -143,6 +143,12 @@ export const startPreview = (pipelineId: string, audioTrackCount?: number) =>
 export const stopPreview = (pipelineId: string) =>
     apiRequest(`/api/pipelines/${pipelineId}/preview/stop`, { method: 'POST', silent: true });
 
+export const previewKeepalive = (pipelineId: string) =>
+    apiRequest<{ active: boolean }>(`/api/pipelines/${pipelineId}/preview/keepalive`, {
+        method: 'POST',
+        silent: true,
+    });
+
 export const logout = () => apiRequest<{ ok: boolean }>('/api/auth/logout', { method: 'POST' });
 
 export const getVersion = () =>

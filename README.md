@@ -199,6 +199,7 @@ so there is no pull-method setting.
 | DELETE | `/api/pipelines/:id` | Delete pipeline (stream key is freed, not deleted) |
 | GET | `/api/pipelines/:id/logs` | Pipeline online/offline event log |
 | POST | `/api/pipelines/:id/preview/start` | Start an HLS preview `{ audioTrack? }` |
+| POST | `/api/pipelines/:id/preview/keepalive` | Refresh the preview TTL — previews with no keepalive for 90s are stopped automatically (covers closed browser tabs) |
 | POST | `/api/pipelines/:id/preview/stop` | Stop the HLS preview |
 | POST | `/api/pipelines/:id/outputs` | Create output `{ name, videoEncoding, sinks: [{ url, audioEncoding }] }` |
 | POST | `/api/pipelines/:id/outputs/bulk` | Bulk create outputs `{ outputs: [{ name, videoEncoding, sinks }] }` — validates all before creating any |
