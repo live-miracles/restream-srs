@@ -52,9 +52,9 @@ and starve the `copy` outputs and the dashboard alike.
 
 **Parallel dashboard clients.** Health is computed once every 5s and shared by
 all clients, so extra browser tabs do not multiply SRS/SRT-FFprobe work. API
-responses are gzip-compressed, and config changes from another session show a
-reload banner via the health poll's config revision. Around 10 simultaneous
-dashboard clients is fine; higher counts are not tuned or tested.
+responses are gzip-compressed, and config changes from another session are
+picked up automatically via the health poll's config revision. Around 10
+simultaneous dashboard clients is fine; higher counts are not tuned or tested.
 
 ---
 

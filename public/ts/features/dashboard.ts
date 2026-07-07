@@ -49,15 +49,23 @@ export function invalidateConfig(): void {
     configStale = true;
 }
 
-function updateConfigChangedBanner(healthRev: number | undefined): void {
-    // configRev is monotonic, so only a health rev ahead of what we loaded means a
-    // newer config exists. Using `>` (not `!=`) avoids a false banner from a health
-    // snapshot that is momentarily staler than a just-reloaded config.
+// The config was edited in another session (every health snapshot carries the
+// server's current configRev). Refetch it automatically instead of asking the
+// user to click a reload button: a config reload is just another GET + render,
+// identical to any poll, and edit forms live in static modals so nothing is
+// ripped out from under the operator. Without this, other clients showed stale
+// Start/Stop state until someone noticed the banner.
+function resyncConfigIfChanged(healthRev: number | undefined): void {
+    // configRev is monotonic, so only a health rev ahead of what we loaded means
+    // a newer config exists. Using `>` (not `!=`) avoids a spurious refetch from
+    // a health snapshot that is momentarily staler than a just-reloaded config.
     const changed =
         loadedConfigRev !== null && healthRev !== undefined && healthRev > loadedConfigRev;
-    const banner = document.getElementById('config-changed-banner');
-    banner?.classList.toggle('hidden', !changed);
-    banner?.classList.toggle('flex', changed);
+    if (!changed) return;
+    invalidateConfig();
+    // Queues a follow-up pass on the in-flight refresh; the refetched config
+    // advances loadedConfigRev, so this converges instead of looping.
+    void refreshDashboard();
 }
 
 export async function refreshAfterMutation(): Promise<void> {
@@ -100,7 +108,7 @@ async function fetchAndRender(): Promise<void> {
     }
     if (healthResult) {
         state.health = healthResult;
-        updateConfigChangedBanner(healthResult.configRev);
+        resyncConfigIfChanged(healthResult.configRev);
     }
     // Recompute even when health couldn't be fetched: if the server itself is
     // unreachable, the connection banner already covers it, so suppress the
