@@ -3,7 +3,7 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { isProbeUsable } = require('../src/services/health');
+const { hasUsableSrsVideo, isProbeUsable } = require('../src/services/health');
 
 describe('health media probe validation', () => {
     test('accepts video with codec and dimensions', () => {
@@ -41,6 +41,40 @@ describe('health media probe validation', () => {
                 },
                 audio: null,
                 audioTracks: [],
+            }),
+            false,
+        );
+    });
+});
+
+describe('SRS stream media validation', () => {
+    test('accepts stream stats with codec, dimensions, and positive fps', () => {
+        assert.equal(
+            hasUsableSrsVideo({
+                video: {
+                    codec: 'h264',
+                    width: 1920,
+                    height: 1080,
+                    fps: 50,
+                    profile: 'Main',
+                    level: '4.2',
+                },
+            }),
+            true,
+        );
+    });
+
+    test('rejects stream stats without positive fps', () => {
+        assert.equal(
+            hasUsableSrsVideo({
+                video: {
+                    codec: 'h264',
+                    width: 1920,
+                    height: 1080,
+                    fps: null,
+                    profile: 'Main',
+                    level: '4.2',
+                },
             }),
             false,
         );

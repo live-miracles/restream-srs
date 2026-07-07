@@ -1,9 +1,9 @@
 import { execFile, spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
 import { buildFfmpegArgs, validateOutputUrl } from '../utils/ffmpeg.js';
-import { rtmpPullUrl, srtPullUrl } from '../utils/srs.js';
 import { readAppConfig } from '../utils/appConfig.js';
 import type { Db, Output } from '../types.js';
+import type { InputState } from './inputState.js';
 
 function hasValidSinks(output: Output): boolean {
     return output.sinks.length > 0 && output.sinks.every((s) => validateOutputUrl(s.url));
@@ -72,12 +72,10 @@ export interface OutputService {
     stopAndWait(outputId: string): Promise<void>;
     restartPipelineOutputs(pipelineId: number, staggerBase?: number): number;
     clearRetryState(outputId: string): void;
-    setInputReadyCheck(fn: (pipelineId: number) => boolean): void;
-    setInputProtocolGetter(fn: (pipelineId: number) => 'srt' | 'rtmp' | null): void;
     shutdown(): void;
 }
 
-export function createOutputService(db: Db): OutputService {
+export function createOutputService(db: Db, inputState: InputState): OutputService {
     const processes = new Map<string, ChildProcess>();
     const statuses = new Map<
         string,
@@ -96,17 +94,6 @@ export function createOutputService(db: Db): OutputService {
     const watchdogTimer = setInterval(checkOutputWatchdog, OUTPUT_WATCHDOG_INTERVAL_MS);
     watchdogTimer.unref?.();
     refreshTcpSocketSnapshot();
-
-    // Whether an output's input is live and SRS is reachable. Wired up after
-    // construction (the health service that knows this is created later). Defaults
-    // to "ready" so behaviour is safe before wiring and in tests.
-    let isInputReady: (pipelineId: number) => boolean = () => true;
-
-    // How the pipeline's live input is published, so we pull it back the same way
-    // (SRT input -> SRT pull, RTMP input -> RTMP pull). Wired up after
-    // construction. Defaults to RTMP when unknown — an output only starts once its
-    // input is live, by which point the health service has detected the protocol.
-    let getInputProtocol: (pipelineId: number) => 'srt' | 'rtmp' | null = () => null;
 
     function getStats(outputId: string): OutputStats {
         const s = statuses.get(outputId) ?? { status: 'stopped' as const, pid: null };
@@ -178,7 +165,7 @@ export function createOutputService(db: Db): OutputService {
             if (!output || output.desiredState !== 'running') return;
             if (statuses.get(outputId)?.status === 'running') return;
             // Don't spawn a doomed ffmpeg against a dead input; re-check until ready.
-            if (!isInputReady(output.pipelineId)) {
+            if (!inputState.isReady(output.pipelineId)) {
                 scheduleRecheck(outputId);
                 return;
             }
@@ -450,7 +437,7 @@ export function createOutputService(db: Db): OutputService {
             const startedAtMs = startTimes.get(outputId);
             const p = progress.get(outputId);
             if (!startedAtMs || !p) continue;
-            if (!isInputReady(output.pipelineId)) continue;
+            if (!inputState.isReady(output.pipelineId)) continue;
 
             if (now - startedAtMs >= OUTPUT_SOCKET_WARMUP_MS) {
                 const socketWarning = destinationSocketWarning(output, proc);
@@ -506,13 +493,8 @@ export function createOutputService(db: Db): OutputService {
 
         const pipeline = db.getPipeline(output.pipelineId);
         if (!pipeline) throw new Error('Pipeline not found');
-        // Pull the input back the same way it was published: an SRT input only
-        // exists over SRT (and preserves every audio track), an RTMP input only
-        // over RTMP. Default to RTMP if the protocol isn't known yet.
-        const inputUrl =
-            getInputProtocol(output.pipelineId) === 'srt'
-                ? srtPullUrl(pipeline.streamKey)
-                : rtmpPullUrl(pipeline.streamKey);
+        // Pull the input back the same way it was published. Default to RTMP until known.
+        const inputUrl = inputState.pullUrl(output.pipelineId, pipeline.streamKey);
         const args = buildFfmpegArgs(inputUrl, output.sinks, output.videoEncoding);
 
         // stdout and stderr must stay as 'pipe' (not 'ignore' or 'inherit').
@@ -611,7 +593,7 @@ export function createOutputService(db: Db): OutputService {
             // Input not live yet — keep the output "running" (desiredState) but
             // don't spawn a doomed ffmpeg. The recheck loop starts it once the
             // input comes online.
-            if (!isInputReady(output.pipelineId)) {
+            if (!inputState.isReady(output.pipelineId)) {
                 scheduleRecheck(outputId);
                 return;
             }
@@ -663,13 +645,6 @@ export function createOutputService(db: Db): OutputService {
         },
 
         clearRetryState: clearRetry,
-
-        setInputProtocolGetter(fn: (pipelineId: number) => 'srt' | 'rtmp' | null): void {
-            getInputProtocol = fn;
-        },
-        setInputReadyCheck(fn: (pipelineId: number) => boolean): void {
-            isInputReady = fn;
-        },
 
         shutdown(): void {
             clearInterval(watchdogTimer);

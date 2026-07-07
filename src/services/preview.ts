@@ -2,9 +2,9 @@ import { spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { rtmpPullUrl, srtPullUrl } from '../utils/srs.js';
 import { readAppConfig } from '../utils/appConfig.js';
 import type { Db } from '../types.js';
+import type { InputState } from './inputState.js';
 
 const FFMPEG_CMD = readAppConfig().ffmpegPath;
 const STDERR_TAIL_BYTES = 2000;
@@ -35,10 +35,7 @@ export interface PreviewService {
     baseDir: string;
 }
 
-export function createPreviewService(
-    db: Db,
-    getInputProtocol: (pipelineId: number) => 'srt' | 'rtmp' | null,
-): PreviewService {
+export function createPreviewService(db: Db, inputState: InputState): PreviewService {
     const baseDir = resolveBaseDir();
     const procs = new Map<number, ChildProcess>();
 
@@ -54,11 +51,9 @@ export function createPreviewService(
         const pipeline = db.getPipeline(pipelineId);
         if (!pipeline) throw new Error('Pipeline not found');
 
-        // Pull the input back over its own protocol: an SRT input only exists over
-        // SRT (and exposes every audio track), an RTMP input only over RTMP.
-        // Default to RTMP until the protocol is known.
-        const isSrt = getInputProtocol(pipelineId) === 'srt';
-        const inputUrl = isSrt ? srtPullUrl(pipeline.streamKey) : rtmpPullUrl(pipeline.streamKey);
+        // Pull the input back over its own protocol. Default to RTMP until known.
+        const inputProtocol = inputState.getProtocol(pipelineId) ?? 'rtmp';
+        const inputUrl = inputState.pullUrl(pipelineId, pipeline.streamKey);
 
         // Multiple audio tracks (only possible on an SRT input) become switchable
         // HLS renditions via a master playlist; otherwise a single media playlist.
@@ -185,7 +180,7 @@ export function createPreviewService(
 
         procs.set(pipelineId, proc);
         console.log(
-            `[preview] ${pipelineId} started pid=${proc.pid} ${isSrt ? 'srt' : 'rtmp'} multiTrack=${multiTrack} tracks=${audioTrackCount}`,
+            `[preview] ${pipelineId} started pid=${proc.pid} ${inputProtocol} multiTrack=${multiTrack} tracks=${audioTrackCount}`,
         );
 
         let stderrTail = '';

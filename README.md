@@ -51,7 +51,7 @@ into custom-encoding mode will saturate the CPU long before the 500-output ceili
 and starve the `copy` outputs and the dashboard alike.
 
 **Parallel dashboard clients.** Health is computed once every 5s and shared by
-all clients, so extra browser tabs do not multiply SRS/FFprobe work. API
+all clients, so extra browser tabs do not multiply SRS/SRT-FFprobe work. API
 responses are gzip-compressed, and config changes from another session show a
 reload banner via the health poll's config revision. Around 10 simultaneous
 dashboard clients is fine; higher counts are not tuned or tested.
@@ -271,7 +271,7 @@ The app reads runtime settings from `restream.json` in the app root.
 | `database_path` | `./db.sqlite` | SQLite database path |
 | `srs_config_path` | `./srs.conf` | SRS config path |
 | `ffmpeg_path` | `ffmpeg` | FFmpeg binary for outputs and previews |
-| `ffprobe_path` | `ffprobe` | FFprobe binary for input media probing |
+| `ffprobe_path` | `ffprobe` | FFprobe binary for SRT input media probing |
 | `output_watchdog.warmup_ms` | `90000` | Output progress watchdog warmup before stall checks |
 | `output_watchdog.stall_ms` | `45000` | Output progress stall window before restarting FFmpeg |
 | `output_watchdog.interval_ms` | `5000` | Output watchdog polling interval |

@@ -108,6 +108,17 @@ function loadOutputService(t, fakeProc, options = {}) {
     return require('../src/services/outputs').createOutputService;
 }
 
+function makeReadyInputState() {
+    return {
+        isReady() {
+            return true;
+        },
+        pullUrl(_pipelineId, streamKey) {
+            return `rtmp://127.0.0.1:1935/live/${streamKey}`;
+        },
+    };
+}
+
 describe('output watchdog', () => {
     beforeEach(() => {
         process.chdir(tempDir);
@@ -128,8 +139,7 @@ describe('output watchdog', () => {
         const proc = new FakeFfmpeg();
         const db = makeDb();
         const createOutputService = loadOutputService(t, proc);
-        const service = createOutputService(db);
-        service.setInputReadyCheck(() => true);
+        const service = createOutputService(db, makeReadyInputState());
 
         await service.start('out1');
         proc.stdout.write('total_size=4096\nout_time_ms=1000000\nbitrate=3200.0kbits/s\n');
@@ -154,8 +164,7 @@ describe('output watchdog', () => {
         const proc = new FakeFfmpeg();
         const db = makeDb();
         const createOutputService = loadOutputService(t, proc);
-        const service = createOutputService(db);
-        service.setInputReadyCheck(() => true);
+        const service = createOutputService(db, makeReadyInputState());
 
         await service.start('out1');
         proc.stdout.write('total_size=4096\nout_time_ms=1000000\n');
@@ -180,8 +189,7 @@ describe('output watchdog', () => {
             throw new Error('database busy');
         };
         const createOutputService = loadOutputService(t, proc);
-        const service = createOutputService(db);
-        service.setInputReadyCheck(() => true);
+        const service = createOutputService(db, makeReadyInputState());
 
         await service.start('out1');
         proc.stdout.write('total_size=4096\nout_time_ms=1000000\n');
@@ -206,8 +214,7 @@ describe('output watchdog', () => {
             socketGraceMs: 500,
             ssOutput,
         });
-        const service = createOutputService(db);
-        service.setInputReadyCheck(() => true);
+        const service = createOutputService(db, makeReadyInputState());
 
         await service.start('out1');
         proc.stdout.write('total_size=4096\nout_time_ms=1000000\nbitrate=3200.0kbits/s\n');
@@ -229,8 +236,7 @@ describe('output watchdog', () => {
             socketGraceMs: 20,
             ssError: new Error('ss failed'),
         });
-        const service = createOutputService(db);
-        service.setInputReadyCheck(() => true);
+        const service = createOutputService(db, makeReadyInputState());
 
         await service.start('out1');
         proc.stdout.write('total_size=4096\nout_time_ms=1000000\nbitrate=3200.0kbits/s\n');
@@ -254,8 +260,7 @@ describe('output watchdog', () => {
             socketGraceMs: 500,
             ssOutput,
         });
-        const service = createOutputService(db);
-        service.setInputReadyCheck(() => true);
+        const service = createOutputService(db, makeReadyInputState());
 
         await service.start('out1');
         proc.stdout.write('total_size=4096\nout_time_ms=1000000\nbitrate=3200.0kbits/s\n');
@@ -278,8 +283,7 @@ describe('output watchdog', () => {
             socketGraceMs: 20,
             ssOutput,
         });
-        const service = createOutputService(db);
-        service.setInputReadyCheck(() => true);
+        const service = createOutputService(db, makeReadyInputState());
 
         await service.start('out1');
         proc.stdout.write('total_size=4096\nout_time_ms=1000000\nbitrate=3200.0kbits/s\n');
@@ -319,8 +323,7 @@ describe('output watchdog', () => {
             socketGraceMs: 20,
             ssOutput,
         });
-        const service = createOutputService(db);
-        service.setInputReadyCheck(() => true);
+        const service = createOutputService(db, makeReadyInputState());
 
         await service.start('out1');
         proc.stdout.write('total_size=4096\nout_time_ms=1000000\nbitrate=3200.0kbits/s\n');
@@ -346,8 +349,7 @@ describe('output watchdog', () => {
             socketGraceMs: 20,
             ssOutput,
         });
-        const service = createOutputService(db);
-        service.setInputReadyCheck(() => true);
+        const service = createOutputService(db, makeReadyInputState());
 
         await service.start('out1');
         proc.stdout.write('total_size=4096\nout_time_ms=1000000\nbitrate=3200.0kbits/s\n');
@@ -371,8 +373,7 @@ describe('output watchdog', () => {
             socketGraceMs: 20,
             ssOutput,
         });
-        const service = createOutputService(db);
-        service.setInputReadyCheck(() => true);
+        const service = createOutputService(db, makeReadyInputState());
 
         await service.start('out1');
         proc.stdout.write('total_size=4096\nout_time_ms=1000000\nbitrate=3200.0kbits/s\n');

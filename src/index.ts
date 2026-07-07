@@ -13,6 +13,7 @@ import { registerSettingsApi } from './api/settings.js';
 import { createPreviewService } from './services/preview.js';
 import { registerPreviewApi } from './api/preview.js';
 import { registerSrsHooks, registerSrsLogsApi } from './api/srs.js';
+import { createInputState } from './services/inputState.js';
 import {
     registerAuthApi,
     requireAuth,
@@ -44,16 +45,11 @@ app.use(express.json());
 const db = createDb();
 initializePassword(db);
 
-const outputService = createOutputService(db);
+const inputState = createInputState();
+const outputService = createOutputService(db, inputState);
 const srtRelayService = createSrtRelayService();
-const healthService = createHealthService(db, outputService, srtRelayService);
-const previewService = createPreviewService(db, healthService.getInputProtocol);
-
-// Outputs only start ffmpeg when the input is live and SRS is reachable.
-outputService.setInputReadyCheck(healthService.isInputReady);
-// Outputs and the preview pull the input over whatever protocol it was published
-// with, detected by the health service.
-outputService.setInputProtocolGetter(healthService.getInputProtocol);
+const healthService = createHealthService(db, outputService, srtRelayService, inputState);
+const previewService = createPreviewService(db, inputState);
 
 // Unauthenticated routes
 registerSrsHooks(app, db);
@@ -142,6 +138,7 @@ function shutdown(signal: string): void {
     shuttingDown = true;
     console.log(`[server] ${signal} received, killing media jobs`);
     outputService.shutdown();
+    healthService.shutdown();
     srtRelayService.shutdown();
     previewService.shutdown();
     process.exit(0);
