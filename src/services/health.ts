@@ -18,8 +18,8 @@ import { inputPullUrl, type InputProtocol, type InputState } from './inputState.
 
 const FFPROBE_CMD = readAppConfig().ffprobePath;
 const FFPROBE_TIMEOUT_MS = 15000;
-const FFPROBE_FAST_REFRESH_MS = 15000;
-const FFPROBE_HEALTHY_REFRESH_MS = 30000;
+const FFPROBE_INITIAL_DELAY_MS = 5000;
+const FFPROBE_REFRESH_MS = 30000;
 // Stagger concurrent ffprobe launches instead of capping concurrency with a
 // semaphore. The real risk is the thundering-herd burst (all N pipelines firing
 // at the same millisecond after a mass reconnect), not the sustained overlap —
@@ -65,7 +65,10 @@ interface OutputHealth {
 interface PipelineHealth {
     input: InputHealth;
     outputs: Record<string, OutputHealth>;
-    srtBonding: SrtRelayStreamStatus;
+    srtBonding: SrtRelayStreamStatus & {
+        acceptedBySrs: boolean;
+        publishConflict: boolean;
+    };
 }
 
 export interface HealthSnapshot {
@@ -104,18 +107,14 @@ export function isProbeUsable(result: ProbeResult | null): boolean {
     return !!video?.codec && video.width > 0 && video.height > 0;
 }
 
-export function hasUsableSrsVideo(stream: SrsStream | undefined): boolean {
-    const video = stream?.video;
-    return !!video?.codec && video.width > 0 && video.height > 0 && (video.fps ?? 0) > 0;
+export function isLoopbackIp(ip: string | null | undefined): boolean {
+    return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
 }
 
-function srsStatsError(stream: SrsStream | undefined): string {
-    const video = stream?.video;
-    if (!video) return 'SRS did not report a video stream';
-    if (!video.codec) return 'SRS reported video without codec metadata';
-    if (video.width <= 0 || video.height <= 0) return 'SRS reported video without dimensions';
-    if ((video.fps ?? 0) <= 0) return 'SRS reported video without a positive frame rate';
-    return 'SRS media validation failed';
+function srsClientLooksLikeRelayPublisher(client: SrsClient | undefined): boolean {
+    if (!client) return false;
+    if (!isLoopbackIp(client.ip)) return false;
+    return !client.type || client.type === 'srt-publish';
 }
 
 function probeError(result: ProbeResult | null): string {
@@ -225,6 +224,7 @@ export function createHealthService(
 
     const inputConnected = new Map<number, boolean>();
     const inputLiveStartMs = new Map<number, number>();
+    const inputPublisherCid = new Map<number, string>();
     const ffprobeResults = new Map<number, ProbeStatus>();
     const ffprobeTimers = new Map<number, NodeJS.Timeout>();
     const ffprobeInFlight = new Set<number>();
@@ -293,9 +293,15 @@ export function createHealthService(
     ): void {
         if (ffprobeTimers.has(pipelineId) || ffprobeInFlight.has(pipelineId)) return;
         const status = ffprobeResults.get(pipelineId);
-        const refreshMs = status?.ok ? FFPROBE_HEALTHY_REFRESH_MS : FFPROBE_FAST_REFRESH_MS;
-        if (status && Date.now() - status.checkedAt < refreshMs) return;
-        scheduleFfprobe(pipelineId, streamKey, protocol, stagger * FFPROBE_STAGGER_MS);
+        if (protocol === 'rtmp' && status?.ok) return;
+        if (status && Date.now() - status.checkedAt < FFPROBE_REFRESH_MS) return;
+        const initialDelayMs = status || protocol !== 'rtmp' ? 0 : FFPROBE_INITIAL_DELAY_MS;
+        scheduleFfprobe(
+            pipelineId,
+            streamKey,
+            protocol,
+            initialDelayMs + stagger * FFPROBE_STAGGER_MS,
+        );
     }
 
     let pollInProgress = false;
@@ -312,6 +318,26 @@ export function createHealthService(
 
     async function doPoll(): Promise<void> {
         const pipelines = db.listPipelines();
+        const activePipelineIds = new Set(pipelines.map((pipeline) => pipeline.id));
+        for (const pipelineId of inputConnected.keys()) {
+            if (!activePipelineIds.has(pipelineId)) inputConnected.delete(pipelineId);
+        }
+        for (const pipelineId of inputLiveStartMs.keys()) {
+            if (!activePipelineIds.has(pipelineId)) inputLiveStartMs.delete(pipelineId);
+        }
+        for (const pipelineId of inputPublisherCid.keys()) {
+            if (!activePipelineIds.has(pipelineId)) inputPublisherCid.delete(pipelineId);
+        }
+        for (const pipelineId of ffprobeResults.keys()) {
+            if (!activePipelineIds.has(pipelineId)) clearFfprobeState(pipelineId);
+        }
+        for (const pipelineId of ffprobeTimers.keys()) {
+            if (!activePipelineIds.has(pipelineId)) clearFfprobeState(pipelineId);
+        }
+        for (const pipelineId of ffprobeInFlight) {
+            if (!activePipelineIds.has(pipelineId)) clearFfprobeState(pipelineId);
+        }
+
         const outputsByPipeline = new Map<number, string[]>();
         const lastErrorById = new Map<string, string | null>();
         for (const o of db.listOutputIds()) {
@@ -359,7 +385,6 @@ export function createHealthService(
         for (const client of clients) {
             if (client.publish && client.id) publisherByCid.set(client.id, client);
         }
-
         const pipelinesHealth: Record<string, PipelineHealth> = {};
         const relayStats = srtRelayService.getStats();
         let ffprobeStagger = 0;
@@ -373,6 +398,14 @@ export function createHealthService(
             const prevLive = inputState.isLive(pipeline.id);
             const s = srsReachable ? liveByPath.get(path) : undefined;
             const nowConnected = srsReachable ? !!s : prevConnected;
+            const prevPublisherCid = inputPublisherCid.get(pipeline.id) ?? null;
+            const publisherCid = s?.publish?.cid ?? null;
+            const publisherChanged =
+                nowConnected &&
+                publisherCid !== null &&
+                prevPublisherCid !== null &&
+                publisherCid !== prevPublisherCid;
+            if (publisherChanged) clearFfprobeState(pipeline.id);
             const probe = ffprobeResults.get(pipeline.id) ?? null;
             const nowSrtInput = !!s?.tcUrl?.startsWith('srt://');
             const nowProtocol: InputProtocol | null = nowConnected
@@ -380,9 +413,7 @@ export function createHealthService(
                     ? 'srt'
                     : 'rtmp'
                 : null;
-            const nowLive = srsReachable
-                ? nowConnected && (nowSrtInput ? (probe?.ok ?? false) : hasUsableSrsVideo(s))
-                : prevLive;
+            const nowLive = srsReachable ? nowConnected && (probe?.ok ?? false) : prevLive;
             // UI should reflect whether the input is currently usable through SRS.
             // Keep nowLive sticky internally for restart/logging behavior during an
             // SRS outage, but don't present a stale green input while SRS is down.
@@ -392,16 +423,15 @@ export function createHealthService(
             if (srsReachable) {
                 inputConnected.set(pipeline.id, nowConnected);
                 if (nowConnected && s) {
+                    if (publisherCid) inputPublisherCid.set(pipeline.id, publisherCid);
                     inputState.setPipelineState(pipeline.id, nowLive, nowProtocol);
-                    if (nowSrtInput) {
+                    if (nowProtocol) {
                         schedulePeriodicFfprobe(
                             pipeline.id,
                             pipeline.streamKey,
-                            'srt',
+                            nowProtocol,
                             ffprobeStagger++,
                         );
-                    } else {
-                        clearFfprobeState(pipeline.id);
                     }
                 } else if (!nowConnected) {
                     inputState.clearPipeline(pipeline.id);
@@ -445,6 +475,7 @@ export function createHealthService(
                     const uptimeSec =
                         liveStartMs != null ? Math.round((Date.now() - liveStartMs) / 1000) : null;
                     inputConnected.delete(pipeline.id);
+                    inputPublisherCid.delete(pipeline.id);
                     inputState.clearPipeline(pipeline.id);
                     inputLiveStartMs.delete(pipeline.id);
                     clearFfprobeState(pipeline.id);
@@ -478,13 +509,24 @@ export function createHealthService(
             }
 
             const srtStream = displayLive && s?.tcUrl?.startsWith('srt://');
-            const mediaProbe = nowSrtInput ? (ffprobeResults.get(pipeline.id) ?? null) : null;
-            const srsMediaOk = displayConnected && !nowSrtInput ? hasUsableSrsVideo(s) : null;
-            const srsMediaError =
-                displayConnected && !nowSrtInput && srsMediaOk === false ? srsStatsError(s) : null;
+            const mediaProbe = ffprobeResults.get(pipeline.id) ?? null;
+            const displayMediaOk = mediaProbe ? mediaProbe.ok : null;
+            const displayMediaError = mediaProbe?.error ?? null;
+            const probedMedia = mediaProbe?.ok ? mediaProbe.result : null;
             const bondingStreamId = `#!::r=live/${pipeline.streamKey},m=publish`;
-            const bondingStatus = srtRelayService.getStreamStatus(bondingStreamId);
+            const rawBondingStatus = srtRelayService.getStreamStatus(bondingStreamId);
             const publisher = s?.publish?.cid ? publisherByCid.get(s.publish.cid) : undefined;
+            const relayAcceptedBySrs = !!srtStream && srsClientLooksLikeRelayPublisher(publisher);
+            const relayPublishConflict =
+                displayConnected &&
+                !!srtStream &&
+                !relayAcceptedBySrs &&
+                rawBondingStatus.inputActive;
+            const bondingStatus: PipelineHealth['srtBonding'] = {
+                ...rawBondingStatus,
+                acceptedBySrs: relayAcceptedBySrs,
+                publishConflict: relayPublishConflict,
+            };
 
             pipelinesHealth[String(pipeline.id)] = {
                 input: {
@@ -493,9 +535,9 @@ export function createHealthService(
                     isSrt:
                         !!srtStream ||
                         (displayConnected && inputState.getProtocol(pipeline.id) === 'srt'),
-                    mediaOk: displayConnected ? (mediaProbe?.ok ?? srsMediaOk) : null,
+                    mediaOk: displayConnected ? displayMediaOk : null,
                     mediaCheckedAt: displayConnected ? (mediaProbe?.checkedAt ?? null) : null,
-                    mediaError: displayConnected ? (mediaProbe?.error ?? srsMediaError) : null,
+                    mediaError: displayConnected ? displayMediaError : null,
                     recvBitrateKbps: s?.kbps?.recv_30s ?? null,
                     sendBitrateKbps: s?.kbps?.send_30s ?? null,
                     readers: s ? Math.max(0, (s.clients ?? 0) - 1) : 0,
@@ -504,9 +546,9 @@ export function createHealthService(
                         : null,
                     publisherIp: displayConnected ? (publisher?.ip ?? null) : null,
                     publisherType: displayConnected ? (publisher?.type ?? null) : null,
-                    video: mediaProbe?.result?.video ?? s?.video ?? null,
-                    audio: mediaProbe?.result?.audio ?? s?.audio ?? null,
-                    audioTracks: mediaProbe?.result?.audioTracks ?? [],
+                    video: probedMedia?.video ?? s?.video ?? null,
+                    audio: probedMedia?.audio ?? s?.audio ?? null,
+                    audioTracks: probedMedia?.audioTracks ?? [],
                 },
                 outputs: outputsHealth,
                 srtBonding: bondingStatus,

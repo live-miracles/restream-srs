@@ -313,6 +313,10 @@ function relayHasRecentOutputFlow(pipeline: PipelineView): boolean {
 }
 
 function isRelayAcceptedBySrs(pipeline: PipelineView): boolean {
+    if (pipeline.srtBonding.acceptedBySrs !== undefined) {
+        return pipeline.srtBonding.acceptedBySrs;
+    }
+
     if (
         !pipeline.srtBonding.inputActive ||
         !pipeline.srtBonding.outputConnected ||
@@ -329,6 +333,10 @@ function isRelayAcceptedBySrs(pipeline: PipelineView): boolean {
 }
 
 function hasRelayPublishConflict(pipeline: PipelineView): boolean {
+    if (pipeline.srtBonding.publishConflict !== undefined) {
+        return pipeline.srtBonding.publishConflict;
+    }
+
     if (!pipeline.srtBonding.inputActive || !pipeline.input.connected) return false;
     if (!pipeline.input.isSrt) return true;
     return pipeline.input.publisherIp != null && !isLoopbackIp(pipeline.input.publisherIp);

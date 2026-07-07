@@ -28,6 +28,8 @@ const EMPTY_INPUT: InputHealth = {
 const EMPTY_BONDING: SrtBondingStatus = {
     inputActive: false,
     outputConnected: false,
+    acceptedBySrs: false,
+    publishConflict: false,
     retryFailures: 0,
     forwardedPackets: 0,
     forwardedBytes: 0,

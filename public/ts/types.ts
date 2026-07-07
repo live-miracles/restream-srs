@@ -88,6 +88,8 @@ export interface SrtRelayStatus {
 export interface SrtBondingStatus {
     inputActive: boolean;
     outputConnected: boolean;
+    acceptedBySrs?: boolean;
+    publishConflict?: boolean;
     retryFailures: number;
     forwardedPackets: number;
     forwardedBytes: number;
