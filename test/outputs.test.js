@@ -61,12 +61,24 @@ function makeDb() {
     };
 }
 
-function loadOutputService(t, fakeProc) {
+function loadOutputService(t, fakeProc, options = {}) {
     process.env.OUTPUT_WATCHDOG_WARMUP_MS = '10';
-    process.env.OUTPUT_WATCHDOG_STALL_MS = '20';
+    process.env.OUTPUT_WATCHDOG_STALL_MS = String(options.progressStallMs ?? 20);
     process.env.OUTPUT_WATCHDOG_INTERVAL_MS = '10';
+    if (options.socketWarmupMs)
+        process.env.OUTPUT_SOCKET_WARMUP_MS = String(options.socketWarmupMs);
+    if (options.socketGraceMs) process.env.OUTPUT_SOCKET_GRACE_MS = String(options.socketGraceMs);
 
     t.mock.method(childProcess, 'spawn', () => fakeProc);
+    if (options.ssError) {
+        t.mock.method(childProcess, 'execFile', (_cmd, _args, _opts, cb) => {
+            queueMicrotask(() => cb(options.ssError, '', ''));
+        });
+    } else if (options.ssOutput !== undefined) {
+        t.mock.method(childProcess, 'execFile', (_cmd, _args, _opts, cb) => {
+            queueMicrotask(() => cb(null, options.ssOutput, ''));
+        });
+    }
     delete require.cache[require.resolve('../src/services/outputs')];
     return require('../src/services/outputs').createOutputService;
 }
@@ -148,6 +160,195 @@ describe('output watchdog', () => {
         assert.deepEqual(proc.killSignals, ['SIGTERM']);
         assert.equal(service.getStats('out1').status, 'failed');
         assert.equal(service.getStats('out1').failures, 1);
+
+        service.shutdown();
+    });
+
+    test('warns when RTMP destination socket is closing before grace elapses', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const ssOutput =
+            'CLOSE-WAIT 57 0 10.160.0.30:47178 192.178.174.134:1935 users:(("ffmpeg",pid=1234,fd=6))\n';
+        const createOutputService = loadOutputService(t, proc, {
+            progressStallMs: 500,
+            socketWarmupMs: 10,
+            socketGraceMs: 500,
+            ssOutput,
+        });
+        const service = createOutputService(db);
+        service.setInputReadyCheck(() => true);
+
+        await service.start('out1');
+        proc.stdout.write('total_size=4096\nout_time_ms=1000000\nbitrate=3200.0kbits/s\n');
+        await sleep(40);
+
+        assert.equal(service.getStats('out1').status, 'running');
+        assert.match(service.getStats('out1').warningReason || '', /CLOSE-WAIT/);
+        assert.deepEqual(proc.killSignals, []);
+
+        service.shutdown();
+    });
+
+    test('does not turn ss failures into missing socket kills', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const createOutputService = loadOutputService(t, proc, {
+            progressStallMs: 500,
+            socketWarmupMs: 10,
+            socketGraceMs: 20,
+            ssError: new Error('ss failed'),
+        });
+        const service = createOutputService(db);
+        service.setInputReadyCheck(() => true);
+
+        await service.start('out1');
+        proc.stdout.write('total_size=4096\nout_time_ms=1000000\nbitrate=3200.0kbits/s\n');
+        await sleep(80);
+
+        assert.equal(service.getStats('out1').warningReason, null);
+        assert.deepEqual(proc.killSignals, []);
+        assert.equal(db.lastError, null);
+
+        service.shutdown();
+    });
+
+    test('progress watchdog still kills while socket warning grace is open', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const ssOutput =
+            'CLOSE-WAIT 57 0 10.160.0.30:47178 192.178.174.134:1935 users:(("ffmpeg",pid=1234,fd=6))\n';
+        const createOutputService = loadOutputService(t, proc, {
+            progressStallMs: 20,
+            socketWarmupMs: 10,
+            socketGraceMs: 500,
+            ssOutput,
+        });
+        const service = createOutputService(db);
+        service.setInputReadyCheck(() => true);
+
+        await service.start('out1');
+        proc.stdout.write('total_size=4096\nout_time_ms=1000000\nbitrate=3200.0kbits/s\n');
+        await sleep(80);
+
+        assert.deepEqual(proc.killSignals, ['SIGTERM']);
+        assert.match(db.lastError, /watchdog: ffmpeg output stalled; restarting process/);
+
+        service.shutdown();
+    });
+
+    test('kills and retries when RTMP destination socket stays unhealthy', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const ssOutput =
+            'CLOSE-WAIT 57 0 10.160.0.30:47178 192.178.174.134:1935 users:(("ffmpeg",pid=1234,fd=6))\n';
+        const createOutputService = loadOutputService(t, proc, {
+            progressStallMs: 500,
+            socketWarmupMs: 10,
+            socketGraceMs: 20,
+            ssOutput,
+        });
+        const service = createOutputService(db);
+        service.setInputReadyCheck(() => true);
+
+        await service.start('out1');
+        proc.stdout.write('total_size=4096\nout_time_ms=1000000\nbitrate=3200.0kbits/s\n');
+        await sleep(80);
+
+        assert.deepEqual(proc.killSignals, ['SIGTERM']);
+        assert.equal(service.getStats('out1').status, 'failed');
+        assert.equal(service.getStats('out1').failures, 1);
+        assert.match(db.lastError, /destination socket unhealthy/);
+        assert.match(db.lastError, /CLOSE-WAIT/);
+        assert.match(
+            db.lastError,
+            /socket_warning=RTMP socket CLOSE-WAIT on destination port 1935/,
+        );
+        assert.match(db.lastError, /socket_snapshot:/);
+        assert.match(db.lastError, /CLOSE-WAIT peer=192\.178\.174\.134:1935/);
+        assert.match(db.lastError, /last_bitrate_kbps=3200/);
+        assert.match(
+            db.lastError,
+            /Restarting output: RTMP socket CLOSE-WAIT on destination port 1935/,
+        );
+
+        service.shutdown();
+    });
+
+    test('ignores local RTMP outputs in socket watchdog', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        db.getOutput('out1').sinks = [
+            { seq: 1, url: 'rtmp://localhost/live/downstream', audioEncoding: 'copy' },
+        ];
+        const ssOutput =
+            'CLOSE-WAIT 0 0 127.0.0.1:50100 127.0.0.1:1935 users:(("ffmpeg",pid=1234,fd=5))\n';
+        const createOutputService = loadOutputService(t, proc, {
+            progressStallMs: 500,
+            socketWarmupMs: 10,
+            socketGraceMs: 20,
+            ssOutput,
+        });
+        const service = createOutputService(db);
+        service.setInputReadyCheck(() => true);
+
+        await service.start('out1');
+        proc.stdout.write('total_size=4096\nout_time_ms=1000000\nbitrate=3200.0kbits/s\n');
+        await sleep(80);
+
+        assert.equal(service.getStats('out1').warningReason, null);
+        assert.deepEqual(proc.killSignals, []);
+        assert.equal(db.lastError, null);
+
+        service.shutdown();
+    });
+
+    test('ignores IPv6 localhost RTMP outputs in socket watchdog', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        db.getOutput('out1').sinks = [
+            { seq: 1, url: 'rtmp://[::1]:1935/live/downstream', audioEncoding: 'copy' },
+        ];
+        const ssOutput = 'CLOSE-WAIT 0 0 [::1]:50100 [::1]:1935 users:(("ffmpeg",pid=1234,fd=5))\n';
+        const createOutputService = loadOutputService(t, proc, {
+            progressStallMs: 500,
+            socketWarmupMs: 10,
+            socketGraceMs: 20,
+            ssOutput,
+        });
+        const service = createOutputService(db);
+        service.setInputReadyCheck(() => true);
+
+        await service.start('out1');
+        proc.stdout.write('total_size=4096\nout_time_ms=1000000\nbitrate=3200.0kbits/s\n');
+        await sleep(80);
+
+        assert.equal(service.getStats('out1').warningReason, null);
+        assert.deepEqual(proc.killSignals, []);
+        assert.equal(db.lastError, null);
+
+        service.shutdown();
+    });
+
+    test('keeps RTMP output healthy when remote destination socket is established', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const ssOutput =
+            'ESTAB 0 0 10.160.0.30:50532 192.178.174.134:1935 users:(("ffmpeg",pid=1234,fd=6))\n';
+        const createOutputService = loadOutputService(t, proc, {
+            progressStallMs: 500,
+            socketWarmupMs: 10,
+            socketGraceMs: 20,
+            ssOutput,
+        });
+        const service = createOutputService(db);
+        service.setInputReadyCheck(() => true);
+
+        await service.start('out1');
+        proc.stdout.write('total_size=4096\nout_time_ms=1000000\nbitrate=3200.0kbits/s\n');
+        await sleep(40);
+
+        assert.equal(service.getStats('out1').warningReason, null);
+        assert.deepEqual(proc.killSignals, []);
 
         service.shutdown();
     });

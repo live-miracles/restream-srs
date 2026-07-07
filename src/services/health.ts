@@ -57,6 +57,7 @@ interface OutputHealth {
     bitrateKbps: number | null;
     startedAtMs: number | null;
     failures: number;
+    warningReason: string | null;
     lastError: string | null;
 }
 

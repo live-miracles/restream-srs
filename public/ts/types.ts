@@ -74,6 +74,7 @@ export interface OutputStatus {
     bitrateKbps: number | null;
     startedAtMs: number | null;
     failures: number;
+    warningReason: string | null;
     lastError: string | null;
 }
 
@@ -201,6 +202,7 @@ export interface OutputView extends Output {
     bitrateKbps: number | null;
     startedAtMs: number | null;
     failures: number;
+    warningReason: string | null;
     lastError: string | null;
     lastErrorAt: number | null;
 }

@@ -102,6 +102,7 @@ function outStatus(o: OutputView, inputLive: boolean): OutStatus {
     if (o.status === 'failed') return 'error';
     if (o.status === 'running') {
         if (!inputLive) return 'error';
+        if (o.warningReason !== null) return 'warn';
         if (o.bitrateKbps !== null && o.bitrateKbps >= LOW_BITRATE_KBPS) return 'good';
         if (o.bitrateKbps === null && o.lastError !== null) return 'error';
         return 'warn';
@@ -850,9 +851,11 @@ function renderOverview(): void {
                         : st === 'good'
                           ? `<span class="badge badge-sm badge-success">Running</span>`
                           : st === 'warn'
-                            ? o.bitrateKbps === null
-                                ? `<span class="badge badge-sm badge-warning">No Output</span>`
-                                : `<span class="badge badge-sm badge-warning">Low Bitrate</span>`
+                            ? o.warningReason
+                                ? `<span class="badge badge-sm badge-warning" title="${escHtml(o.warningReason)}">Warning</span>`
+                                : o.bitrateKbps === null
+                                  ? `<span class="badge badge-sm badge-warning">No Output</span>`
+                                  : `<span class="badge badge-sm badge-warning">Low Bitrate</span>`
                             : isRunning
                               ? `<span class="badge badge-sm badge-error gap-1">${retryPrefix}No Input</span>`
                               : `<span class="badge badge-sm badge-error gap-1">${retryPrefix}Failed</span>`;
@@ -1262,6 +1265,12 @@ function renderOutputCard(
                 <button class="btn btn-xs btn-ghost p-0 leading-none shrink-0 ${lastErrorColor}" data-action="error-info" data-out-id="${o.id}" title="View full error">${ICON_INFO}</button>
            </div>`
         : '';
+    const warningHtml = o.warningReason
+        ? `<div class="flex items-center gap-2 pl-2 mt-0.5 min-w-0">
+                <span class="text-warning shrink-0">${ICON_WARN}</span>
+                <span class="text-xs text-warning truncate">${escHtml(o.warningReason)}</span>
+           </div>`
+        : '';
 
     const isPending = pendingOutputs.has(o.id);
     return `
@@ -1280,6 +1289,7 @@ function renderOutputCard(
                 ${inlineSink}
             </div>
             ${belowSinks}
+            ${warningHtml}
             ${lastErrorHtml}
         </div>
         <div class="flex items-center gap-1 shrink-0">

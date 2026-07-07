@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
 import { buildFfmpegArgs, validateOutputUrl } from '../utils/ffmpeg.js';
 import { rtmpPullUrl, srtPullUrl } from '../utils/srs.js';
@@ -28,6 +28,19 @@ function positiveMsFromEnv(name: string, fallback: number): number {
 const OUTPUT_WATCHDOG_WARMUP_MS = positiveMsFromEnv('OUTPUT_WATCHDOG_WARMUP_MS', 90_000);
 const OUTPUT_WATCHDOG_STALL_MS = positiveMsFromEnv('OUTPUT_WATCHDOG_STALL_MS', 45_000);
 const OUTPUT_WATCHDOG_INTERVAL_MS = positiveMsFromEnv('OUTPUT_WATCHDOG_INTERVAL_MS', 5_000);
+const OUTPUT_SOCKET_WARMUP_MS = positiveMsFromEnv('OUTPUT_SOCKET_WARMUP_MS', 15_000);
+const OUTPUT_SOCKET_GRACE_MS = positiveMsFromEnv('OUTPUT_SOCKET_GRACE_MS', 30_000);
+const SOCKET_SNAPSHOT_TIMEOUT_MS = 2000;
+
+const TCP_HEALTHY_STATES = new Set(['ESTAB', 'ESTABLISHED']);
+const TCP_BAD_STATES = new Set([
+    'CLOSE-WAIT',
+    'CLOSING',
+    'FIN-WAIT-1',
+    'FIN-WAIT-2',
+    'LAST-ACK',
+    'TIME-WAIT',
+]);
 
 interface OutputStats {
     status: 'running' | 'stopped' | 'failed';
@@ -35,6 +48,7 @@ interface OutputStats {
     bitrateKbps: number | null;
     startedAtMs: number | null;
     failures: number;
+    warningReason: string | null;
 }
 
 interface OutputProgress {
@@ -44,6 +58,17 @@ interface OutputProgress {
     lastTotalSize: number | null;
     lastBitrateKbps: number | null;
     stderrTail: string;
+}
+
+interface TcpSocket {
+    state: string;
+    peerAddress: string;
+    peerPort: number;
+}
+
+interface SocketWarning {
+    reason: string;
+    badSinceMs: number;
 }
 
 export interface OutputService {
@@ -67,12 +92,17 @@ export function createOutputService(db: Db): OutputService {
     const bitrates = new Map<string, number | null>();
     const startTimes = new Map<string, number>();
     const progress = new Map<string, OutputProgress>();
+    const socketWarnings = new Map<string, SocketWarning>();
+    let tcpSocketsByPid = new Map<number, TcpSocket[]>();
+    let tcpSocketSnapshotUsable = false;
+    let socketSnapshotInProgress = false;
     const stopRequested = new Set<string>();
     const watchdogKills = new Set<string>();
     const startLocks = new Set<string>();
     const retryState = new Map<string, { failures: number; timer: NodeJS.Timeout | null }>();
     const watchdogTimer = setInterval(checkOutputWatchdog, OUTPUT_WATCHDOG_INTERVAL_MS);
     watchdogTimer.unref?.();
+    refreshTcpSocketSnapshot();
 
     // Whether an output's input is live and SRS is reachable. Wired up after
     // construction (the health service that knows this is created later). Defaults
@@ -92,6 +122,7 @@ export function createOutputService(db: Db): OutputService {
             bitrateKbps: bitrates.get(outputId) ?? null,
             startedAtMs: startTimes.get(outputId) ?? null,
             failures: retryState.get(outputId)?.failures ?? 0,
+            warningReason: socketWarnings.get(outputId)?.reason ?? null,
         };
     }
 
@@ -107,6 +138,7 @@ export function createOutputService(db: Db): OutputService {
             bitrates.delete(outputId);
             startTimes.delete(outputId);
             progress.delete(outputId);
+            socketWarnings.delete(outputId);
         }
     }
 
@@ -228,8 +260,196 @@ export function createOutputService(db: Db): OutputService {
         ].join('\n');
     }
 
+    function buildSocketWatchdogError(
+        outputId: string,
+        proc: ChildProcess,
+        reason: string,
+    ): string {
+        const p = progress.get(outputId);
+        const sockets = proc.pid == null ? [] : (tcpSocketsByPid.get(proc.pid) ?? []);
+        const socketSnapshot =
+            sockets.length === 0
+                ? 'socket_snapshot: <no sockets for pid>'
+                : `socket_snapshot:\n${sockets
+                      .map((s) => `  ${s.state} peer=${s.peerAddress}:${s.peerPort}`)
+                      .join('\n')}`;
+        return [
+            'watchdog: ffmpeg destination socket unhealthy; restarting process',
+            `pid=${proc.pid ?? 'unknown'}`,
+            `socket_warning=${reason}`,
+            socketSnapshot,
+            `last_total_size=${formatNullable(p?.lastTotalSize ?? null)}`,
+            `last_out_time_ms=${formatNullable(p?.lastOutTimeMs ?? null)}`,
+            `last_bitrate_kbps=${formatNullable(p?.lastBitrateKbps ?? null)}`,
+            p?.stderrTail.trim()
+                ? `ffmpeg stderr tail:\n${p.stderrTail.trim()}`
+                : 'ffmpeg stderr tail: <empty>',
+            `Restarting output: ${reason}`,
+        ].join('\n');
+    }
+
+    function parseEndpoint(endpoint: string): { address: string; port: number } | null {
+        const bracket = endpoint.match(/^\[([^\]]+)\]:(\d+)$/);
+        if (bracket) return { address: bracket[1], port: Number(bracket[2]) };
+        const idx = endpoint.lastIndexOf(':');
+        if (idx === -1) return null;
+        const port = Number(endpoint.slice(idx + 1));
+        return Number.isFinite(port) ? { address: endpoint.slice(0, idx), port } : null;
+    }
+
+    function isLocalAddress(address: string): boolean {
+        const normalized = address.toLowerCase().replace(/^\[|\]$/g, '');
+        return (
+            normalized === '::1' ||
+            normalized === 'localhost' ||
+            normalized.startsWith('127.') ||
+            normalized === '::ffff:7f00:1' ||
+            normalized.startsWith('::ffff:127.')
+        );
+    }
+
+    function parseTcpSocketSnapshot(stdout: string): Map<number, TcpSocket[]> {
+        const byPid = new Map<number, TcpSocket[]>();
+        for (const line of stdout.split('\n')) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            const parts = trimmed.split(/\s+/);
+            if (parts.length < 5) continue;
+            const state = parts[0];
+            const peer = parseEndpoint(parts[4]);
+            if (peer == null) continue;
+
+            const pidMatches = [...trimmed.matchAll(/pid=(\d+)/g)];
+            for (const match of pidMatches) {
+                const pid = Number(match[1]);
+                if (!Number.isFinite(pid)) continue;
+                const sockets = byPid.get(pid) ?? [];
+                sockets.push({ state, peerAddress: peer.address, peerPort: peer.port });
+                byPid.set(pid, sockets);
+            }
+        }
+        return byPid;
+    }
+
+    function refreshTcpSocketSnapshot(): void {
+        if (socketSnapshotInProgress) return;
+        if (![...processes.values()].some((proc) => proc.pid != null)) return;
+        socketSnapshotInProgress = true;
+        execFile(
+            'ss',
+            ['-H', '-tanp'],
+            { timeout: SOCKET_SNAPSHOT_TIMEOUT_MS, maxBuffer: 2 * 1024 * 1024 },
+            (err, stdout) => {
+                socketSnapshotInProgress = false;
+                if (err) {
+                    tcpSocketsByPid = new Map();
+                    tcpSocketSnapshotUsable = false;
+                    return;
+                }
+                tcpSocketsByPid = parseTcpSocketSnapshot(stdout);
+                tcpSocketSnapshotUsable = true;
+            },
+        );
+    }
+
+    function rtmpSinkRequirement(url: string): { port: number; local: boolean } | null {
+        if (!url.startsWith('rtmp://') && !url.startsWith('rtmps://')) return null;
+        try {
+            const parsed = new URL(url);
+            const port = parsed.port
+                ? Number(parsed.port)
+                : parsed.protocol === 'rtmps:'
+                  ? 443
+                  : 1935;
+            return { port, local: isLocalAddress(parsed.hostname) };
+        } catch {
+            return { port: url.startsWith('rtmps://') ? 443 : 1935, local: false };
+        }
+    }
+
+    function requiredRtmpSockets(
+        output: Output,
+    ): Map<string, { port: number; local: boolean; count: number }> {
+        const required = new Map<string, { port: number; local: boolean; count: number }>();
+        for (const sink of output.sinks) {
+            const req = rtmpSinkRequirement(sink.url);
+            if (req == null) continue;
+            // Local RTMP sockets are ambiguous: the ffmpeg input pull and output push
+            // both connect to local SRS, so leave local relays to the progress watchdog.
+            if (req.local) continue;
+            const key = `${req.local ? 'local' : 'remote'}:${req.port}`;
+            required.set(key, { ...req, count: (required.get(key)?.count ?? 0) + 1 });
+        }
+        return required;
+    }
+
+    function socketMatchesRequirement(
+        socket: TcpSocket,
+        requirement: { port: number; local: boolean },
+    ): boolean {
+        return (
+            socket.peerPort === requirement.port &&
+            isLocalAddress(socket.peerAddress) === requirement.local
+        );
+    }
+
+    function destinationSocketWarning(output: Output, proc: ChildProcess): string | null {
+        if (!tcpSocketSnapshotUsable) return null;
+        if (proc.pid == null) return null;
+        const required = requiredRtmpSockets(output);
+        if (required.size === 0) return null;
+
+        const sockets = tcpSocketsByPid.get(proc.pid) ?? [];
+        for (const requirement of required.values()) {
+            const bad = sockets.find(
+                (s) => socketMatchesRequirement(s, requirement) && TCP_BAD_STATES.has(s.state),
+            );
+            if (bad) return `RTMP socket ${bad.state} on destination port ${requirement.port}`;
+        }
+
+        for (const requirement of required.values()) {
+            const healthy = sockets.filter(
+                (s) => socketMatchesRequirement(s, requirement) && TCP_HEALTHY_STATES.has(s.state),
+            ).length;
+            if (healthy < requirement.count) {
+                return `RTMP socket missing (${healthy}/${requirement.count} established on destination port ${requirement.port})`;
+            }
+        }
+
+        return null;
+    }
+
+    function recordSocketWarning(outputId: string, reason: string, now: number): SocketWarning {
+        const existing = socketWarnings.get(outputId);
+        if (existing?.reason === reason) return existing;
+        const next = { reason, badSinceMs: existing?.badSinceMs ?? now };
+        socketWarnings.set(outputId, next);
+        return next;
+    }
+
+    function maybeKillForSocketWarning(
+        outputId: string,
+        proc: ChildProcess,
+        reason: string,
+        now: number,
+    ): boolean {
+        const warning = recordSocketWarning(outputId, reason, now);
+        if (now - warning.badSinceMs <= OUTPUT_SOCKET_GRACE_MS) return false;
+
+        try {
+            db.setOutputLastError(outputId, buildSocketWatchdogError(outputId, proc, reason));
+        } catch {
+            /* non-critical; still restart the stuck process */
+        }
+        console.warn(`[outputs] ${outputId} socket unhealthy: ${reason}, killing pid=${proc.pid}`);
+        watchdogKills.add(outputId);
+        void killProcess(outputId, proc, false);
+        return true;
+    }
+
     function checkOutputWatchdog(): void {
         const now = Date.now();
+        refreshTcpSocketSnapshot();
         for (const [outputId, proc] of processes) {
             if (watchdogKills.has(outputId)) continue;
             const output = db.getOutput(outputId);
@@ -238,8 +458,18 @@ export function createOutputService(db: Db): OutputService {
             const startedAtMs = startTimes.get(outputId);
             const p = progress.get(outputId);
             if (!startedAtMs || !p) continue;
-            if (now - startedAtMs < OUTPUT_WATCHDOG_WARMUP_MS) continue;
             if (!isInputReady(output.pipelineId)) continue;
+
+            if (now - startedAtMs >= OUTPUT_SOCKET_WARMUP_MS) {
+                const socketWarning = destinationSocketWarning(output, proc);
+                if (socketWarning) {
+                    if (maybeKillForSocketWarning(outputId, proc, socketWarning, now)) continue;
+                } else {
+                    socketWarnings.delete(outputId);
+                }
+            }
+
+            if (now - startedAtMs < OUTPUT_WATCHDOG_WARMUP_MS) continue;
             if (now - p.lastOutputProgressAtMs <= OUTPUT_WATCHDOG_STALL_MS) continue;
 
             try {
