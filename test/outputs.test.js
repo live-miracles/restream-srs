@@ -12,6 +12,11 @@ const path = require('node:path');
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'restream-srs-outputs-'));
 const originalCwd = process.cwd();
 
+after(() => {
+    process.chdir(originalCwd);
+    fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
 class FakeFfmpeg extends EventEmitter {
     constructor(pid = 1234) {
         super();
@@ -28,6 +33,29 @@ class FakeFfmpeg extends EventEmitter {
             this.emit('close', null, signal);
         });
         return true;
+    }
+}
+
+// Like FakeFfmpeg, but kill() only records the signal — the test controls when
+// the process actually exits, so it can interleave calls into the window
+// between SIGTERM and the real process exit.
+class ManualExitFfmpeg extends EventEmitter {
+    constructor(pid = 1234) {
+        super();
+        this.pid = pid;
+        this.stdout = new PassThrough();
+        this.stderr = new PassThrough();
+        this.killSignals = [];
+    }
+
+    kill(signal) {
+        this.killSignals.push(signal);
+        return true;
+    }
+
+    exit(signal = 'SIGTERM') {
+        this.emit('exit', null, signal);
+        this.emit('close', null, signal);
     }
 }
 
@@ -94,7 +122,9 @@ function loadOutputService(t, fakeProc, options = {}) {
         'utf8',
     );
 
-    t.mock.method(childProcess, 'spawn', () => fakeProc);
+    t.mock.method(childProcess, 'spawn', () =>
+        typeof fakeProc === 'function' ? fakeProc() : fakeProc,
+    );
     if (options.ssError) {
         t.mock.method(childProcess, 'execFile', (_cmd, _args, _opts, cb) => {
             queueMicrotask(() => cb(options.ssError, '', ''));
@@ -128,11 +158,6 @@ describe('output watchdog', () => {
         process.chdir(originalCwd);
         delete require.cache[require.resolve('../src/services/outputs')];
         delete require.cache[require.resolve('../src/utils/appConfig')];
-    });
-
-    after(() => {
-        process.chdir(originalCwd);
-        fs.rmSync(tempDir, { recursive: true, force: true });
     });
 
     test('kills and retries a running output when ffmpeg output progress stalls', async (t) => {
@@ -381,6 +406,83 @@ describe('output watchdog', () => {
 
         assert.equal(service.getStats('out1').warningReason, null);
         assert.deepEqual(proc.killSignals, []);
+
+        service.shutdown();
+    });
+});
+
+describe('output stop/start race', () => {
+    beforeEach(() => {
+        process.chdir(tempDir);
+    });
+
+    afterEach(() => {
+        process.chdir(originalCwd);
+        delete require.cache[require.resolve('../src/services/outputs')];
+        delete require.cache[require.resolve('../src/utils/appConfig')];
+    });
+
+    test('restarts an output when start arrives while a stop kill is in flight', async (t) => {
+        const procs = [];
+        const spawnNext = () => {
+            const proc = new ManualExitFfmpeg(1000 + procs.length);
+            procs.push(proc);
+            return proc;
+        };
+        const db = makeDb();
+        const output = db.getOutput('out1');
+        const createOutputService = loadOutputService(t, spawnNext, { progressStallMs: 60_000 });
+        const service = createOutputService(db, makeReadyInputState());
+
+        await service.start('out1');
+        assert.equal(procs.length, 1);
+        assert.equal(service.getStats('out1').status, 'running');
+
+        // Operator clicks Stop: desiredState flips first (API order), then the
+        // kill is issued. The process has not exited yet.
+        output.desiredState = 'stopped';
+        service.stop('out1');
+        assert.deepEqual(procs[0].killSignals, ['SIGTERM']);
+        assert.equal(service.getStats('out1').status, 'running');
+
+        // Operator clicks Start again before ffmpeg finishes dying. start()
+        // still sees status 'running' and returns without spawning.
+        output.desiredState = 'running';
+        await service.start('out1');
+        assert.equal(procs.length, 1);
+
+        // The old process now exits from the SIGTERM. The requested-stop exit
+        // must notice desiredState is 'running' again and respawn.
+        procs[0].exit();
+        await sleep(30);
+
+        assert.equal(procs.length, 2, 'a replacement ffmpeg should have been spawned');
+        assert.equal(service.getStats('out1').status, 'running');
+        assert.equal(service.getStats('out1').failures, 0);
+
+        service.shutdown();
+    });
+
+    test('does not restart when the output stays stopped', async (t) => {
+        const procs = [];
+        const spawnNext = () => {
+            const proc = new ManualExitFfmpeg(1000 + procs.length);
+            procs.push(proc);
+            return proc;
+        };
+        const db = makeDb();
+        const output = db.getOutput('out1');
+        const createOutputService = loadOutputService(t, spawnNext, { progressStallMs: 60_000 });
+        const service = createOutputService(db, makeReadyInputState());
+
+        await service.start('out1');
+        output.desiredState = 'stopped';
+        service.stop('out1');
+        procs[0].exit();
+        await sleep(30);
+
+        assert.equal(procs.length, 1);
+        assert.equal(service.getStats('out1').status, 'stopped');
 
         service.shutdown();
     });
