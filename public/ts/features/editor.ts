@@ -1,19 +1,15 @@
 import * as api from '../core/api.js';
 import { state } from '../core/state.js';
-import { setUrlParam, maskStreamKey, withBusy, copyText } from '../core/utils.js';
+import { setUrlParam, maskStreamKey, withBusy, copyText, escapeHtml } from '../core/utils.js';
 import { refreshAfterMutation } from './dashboard.js';
 import type { StreamKey, AudioTrackInfo, HostProbeTarget } from '../types.js';
 
 const MAX_HOST_PROBE_TARGETS = 10;
 
-function escAttr(value: string): string {
-    return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-}
-
 function hostProbeRowHtml(slot: number, target?: HostProbeTarget): string {
     return `<tr data-host-probe-row="${slot}">
-        <td><input type="text" class="input input-sm w-full" data-host-probe-slot="${slot}" data-host-probe-field="label" placeholder="YouTube" value="${escAttr(target?.label ?? '')}" /></td>
-        <td><input type="text" class="input input-sm w-full font-mono text-sm" data-host-probe-slot="${slot}" data-host-probe-field="host" placeholder="a.rtmp.youtube.com" value="${escAttr(target?.host ?? '')}" /></td>
+        <td><input type="text" class="input input-sm w-full" data-host-probe-slot="${slot}" data-host-probe-field="label" placeholder="YouTube" value="${escapeHtml(target?.label ?? '')}" /></td>
+        <td><input type="text" class="input input-sm w-full font-mono text-sm" data-host-probe-slot="${slot}" data-host-probe-field="host" placeholder="a.rtmp.youtube.com" value="${escapeHtml(target?.host ?? '')}" /></td>
         <td><input type="number" min="1" max="65535" class="input input-sm w-full font-mono text-sm" data-host-probe-slot="${slot}" data-host-probe-field="port" placeholder="1935" value="${target?.port ?? ''}" /></td>
         <td class="text-right">
             <button type="button" class="btn btn-ghost btn-xs" onclick="removeHostProbeRowBtn(${slot})" aria-label="Remove host probe">&times;</button>
@@ -375,7 +371,7 @@ function restreamPipelineOpts(selectedId: string): string {
         pipelines
             .map(
                 (p) =>
-                    `<option value="${escapeAttr(String(p.id))}"${String(p.id) === selectedId ? ' selected' : ''}>${escapeAttr(p.name)}</option>`,
+                    `<option value="${escapeHtml(String(p.id))}"${String(p.id) === selectedId ? ' selected' : ''}>${escapeHtml(p.name)}</option>`,
             )
             .join('')
     );
@@ -387,7 +383,7 @@ function sinkKeyFieldHtml(idx: number, key: string): string {
     }
     const s = SERVERS[idx];
     return `<input type="text" class="input input-sm w-full font-mono text-xs js-sink-key"
-               placeholder="${s.placeholder}" value="${escapeAttr(key)}"
+               placeholder="${s.placeholder}" value="${escapeHtml(key)}"
                oninput="this.classList.remove('input-error')" />`;
 }
 
@@ -400,10 +396,6 @@ function outVideoEncodingOptions(selected: string): string {
     return encodings
         .map((e) => `<option value="${e}" ${e === selected ? 'selected' : ''}>${e}</option>`)
         .join('');
-}
-
-function escapeAttr(value: string): string {
-    return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }
 
 // Tracks for the pipeline whose output modal is currently open. Captured when the
@@ -431,7 +423,7 @@ function audioOptionsHtml(tracks: AudioTrackInfo[], selected: string): string {
         if (t.title) parts.push(`— ${t.title}`);
         parts.push(`· ${t.codec} ${t.channels}ch`);
         options.push(
-            `<option value="${val}"${selected === val ? ' selected' : ''}>${parts.join(' ')}</option>`,
+            `<option value="${val}"${selected === val ? ' selected' : ''}>${escapeHtml(parts.join(' '))}</option>`,
         );
     }
     if (selected !== 'copy' && !seen.has(selected)) {
