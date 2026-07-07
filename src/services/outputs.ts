@@ -2,6 +2,7 @@ import { execFile, spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
 import { buildFfmpegArgs, validateOutputUrl } from '../utils/ffmpeg.js';
 import { rtmpPullUrl, srtPullUrl } from '../utils/srs.js';
+import { readAppConfig } from '../utils/appConfig.js';
 import type { Db, Output } from '../types.js';
 
 function hasValidSinks(output: Output): boolean {
@@ -16,20 +17,13 @@ const RECHECK_DELAY_MS = 5000;
 const SIGKILL_DELAY_MS = 5000;
 const STDERR_TAIL_BYTES = 3000;
 const RESTART_STAGGER_MS = 200;
-const FFMPEG_CMD = process.env.FFMPEG_PATH || 'ffmpeg';
-
-function positiveMsFromEnv(name: string, fallback: number): number {
-    const raw = process.env[name];
-    if (raw == null) return fallback;
-    const value = Number(raw);
-    return Number.isFinite(value) && value > 0 ? value : fallback;
-}
-
-const OUTPUT_WATCHDOG_WARMUP_MS = positiveMsFromEnv('OUTPUT_WATCHDOG_WARMUP_MS', 90_000);
-const OUTPUT_WATCHDOG_STALL_MS = positiveMsFromEnv('OUTPUT_WATCHDOG_STALL_MS', 45_000);
-const OUTPUT_WATCHDOG_INTERVAL_MS = positiveMsFromEnv('OUTPUT_WATCHDOG_INTERVAL_MS', 5_000);
-const OUTPUT_SOCKET_WARMUP_MS = positiveMsFromEnv('OUTPUT_SOCKET_WARMUP_MS', 15_000);
-const OUTPUT_SOCKET_GRACE_MS = positiveMsFromEnv('OUTPUT_SOCKET_GRACE_MS', 30_000);
+const appConfig = readAppConfig();
+const FFMPEG_CMD = appConfig.ffmpegPath;
+const OUTPUT_WATCHDOG_WARMUP_MS = appConfig.outputWatchdog.warmupMs;
+const OUTPUT_WATCHDOG_STALL_MS = appConfig.outputWatchdog.stallMs;
+const OUTPUT_WATCHDOG_INTERVAL_MS = appConfig.outputWatchdog.intervalMs;
+const OUTPUT_SOCKET_WARMUP_MS = appConfig.outputWatchdog.socketWarmupMs;
+const OUTPUT_SOCKET_GRACE_MS = appConfig.outputWatchdog.socketGraceMs;
 const SOCKET_SNAPSHOT_TIMEOUT_MS = 2000;
 
 const TCP_HEALTHY_STATES = new Set(['ESTAB', 'ESTABLISHED']);

@@ -173,31 +173,30 @@ chown -R "$SERVICE_USER:$SERVICE_USER" "$APP_DIR"
 echo "Build complete."
 
 step "8/10 Config and data"
-if [[ ! -f "$CONF_DIR/srs.conf" ]]; then
-    cp "$APP_DIR/srs.conf" "$CONF_DIR/srs.conf"
-    echo "Config: created $CONF_DIR/srs.conf"
-else
-    regen_conf=no
-    case "${REGEN_CONF:-}" in
-        y | Y) regen_conf=yes ;;
-        n | N) regen_conf=no ;;
-        *)
-            if [[ -t 0 ]]; then
-                read -rp "Existing srs.conf found. Regenerate from template? This resets SRT passphrase and other manual edits. [y/N] " reply
-                [[ "$reply" == "y" || "$reply" == "Y" ]] && regen_conf=yes
-            fi
-            ;;
-    esac
-    if [[ "$regen_conf" == "yes" ]]; then
-        cp "$APP_DIR/srs.conf" "$CONF_DIR/srs.conf"
-        echo "Config: regenerated $CONF_DIR/srs.conf from template"
-    else
-        echo "Config: keeping existing $CONF_DIR/srs.conf"
-    fi
-fi
+cp "$APP_DIR/srs.conf" "$CONF_DIR/srs.conf"
+cp "$APP_DIR/srt-bonding-relay.json" "$CONF_DIR/srt-bonding-relay.json"
+echo "Config: refreshed $CONF_DIR/srs.conf from repository"
+echo "Config: refreshed $CONF_DIR/srt-bonding-relay.json from repository"
 # Patch in server-specific log paths (not in the repo's srs.conf).
 sed -i '/^[[:space:]]*srs_log_tank[[:space:]]/d; /^[[:space:]]*srs_log_file[[:space:]]/d' "$CONF_DIR/srs.conf"
 sed -i "/^listen/a srs_log_tank        file;\nsrs_log_file        $LOG_DIR/srs.log;" "$CONF_DIR/srs.conf"
+cat > "$APP_DIR/restream.json" <<EOF
+{
+    "port": 8080,
+    "database_path": "$DATA_DIR/db.sqlite",
+    "srs_config_path": "$CONF_DIR/srs.conf",
+    "ffmpeg_path": "/usr/local/bin/ffmpeg",
+    "ffprobe_path": "/usr/local/bin/ffprobe",
+    "output_watchdog": {
+        "warmup_ms": 90000,
+        "stall_ms": 45000,
+        "interval_ms": 5000,
+        "socket_warmup_ms": 15000,
+        "socket_grace_ms": 30000
+    }
+}
+EOF
+echo "Config: refreshed $APP_DIR/restream.json"
 # Database. We don't run data migrations, so a db.sqlite left over from an older
 # version could be schema-incompatible and cause hard-to-debug issues.
 DB_FILE="$DATA_DIR/db.sqlite"
@@ -209,8 +208,8 @@ if [[ -s "$DB_FILE" ]]; then
         n | N) wipe_db=no ;;
         *)
             if [[ -t 0 ]]; then
-                read -rp "Existing database found at $DB_FILE. Wipe it and start fresh? [y/N] " reply
-                [[ "$reply" == "y" || "$reply" == "Y" ]] && wipe_db=yes
+                read -rp "Existing database found at $DB_FILE. Preserve it? [Y/n] " reply
+                [[ "$reply" == "n" || "$reply" == "N" ]] && wipe_db=yes
             fi
             ;;
     esac
@@ -223,20 +222,9 @@ if [[ -s "$DB_FILE" ]]; then
     fi
 fi
 touch "$DB_FILE"
-if [[ ! -f "$CONF_DIR/srt-bonding-relay.json" ]]; then
-    cat > "$CONF_DIR/srt-bonding-relay.json" <<EOF
-{
-    "input_host": "0.0.0.0",
-    "input_port": 10081,
-    "output_host": "127.0.0.1",
-    "output_port": 10080,
-    "status_port": 8081,
-    "passphrase": ""
-}
-EOF
-fi
-chown "$SERVICE_USER:$SERVICE_USER" "$CONF_DIR/srs.conf" "$CONF_DIR/srt-bonding-relay.json" "$DB_FILE"
+chown "$SERVICE_USER:$SERVICE_USER" "$CONF_DIR/srs.conf" "$CONF_DIR/srt-bonding-relay.json" "$APP_DIR/restream.json" "$DB_FILE"
 echo "Config: $CONF_DIR/srs.conf"
+echo "App config: $APP_DIR/restream.json"
 echo "Data:   $DB_FILE"
 
 step "9/10 Logrotate"
@@ -317,15 +305,6 @@ User=$SERVICE_USER
 Group=$SERVICE_USER
 WorkingDirectory=$APP_DIR
 Environment=NODE_ENV=production
-Environment=PORT=8080
-Environment=DB_PATH=$DATA_DIR/db.sqlite
-Environment=SRS_CONF_PATH=$CONF_DIR/srs.conf
-Environment=SRS_LOG_PATH=$LOG_DIR/srs.log
-Environment=SRS_API_URL=http://127.0.0.1:1985
-Environment=SRS_RTMP_HOST=127.0.0.1
-Environment=SRS_RTMP_PORT=1935
-Environment=FFMPEG_PATH=/usr/local/bin/ffmpeg
-Environment=FFPROBE_PATH=/usr/local/bin/ffprobe
 ExecStart=/usr/bin/node $APP_DIR/dist/index.js
 Restart=always
 RestartSec=2
@@ -366,6 +345,7 @@ else
     echo "  Forgot it? Run scripts/server-reset-password.sh"
 fi
 echo "  Set your public host in Settings → Public Host"
+echo "App config: $APP_DIR/restream.json"
 echo "Config:    $CONF_DIR/srs.conf"
 echo "Data:      $DATA_DIR/db.sqlite"
 echo ""

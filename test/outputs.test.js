@@ -1,12 +1,16 @@
 'use strict';
 
-const { describe, test, beforeEach, afterEach } = require('node:test');
+const { after, describe, test, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { PassThrough } = require('node:stream');
 const childProcess = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
-const originalEnv = { ...process.env };
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'restream-srs-outputs-'));
+const originalCwd = process.cwd();
 
 class FakeFfmpeg extends EventEmitter {
     constructor(pid = 1234) {
@@ -62,12 +66,33 @@ function makeDb() {
 }
 
 function loadOutputService(t, fakeProc, options = {}) {
-    process.env.OUTPUT_WATCHDOG_WARMUP_MS = '10';
-    process.env.OUTPUT_WATCHDOG_STALL_MS = String(options.progressStallMs ?? 20);
-    process.env.OUTPUT_WATCHDOG_INTERVAL_MS = '10';
-    if (options.socketWarmupMs)
-        process.env.OUTPUT_SOCKET_WARMUP_MS = String(options.socketWarmupMs);
-    if (options.socketGraceMs) process.env.OUTPUT_SOCKET_GRACE_MS = String(options.socketGraceMs);
+    fs.writeFileSync(
+        path.join(tempDir, 'restream.json'),
+        JSON.stringify(
+            {
+                port: 8080,
+                database_path: './db.sqlite',
+                srs_config_path: './srs.conf',
+                ffmpeg_path: 'ffmpeg',
+                ffprobe_path: 'ffprobe',
+                output_watchdog: {
+                    warmup_ms: 10,
+                    stall_ms: options.progressStallMs ?? 20,
+                    interval_ms: 10,
+                    socket_warmup_ms: options.socketWarmupMs ?? 15_000,
+                    socket_grace_ms: options.socketGraceMs ?? 30_000,
+                },
+            },
+            null,
+            4,
+        ),
+        'utf8',
+    );
+    fs.writeFileSync(
+        path.join(tempDir, 'srs.conf'),
+        'listen 1935;\nhttp_api {\n    listen 1985;\n}\n',
+        'utf8',
+    );
 
     t.mock.method(childProcess, 'spawn', () => fakeProc);
     if (options.ssError) {
@@ -85,12 +110,18 @@ function loadOutputService(t, fakeProc, options = {}) {
 
 describe('output watchdog', () => {
     beforeEach(() => {
-        process.env = { ...originalEnv };
+        process.chdir(tempDir);
     });
 
     afterEach(() => {
-        process.env = { ...originalEnv };
+        process.chdir(originalCwd);
         delete require.cache[require.resolve('../src/services/outputs')];
+        delete require.cache[require.resolve('../src/utils/appConfig')];
+    });
+
+    after(() => {
+        process.chdir(originalCwd);
+        fs.rmSync(tempDir, { recursive: true, force: true });
     });
 
     test('kills and retries a running output when ffmpeg output progress stalls', async (t) => {

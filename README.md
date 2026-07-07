@@ -104,15 +104,15 @@ Default ports from `srs.conf` and `srt-bonding-relay.json`:
 | 10081 | UDP | SRT bonding input |
 | 8080 | TCP | Dashboard + API |
 
-### SRS config reload
+### SRS and SRT relay config
 
-The app writes both SRT runtime config files together:
+The repository copies both runtime config files during install:
 - `/etc/restream-srs/srs.conf`
 - `/etc/restream-srs/srt-bonding-relay.json`
 
 SRS only reads its config at startup, and the SRT bonding relay only reads its
-JSON config file at startup, so SRT passphrase changes require restarting the media
-services.
+JSON config file at startup. To change the SRT passphrase, edit `srs.conf` and
+`srt-bonding-relay.json` in the repo, deploy them, and restart the media services.
 
 ---
 
@@ -202,7 +202,7 @@ so there is no pull-method setting.
 | POST | `/api/pipelines/:id/outputs/stop-all` | Stop all outputs |
 | POST | `/api/pipelines/:id/outputs/:outId/start` | Start output |
 | POST | `/api/pipelines/:id/outputs/:outId/stop` | Stop output |
-| POST | `/api/settings` | Update settings `{ name, srtPassphrase, publicHost }` |
+| POST | `/api/settings` | Update settings `{ name, publicHost }` |
 | POST | `/api/settings/regenerate-stream-keys` | Regenerate all stream keys |
 | POST | `/api/auth/login` | Login `{ password }` — sets session cookie |
 | POST | `/api/auth/logout` | Logout — clears session cookie |
@@ -252,24 +252,35 @@ npm run dev           # tsx watch + tsc watch + tailwind watch
 
 ---
 
-## Environment variables
+## Configuration
 
-Runtime app/service variables:
+The app reads runtime settings from `restream.json` in the app root.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `NODE_ENV` | unset (`production` in systemd) | Node/Express runtime environment |
-| `PORT` | `8080` | App HTTP port |
-| `DB_PATH` | `./db.sqlite` | SQLite database path |
-| `SRS_API_URL` | `http://localhost:1985` | SRS HTTP API URL |
-| `SRS_RTMP_HOST` | `localhost` | SRS RTMP host (for FFmpeg to pull from) |
-| `SRS_RTMP_PORT` | `1935` | SRS RTMP port |
-| `SRS_CONF_PATH` | `./srs.conf` | SRS config path written by the app |
-| `SRS_LOG_PATH` | `./objs/srs.log` | SRS log path read for the dashboard log tail |
-| `FFMPEG_PATH` | `ffmpeg` | FFmpeg binary for outputs and previews |
-| `FFPROBE_PATH` | `ffprobe` | FFprobe binary for input media probing |
+`restream.json`:
 
-Relay ports and status polling are read from `srt-bonding-relay.json`, located beside `SRS_CONF_PATH`.
+| Field | Default | Description |
+|-------|---------|-------------|
+| `port` | `8080` | App HTTP port |
+| `database_path` | `./db.sqlite` | SQLite database path |
+| `srs_config_path` | `./srs.conf` | SRS config path |
+| `ffmpeg_path` | `ffmpeg` | FFmpeg binary for outputs and previews |
+| `ffprobe_path` | `ffprobe` | FFprobe binary for input media probing |
+| `output_watchdog.warmup_ms` | `90000` | Output progress watchdog warmup before stall checks |
+| `output_watchdog.stall_ms` | `45000` | Output progress stall window before restarting FFmpeg |
+| `output_watchdog.interval_ms` | `5000` | Output watchdog polling interval |
+| `output_watchdog.socket_warmup_ms` | `15000` | Socket watchdog warmup before socket-state checks |
+| `output_watchdog.socket_grace_ms` | `30000` | Socket warning grace window before restarting FFmpeg |
+
+Relative file paths are resolved from the app root. Command names like `ffmpeg`
+and `ffprobe` are left as command names.
+
+SRS values are inferred from `srs.conf`:
+- RTMP pull/publish port from top-level `listen`
+- SRT pull/publish port from `srt_server { listen ... }`
+- SRS HTTP API port from `http_api { listen ... }`
+- dashboard log tail path from `srs_log_file`
+
+Relay ports and status polling are read from `srt-bonding-relay.json`, located beside `srs_config_path`.
 
 Installer/development overrides:
 
@@ -279,7 +290,6 @@ Installer/development overrides:
 | `SRT_RELEASE_TAG` | `server-install.sh` | Relay GitHub release tag to install |
 | `SRT_URL` | `server-install.sh` | Custom relay release archive URL |
 | `SRT_SHA256` | `server-install.sh` | Expected SHA256 for the relay archive; blank skips verification |
-| `REGEN_CONF` | `server-install.sh` | Set `y`/`n` to force or skip regenerating `/etc/restream-srs/srs.conf` |
 | `WIPE_DB` | `server-install.sh` | Set `y`/`n` to force or skip wiping the existing SQLite DB |
 | `SRS_LOCAL_BIN` | `dev-server-install.sh` | Local executable SRS binary to copy into `./objs/srs` |
 

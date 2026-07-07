@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
+import { readAppConfig } from './appConfig.js';
 
-const CONF_PATH = process.env.SRS_CONF_PATH ?? path.join(process.cwd(), 'srs.conf');
+const CONF_PATH = readAppConfig().srsConfigPath;
 const RELAY_CONFIG_PATH = path.join(path.dirname(CONF_PATH), 'srt-bonding-relay.json');
 
 export interface SrtBondingRelayConfig {

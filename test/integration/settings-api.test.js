@@ -1,31 +1,12 @@
 'use strict';
 
-const { after, describe, test } = require('node:test');
+const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
 const { Readable, Writable } = require('node:stream');
-
-const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'restream-srs-settings-'));
-process.env.SRS_CONF_PATH = path.join(tempDir, 'srs.conf');
-const relayConfigPath = path.join(tempDir, 'srt-bonding-relay.json');
-
-// writeSrsConf patches an existing file, so seed a minimal conf with the
-// srt_server block that the passphrase injection regex targets.
-fs.writeFileSync(
-    process.env.SRS_CONF_PATH,
-    'srt_server {\n    enabled     on;\n    listen      10080;\n}\n',
-    'utf8',
-);
 
 const { createDb } = require('../../src/db/index');
 const { registerSettingsApi } = require('../../src/api/settings');
-
-after(() => {
-    fs.rmSync(tempDir, { recursive: true, force: true });
-});
 
 class MockRequest extends Readable {
     constructor(method, url, body) {
@@ -121,7 +102,6 @@ describe('Settings API integration', () => {
         assert.equal(res.status, 200);
         assert.deepEqual(res.body, {
             serverName: 'Control Room',
-            srtPassphrase: null,
             publicHost: 'localhost',
             pending: false,
         });
@@ -135,13 +115,11 @@ describe('Settings API integration', () => {
 
         const res = await harness.request('POST', '/api/settings', {
             name: 'New Name',
-            srtPassphrase: 'secret-value',
         });
 
         assert.equal(res.status, 200);
         assert.deepEqual(res.body, {
             serverName: 'New Name',
-            srtPassphrase: 'secret-value',
             publicHost: 'localhost',
             pending: false,
         });
@@ -149,7 +127,7 @@ describe('Settings API integration', () => {
         assert.equal(harness.db.getSetting('srtPassphrase'), 'secret-value');
     });
 
-    test('combined settings endpoint writes SRT passphrase settings', async () => {
+    test('combined settings endpoint ignores SRT passphrase payloads', async () => {
         const harness = createHarness();
         const res = await harness.request('POST', '/api/settings', {
             name: 'Control Room',
@@ -159,32 +137,25 @@ describe('Settings API integration', () => {
         assert.equal(res.status, 200);
         assert.deepEqual(res.body, {
             serverName: 'Control Room',
-            srtPassphrase: 'secret-value',
             publicHost: 'localhost',
-            pending: true,
+            pending: false,
         });
-        assert.equal(harness.db.getSetting('srtPassphrase'), 'secret-value');
-        const conf = fs.readFileSync(process.env.SRS_CONF_PATH, 'utf8');
-        const relayConfig = JSON.parse(fs.readFileSync(relayConfigPath, 'utf8'));
-        assert.match(conf, /passphrase\s+"secret-value";/);
-        assert.match(conf, /pbkeylen\s+16;/);
-        assert.equal(relayConfig.input_host, '0.0.0.0');
-        assert.equal(relayConfig.input_port, 10081);
-        assert.equal(relayConfig.output_host, '127.0.0.1');
-        assert.equal(relayConfig.output_port, 10080);
-        assert.equal(relayConfig.status_port, 8081);
-        assert.equal(relayConfig.passphrase, 'secret-value');
+        assert.equal(harness.db.getSetting('srtPassphrase'), null);
     });
 
-    test('combined settings endpoint rejects invalid SRT passphrase', async () => {
+    test('combined settings endpoint ignores invalid SRT passphrase payloads', async () => {
         const harness = createHarness();
         const res = await harness.request('POST', '/api/settings', {
             name: 'Control Room',
             srtPassphrase: 'short',
         });
 
-        assert.equal(res.status, 400);
-        assert.match(res.body.error, /10 to 79/);
+        assert.equal(res.status, 200);
+        assert.deepEqual(res.body, {
+            serverName: 'Control Room',
+            publicHost: 'localhost',
+            pending: false,
+        });
         assert.equal(harness.db.getSetting('srtPassphrase'), null);
     });
 });

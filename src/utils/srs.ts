@@ -1,8 +1,5 @@
-import { readRelayConfig } from './relayConfig.js';
+import { readSrsConfigValues } from './srsConfig.js';
 
-const SRS_API_URL = process.env.SRS_API_URL || 'http://localhost:1985';
-const SRS_RTMP_HOST = process.env.SRS_RTMP_HOST || 'localhost';
-const SRS_RTMP_PORT = parseInt(process.env.SRS_RTMP_PORT || '1935');
 const SRS_CLIENT_FETCH_TIMEOUT_MS = 3000;
 const SRS_CLIENT_HEALTH_FETCH_TIMEOUT_MS = 1000;
 const SRS_CLIENT_HEALTH_FETCH_COUNT = 1000;
@@ -65,10 +62,11 @@ export interface SrsClient {
 }
 
 export async function kickSrsClientsByStream(app: string, stream: string): Promise<void> {
+    const srsApiUrl = readSrsConfigValues().apiUrl;
     const PAGE_SIZE = 100;
     let start = 0;
     while (true) {
-        const res = await fetch(`${SRS_API_URL}/api/v1/clients?start=${start}&count=${PAGE_SIZE}`, {
+        const res = await fetch(`${srsApiUrl}/api/v1/clients?start=${start}&count=${PAGE_SIZE}`, {
             signal: AbortSignal.timeout(SRS_CLIENT_FETCH_TIMEOUT_MS),
         });
         if (!res.ok) return;
@@ -78,7 +76,7 @@ export async function kickSrsClientsByStream(app: string, stream: string): Promi
         const clients = data.clients ?? [];
         for (const client of clients) {
             if (client.app === app && client.stream === stream) {
-                await fetch(`${SRS_API_URL}/api/v1/clients/${client.id}`, {
+                await fetch(`${srsApiUrl}/api/v1/clients/${client.id}`, {
                     method: 'DELETE',
                     signal: AbortSignal.timeout(SRS_CLIENT_FETCH_TIMEOUT_MS),
                 }).catch(() => {});
@@ -90,8 +88,9 @@ export async function kickSrsClientsByStream(app: string, stream: string): Promi
 }
 
 export async function fetchSrsClientsForHealth(): Promise<SrsClient[]> {
+    const srsApiUrl = readSrsConfigValues().apiUrl;
     const res = await fetch(
-        `${SRS_API_URL}/api/v1/clients?start=0&count=${SRS_CLIENT_HEALTH_FETCH_COUNT}`,
+        `${srsApiUrl}/api/v1/clients?start=0&count=${SRS_CLIENT_HEALTH_FETCH_COUNT}`,
         {
             signal: AbortSignal.timeout(SRS_CLIENT_HEALTH_FETCH_TIMEOUT_MS),
             headers: { Connection: 'close' },
@@ -103,7 +102,8 @@ export async function fetchSrsClientsForHealth(): Promise<SrsClient[]> {
 }
 
 export async function fetchSrsClients(): Promise<SrsClient[]> {
-    const res = await fetch(`${SRS_API_URL}/api/v1/clients/`, {
+    const srsApiUrl = readSrsConfigValues().apiUrl;
+    const res = await fetch(`${srsApiUrl}/api/v1/clients/`, {
         signal: AbortSignal.timeout(SRS_CLIENT_FETCH_TIMEOUT_MS),
         headers: { Connection: 'close' },
     });
@@ -113,7 +113,8 @@ export async function fetchSrsClients(): Promise<SrsClient[]> {
 }
 
 export async function fetchSrsStreams(): Promise<SrsStream[]> {
-    const res = await fetch(`${SRS_API_URL}/api/v1/streams/`, {
+    const srsApiUrl = readSrsConfigValues().apiUrl;
+    const res = await fetch(`${srsApiUrl}/api/v1/streams/`, {
         signal: AbortSignal.timeout(SRS_STREAMS_FETCH_TIMEOUT_MS),
         headers: { Connection: 'close' },
     });
@@ -123,7 +124,8 @@ export async function fetchSrsStreams(): Promise<SrsStream[]> {
 }
 
 export function rtmpPullUrl(streamKey: string): string {
-    return `rtmp://${SRS_RTMP_HOST}:${SRS_RTMP_PORT}/live/${streamKey}`;
+    const srs = readSrsConfigValues();
+    return `rtmp://${srs.rtmpHost}:${srs.rtmpPort}/live/${streamKey}`;
 }
 
 // latency/transtype are required, not optional tuning. Without an explicit
@@ -134,15 +136,16 @@ export function rtmpPullUrl(streamKey: string): string {
 // so every audio track survives (RTMP/srt_to_rtmp would collapse to one) and
 // the timestamps stay clean (no srt_to_rtmp jitter — ffmpeg demuxes the TS).
 export function srtPullUrl(streamKey: string): string {
-    return `srt://${SRS_RTMP_HOST}:${readRelayConfig().output_port}?streamid=#!::r=live/${streamKey},m=request&latency=200000&transtype=live`;
+    const srs = readSrsConfigValues();
+    return `srt://${srs.rtmpHost}:${srs.srtPort}?streamid=#!::r=live/${streamKey},m=request&latency=200000&transtype=live`;
 }
 
 export function rtmpPublishUrl(streamKey: string, host: string): string {
-    return `rtmp://${host}:1935/live/${streamKey}`;
+    return `rtmp://${host}:${readSrsConfigValues().rtmpPort}/live/${streamKey}`;
 }
 
 export function srtPublishUrl(streamKey: string, host: string, passphrase?: string | null): string {
-    const url = `srt://${host}:${readRelayConfig().output_port}?streamid=#!::r=live/${streamKey},m=publish`;
+    const url = `srt://${host}:${readSrsConfigValues().srtPort}?streamid=#!::r=live/${streamKey},m=publish`;
     if (!passphrase) return url;
     return `${url}&passphrase=${encodeURIComponent(passphrase)}&pbkeylen=16`;
 }

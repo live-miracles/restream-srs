@@ -7,11 +7,29 @@ const os = require('node:os');
 const path = require('node:path');
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'restream-srs-utils-'));
-process.env.SRS_CONF_PATH = path.join(tempDir, 'srs.conf');
-
-// Clear SRS env vars so module constants use their defaults.
-delete process.env.SRS_RTMP_HOST;
-delete process.env.SRS_RTMP_PORT;
+const originalCwd = process.cwd();
+const srsConfPath = path.join(tempDir, 'srs.conf');
+process.chdir(tempDir);
+fs.writeFileSync(
+    path.join(tempDir, 'restream.json'),
+    JSON.stringify(
+        {
+            port: 8080,
+            database_path: './db.sqlite',
+            srs_config_path: './srs.conf',
+            ffmpeg_path: 'ffmpeg',
+            ffprobe_path: 'ffprobe',
+        },
+        null,
+        4,
+    ),
+    'utf8',
+);
+fs.writeFileSync(
+    srsConfPath,
+    'listen 1935;\nsrs_log_file ./objs/srs.log;\nhttp_api {\n    enabled on;\n    listen 1985;\n}\nsrt_server {\n    enabled on;\n    listen 10080;\n}\n',
+    'utf8',
+);
 
 const {
     buildFfmpegArgs,
@@ -23,6 +41,7 @@ const { rtmpPullUrl, srtPullUrl, rtmpPublishUrl, srtPublishUrl } = require('../s
 const sink = (url, audioEncoding = 'copy') => ({ url, audioEncoding });
 
 after(() => {
+    process.chdir(originalCwd);
     fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
@@ -230,13 +249,13 @@ describe('validateAudioEncoding', () => {
 
 describe('URL builders', () => {
     test('rtmpPullUrl uses default host and port', () => {
-        assert.equal(rtmpPullUrl('mykey'), 'rtmp://localhost:1935/live/mykey');
+        assert.equal(rtmpPullUrl('mykey'), 'rtmp://127.0.0.1:1935/live/mykey');
     });
 
     test('srtPullUrl uses default host and SRT port', () => {
         assert.equal(
             srtPullUrl('mykey'),
-            'srt://localhost:10080?streamid=#!::r=live/mykey,m=request&latency=200000&transtype=live',
+            'srt://127.0.0.1:10080?streamid=#!::r=live/mykey,m=request&latency=200000&transtype=live',
         );
     });
 
@@ -258,30 +277,25 @@ describe('URL builders', () => {
         );
     });
 
-    test('SRT URLs use relay JSON output_port', () => {
+    test('SRT URLs use srs.conf srt_server listen port', () => {
         fs.writeFileSync(
-            path.join(tempDir, 'srt-bonding-relay.json'),
-            JSON.stringify(
-                {
-                    input_host: '0.0.0.0',
-                    input_port: 12081,
-                    output_host: '127.0.0.1',
-                    output_port: 12080,
-                    status_port: 12082,
-                    passphrase: '',
-                },
-                null,
-                4,
-            ).concat('\n'),
+            srsConfPath,
+            'listen 1935;\nsrs_log_file ./objs/srs.log;\nhttp_api {\n    enabled on;\n    listen 1985;\n}\nsrt_server {\n    enabled on;\n    listen 12080;\n}\n',
             'utf8',
         );
+        delete require.cache[require.resolve('../src/utils/srsConfig')];
+        delete require.cache[require.resolve('../src/utils/srs')];
+        const {
+            srtPullUrl: configuredSrtPullUrl,
+            srtPublishUrl: configuredSrtPublishUrl,
+        } = require('../src/utils/srs');
 
         assert.equal(
-            srtPullUrl('mykey'),
-            'srt://localhost:12080?streamid=#!::r=live/mykey,m=request&latency=200000&transtype=live',
+            configuredSrtPullUrl('mykey'),
+            'srt://127.0.0.1:12080?streamid=#!::r=live/mykey,m=request&latency=200000&transtype=live',
         );
         assert.equal(
-            srtPublishUrl('mykey', 'myhost'),
+            configuredSrtPublishUrl('mykey', 'myhost'),
             'srt://myhost:12080?streamid=#!::r=live/mykey,m=publish',
         );
     });

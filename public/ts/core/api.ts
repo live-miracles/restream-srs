@@ -86,8 +86,8 @@ export const getHealth = () => apiRequest<HealthData>('/api/health');
 export const getSystemMetrics = () => apiRequest<SystemMetrics>('/api/metrics/system');
 export const getMetricsHistory = () => apiRequest<MetricSample[]>('/api/metrics/history');
 
-export const updateSettings = (name: string, srtPassphrase: string | null, publicHost: string) =>
-    apiRequest('/api/settings', { method: 'POST', body: { name, srtPassphrase, publicHost } });
+export const updateSettings = (name: string, publicHost: string) =>
+    apiRequest('/api/settings', { method: 'POST', body: { name, publicHost } });
 
 export const createPipeline = () => apiRequest('/api/pipelines', { method: 'POST' });
 

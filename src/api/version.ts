@@ -2,6 +2,8 @@ import { execFile } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import type { Express } from 'express';
+import { readAppConfig } from '../utils/appConfig.js';
+import { readSrsConfigValues } from '../utils/srsConfig.js';
 
 const VERSION_EXEC_TIMEOUT_MS = 3000;
 const VERSION_FETCH_TIMEOUT_MS = 2000;
@@ -32,7 +34,7 @@ function readOsRelease(): string {
 }
 
 async function getSrsVersion(): Promise<string> {
-    const srsApiUrl = process.env.SRS_API_URL ?? 'http://localhost:1985';
+    const srsApiUrl = readSrsConfigValues().apiUrl;
     try {
         const resp = await fetch(`${srsApiUrl}/api/v1/versions`, {
             signal: AbortSignal.timeout(VERSION_FETCH_TIMEOUT_MS),
@@ -77,7 +79,7 @@ export function registerVersionApi(app: Express): void {
             exec('git', ['log', '-1', '--format=%ci']),
             getSrsVersion(),
             getSrtRelayVersion(),
-            exec('ffmpeg', ['-version']),
+            exec(readAppConfig().ffmpegPath, ['-version']),
         ]);
 
         const ffmpegLine = ffmpegOut.split('\n')[0] ?? '';

@@ -3,15 +3,15 @@ import type { ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { rtmpPullUrl, srtPullUrl } from '../utils/srs.js';
+import { readAppConfig } from '../utils/appConfig.js';
 import type { Db } from '../types.js';
 
-const FFMPEG_CMD = process.env.FFMPEG_PATH || 'ffmpeg';
+const FFMPEG_CMD = readAppConfig().ffmpegPath;
 const STDERR_TAIL_BYTES = 2000;
 const STOP_WAIT_MS = 200;
 
 function resolveBaseDir(): string {
-    const dbPath = process.env.DB_PATH || path.join(process.cwd(), 'db.sqlite');
-    return path.join(path.dirname(dbPath), 'hls');
+    return path.join(path.dirname(readAppConfig().databasePath), 'hls');
 }
 
 async function waitForPlaylist(m3u8Path: string, timeoutMs: number): Promise<void> {

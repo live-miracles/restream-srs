@@ -7,7 +7,24 @@ const os = require('node:os');
 const path = require('node:path');
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'restream-srs-relay-'));
-process.env.SRS_CONF_PATH = path.join(tempDir, 'srs.conf');
+const originalCwd = process.cwd();
+process.chdir(tempDir);
+fs.writeFileSync(
+    path.join(tempDir, 'restream.json'),
+    JSON.stringify(
+        {
+            port: 8080,
+            database_path: './db.sqlite',
+            srs_config_path: './srs.conf',
+            ffmpeg_path: 'ffmpeg',
+            ffprobe_path: 'ffprobe',
+        },
+        null,
+        4,
+    ),
+    'utf8',
+);
+fs.writeFileSync(path.join(tempDir, 'srs.conf'), 'listen 1935;\n', 'utf8');
 const relayConfigPath = path.join(tempDir, 'srt-bonding-relay.json');
 
 function writeRelayConfig(overrides = {}) {
@@ -62,6 +79,7 @@ describe('SRT relay service', () => {
     const originalFetch = global.fetch;
 
     after(() => {
+        process.chdir(originalCwd);
         fs.rmSync(tempDir, { recursive: true, force: true });
     });
 

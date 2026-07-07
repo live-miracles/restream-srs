@@ -11,11 +11,12 @@ import {
     type SrsStreamAudio,
     type AudioTrackInfo,
 } from '../utils/srs.js';
+import { readAppConfig } from '../utils/appConfig.js';
 import type { Db } from '../types.js';
 import type { OutputService } from './outputs.js';
 import type { SrtRelayService, SrtRelayStats, SrtRelayStreamStatus } from './srtRelay.js';
 
-const FFPROBE_CMD = process.env.FFPROBE_PATH || 'ffprobe';
+const FFPROBE_CMD = readAppConfig().ffprobePath;
 const FFPROBE_TIMEOUT_MS = 15000;
 const FFPROBE_FAST_REFRESH_MS = 15000;
 const FFPROBE_HEALTHY_REFRESH_MS = 30000;

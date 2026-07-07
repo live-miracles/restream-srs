@@ -1,7 +1,7 @@
 import BetterSqlite3 from 'better-sqlite3';
 import crypto from 'crypto';
-import path from 'path';
 import { setupDatabaseSchema } from './schema.js';
+import { readAppConfig } from '../utils/appConfig.js';
 import type {
     Pipeline,
     Output,
@@ -36,7 +36,7 @@ function rowToStreamKey(row: Record<string, unknown>): StreamKey {
 }
 
 export function createDb(dbPath?: string): Db {
-    const resolvedPath = dbPath ?? process.env.DB_PATH ?? path.join(process.cwd(), 'db.sqlite');
+    const resolvedPath = dbPath ?? readAppConfig().databasePath;
     const sqlite = new BetterSqlite3(resolvedPath);
     // WAL mode not enabled: better-sqlite3 is synchronous with a single connection, so all
     // reads and writes are already serialized by the JS event loop — no concurrency benefit.

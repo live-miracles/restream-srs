@@ -9,13 +9,9 @@ import type { StreamKey, AudioTrackInfo } from '../types.js';
 export function openSettings(): void {
     const modal = document.getElementById('settings-modal') as HTMLDialogElement;
     const current = state.config.serverName ?? 'Restream SRS';
-    const passphrase = state.config.srtPassphrase ?? '';
     (document.getElementById('settings-server-name-input') as HTMLInputElement).value = current;
     (document.getElementById('settings-public-host-input') as HTMLInputElement).value =
         state.config.publicHost ?? '';
-    const passphraseEl = document.getElementById('srt-passphrase-input') as HTMLInputElement;
-    passphraseEl.value = passphrase;
-    passphraseEl.classList.remove('input-error');
     (document.getElementById('current-password-input') as HTMLInputElement).value = '';
     (document.getElementById('new-password-input') as HTMLInputElement).value = '';
     (document.getElementById('confirm-password-input') as HTMLInputElement).value = '';
@@ -39,15 +35,6 @@ export function openSettings(): void {
     });
 }
 
-function getSrtPassphrase(): string | null | undefined {
-    const value = (
-        document.getElementById('srt-passphrase-input') as HTMLInputElement
-    ).value.trim();
-    if (!value) return null;
-    if (value.length < 10 || value.length > 79) return undefined;
-    return value;
-}
-
 export async function submitSettingsForm(btn?: HTMLButtonElement): Promise<void> {
     const name = (
         document.getElementById('settings-server-name-input') as HTMLInputElement
@@ -55,10 +42,7 @@ export async function submitSettingsForm(btn?: HTMLButtonElement): Promise<void>
     const publicHost = (
         document.getElementById('settings-public-host-input') as HTMLInputElement
     ).value.trim();
-    const passphraseInput = document.getElementById('srt-passphrase-input') as HTMLInputElement;
-    const passphrase = getSrtPassphrase();
-    passphraseInput.classList.toggle('input-error', passphrase === undefined);
-    if (!name || passphrase === undefined) return;
+    if (!name) return;
 
     const currentPw = (document.getElementById('current-password-input') as HTMLInputElement).value;
     const newPw = (document.getElementById('new-password-input') as HTMLInputElement).value;
@@ -74,7 +58,7 @@ export async function submitSettingsForm(btn?: HTMLButtonElement): Promise<void>
     }
 
     await withBusy(btn, async () => {
-        const result = await api.updateSettings(name, passphrase, publicHost);
+        const result = await api.updateSettings(name, publicHost);
         if (!result) return;
 
         if (changingPassword) {

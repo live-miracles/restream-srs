@@ -2,10 +2,11 @@ import type { Express } from 'express';
 import { ENCODINGS } from '../utils/ffmpeg.js';
 import { rtmpPublishUrl, srtPublishUrl } from '../utils/srs.js';
 import type { Db } from '../types.js';
+import { readRelayConfig } from '../utils/relayConfig.js';
 
 export function registerConfigApi(app: Express, db: Db): void {
     app.get('/api/config', (_req, res) => {
-        const srtPassphrase = db.getSetting('srtPassphrase') || null;
+        const srtPassphrase = readRelayConfig().passphrase || null;
         const host = db.getSetting('publicHost') || 'localhost';
         const pipelines = db.listPipelines().map((p) => ({
             ...p,

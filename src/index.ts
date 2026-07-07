@@ -20,10 +20,10 @@ import {
     checkIsAuthenticated,
 } from './api/auth.js';
 import { registerVersionApi } from './api/version.js';
-import { writeSrtRuntimeConfigs } from './utils/conf.js';
+import { readAppConfig } from './utils/appConfig.js';
 
 const app = express();
-const PORT = parseInt(process.env.PORT || '8080');
+const PORT = readAppConfig().port;
 
 // gzip responses. The /api/config and /api/health JSON for 50 inputs / 500
 // outputs is large and re-fetched by every dashboard client on the 5s poll;
@@ -128,9 +128,6 @@ app.use(
 );
 
 async function main(): Promise<void> {
-    const srtPassphrase = db.getSetting('srtPassphrase') || null;
-    writeSrtRuntimeConfigs(srtPassphrase);
-
     srtRelayService.start();
     healthService.start();
 
