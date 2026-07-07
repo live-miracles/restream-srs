@@ -61,27 +61,13 @@ export function createDb(dbPath?: string): Db {
     const stmtLoadOutputIds = sqlite.prepare(
         'SELECT id, pipeline_id, last_error FROM outputs ORDER BY pipeline_id, seq',
     );
-    // Extra sinks only — primary sink (seq=1) is inlined on the outputs row.
-    const stmtLoadExtraSinks = sqlite.prepare(
-        'SELECT output_id, seq, url, audio_encoding FROM output_sinks ORDER BY output_id, seq',
-    );
     // Targeted single-row lookups for the hot retry / process-exit paths.
     const stmtGetPipeline = sqlite.prepare(`${PIPELINE_SELECT} WHERE p.id = ?`);
     const stmtGetOutput = sqlite.prepare('SELECT * FROM outputs WHERE id = ?');
-    const stmtGetExtraSinksByOutput = sqlite.prepare(
-        'SELECT seq, url, audio_encoding FROM output_sinks WHERE output_id = ? ORDER BY seq',
-    );
     // Targeted per-pipeline lookups — avoids full-table scans in the hot restart
     // path where restartPipelineOutputs is called once per reconnecting pipeline.
     const stmtGetOutputsByPipeline = sqlite.prepare(
         'SELECT * FROM outputs WHERE pipeline_id = ? ORDER BY seq',
-    );
-    const stmtGetExtraSinksByPipeline = sqlite.prepare(
-        `SELECT os.output_id, os.seq, os.url, os.audio_encoding
-         FROM output_sinks os
-         JOIN outputs o ON os.output_id = o.id
-         WHERE o.pipeline_id = ?
-         ORDER BY os.output_id, os.seq`,
     );
     const stmtListStreamKeys = sqlite.prepare(
         'SELECT id, slot, key FROM stream_keys WHERE slot IS NOT NULL ORDER BY slot',
@@ -95,14 +81,7 @@ export function createDb(dbPath?: string): Db {
     );
 
     // Write prepared statements
-    const stmtUpdateInlineSink = sqlite.prepare(
-        'UPDATE outputs SET url = ?, audio_encoding = ? WHERE id = ?',
-    );
-    const stmtDeleteExtraSinks = sqlite.prepare('DELETE FROM output_sinks WHERE output_id = ?');
     const stmtUpdateStreamKey = sqlite.prepare('UPDATE stream_keys SET key = ? WHERE id = ?');
-    const stmtInsertSink = sqlite.prepare(
-        'INSERT INTO output_sinks (id, output_id, seq, url, audio_encoding) VALUES (?, ?, ?, ?, ?)',
-    );
     const stmtDeleteOutputsForPipeline = sqlite.prepare(
         'DELETE FROM outputs WHERE pipeline_id = ?',
     );
@@ -137,91 +116,37 @@ export function createDb(dbPath?: string): Db {
     }
 
     function getOutputsByPipeline(pipelineId: number): Output[] {
-        const outputRows = stmtGetOutputsByPipeline.all(pipelineId) as Record<string, unknown>[];
-        if (outputRows.length === 0) return [];
-        const extraSinkRows = stmtGetExtraSinksByPipeline.all(pipelineId) as Record<
-            string,
-            unknown
-        >[];
-        const extraSinksMap = new Map<string, Record<string, unknown>[]>();
-        for (const r of extraSinkRows) {
-            const id = r.output_id as string;
-            if (!extraSinksMap.has(id)) extraSinksMap.set(id, []);
-            extraSinksMap.get(id)!.push(r);
-        }
-        return outputRows.map((row) => rowToOutput(row, extraSinksMap.get(row.id as string) ?? []));
+        return (stmtGetOutputsByPipeline.all(pipelineId) as Record<string, unknown>[]).map(
+            rowToOutput,
+        );
     }
 
     function loadAllOutputs(): Output[] {
-        const outputRows = stmtLoadOutputs.all() as Record<string, unknown>[];
-        const extraSinkRows = stmtLoadExtraSinks.all() as Record<string, unknown>[];
-
-        const extraSinksMap = new Map<string, Record<string, unknown>[]>();
-        for (const r of extraSinkRows) {
-            const id = r.output_id as string;
-            if (!extraSinksMap.has(id)) extraSinksMap.set(id, []);
-            extraSinksMap.get(id)!.push(r);
-        }
-
-        return outputRows.map((row) => rowToOutput(row, extraSinksMap.get(row.id as string) ?? []));
+        return (stmtLoadOutputs.all() as Record<string, unknown>[]).map(rowToOutput);
     }
 
-    // Builds an Output from an outputs row plus any extra sink rows (seq >= 2).
-    // The primary sink (seq=1) is stored inline on the outputs row itself.
-    function rowToOutput(
-        row: Record<string, unknown>,
-        extraSinkRows: Record<string, unknown>[],
-    ): Output {
-        const id = row.id as string;
-        const sinks: OutputSink[] = [];
-        if (row.url) {
-            sinks.push({
-                seq: 1,
-                url: row.url as string,
-                audioEncoding: (row.audio_encoding as string) || 'copy',
-            });
-        }
-        for (const r of extraSinkRows) {
-            sinks.push({
-                seq: r.seq as number,
-                url: r.url as string,
-                audioEncoding: (r.audio_encoding as string) || 'copy',
-            });
-        }
+    function rowToOutput(row: Record<string, unknown>): Output {
         return {
-            id,
+            id: row.id as string,
             pipelineId: row.pipeline_id as number,
             seq: row.seq as number,
             name: row.name as string,
             desiredState: row.desired_state as 'running' | 'stopped',
             videoEncoding: (row.encoding as string) || 'copy',
-            sinks,
+            sinks: JSON.parse(row.sinks as string) as OutputSink[],
             lastError: (row.last_error as string | null) ?? null,
         };
     }
 
     function getOutputById(id: string): Output | null {
         const row = stmtGetOutput.get(id) as Record<string, unknown> | undefined;
-        if (!row) return null;
-        const extraSinkRows = stmtGetExtraSinksByOutput.all(id) as Record<string, unknown>[];
-        return rowToOutput(row, extraSinkRows);
+        return row ? rowToOutput(row) : null;
     }
 
-    // First sink goes inline on the outputs row; any extras (seq >= 2) go to output_sinks.
-    function insertSinks(outputId: string, sinks: SinkInput[]): void {
-        if (sinks.length > 0) {
-            stmtUpdateInlineSink.run(sinks[0].url, sinks[0].audioEncoding ?? 'copy', outputId);
-        }
-        sinks.slice(1).forEach((s, i) => {
-            const seq = i + 2;
-            stmtInsertSink.run(
-                `${outputId}:${seq}`,
-                outputId,
-                seq,
-                s.url,
-                s.audioEncoding ?? 'copy',
-            );
-        });
+    function sinksToJson(sinks: SinkInput[]): string {
+        return JSON.stringify(
+            sinks.map((s) => ({ url: s.url, audioEncoding: s.audioEncoding ?? 'copy' })),
+        );
     }
 
     // Monotonic config revision, bumped on every config-shaping write (pipelines,
@@ -339,14 +264,11 @@ export function createDb(dbPath?: string): Db {
                 .get(pipelineId) as { next_seq: number };
             const seq = seqRow.next_seq;
             const id = `${pipelineId}-${seq}`;
-            sqlite.transaction(() => {
-                sqlite
-                    .prepare(
-                        'INSERT INTO outputs (id, pipeline_id, seq, name, desired_state, encoding) VALUES (?, ?, ?, ?, ?, ?)',
-                    )
-                    .run(id, pipelineId, seq, name, 'stopped', videoEncoding);
-                insertSinks(id, sinks);
-            })();
+            sqlite
+                .prepare(
+                    'INSERT INTO outputs (id, pipeline_id, seq, name, desired_state, encoding, sinks) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                )
+                .run(id, pipelineId, seq, name, 'stopped', videoEncoding, sinksToJson(sinks));
             bumpConfigRev();
             return getOutputById(id)!;
         },
@@ -372,13 +294,9 @@ export function createDb(dbPath?: string): Db {
         },
 
         updateOutput(id: string, { name, videoEncoding, sinks }): Output | null {
-            sqlite.transaction(() => {
-                sqlite
-                    .prepare('UPDATE outputs SET name = ?, encoding = ? WHERE id = ?')
-                    .run(name, videoEncoding, id);
-                stmtDeleteExtraSinks.run(id);
-                insertSinks(id, sinks);
-            })();
+            sqlite
+                .prepare('UPDATE outputs SET name = ?, encoding = ?, sinks = ? WHERE id = ?')
+                .run(name, videoEncoding, sinksToJson(sinks), id);
             bumpConfigRev();
             return getOutputById(id);
         },

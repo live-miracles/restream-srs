@@ -20,11 +20,11 @@ export function setupDatabaseSchema(db: Database.Database): void {
     ).run();
 
     // One output = one ffmpeg process that pulls the input once and fans out to
-    // one or more sinks. The primary (and almost always only) sink is stored
-    // inline on this row; extra sinks for the rare multi-audio-remap case live
-    // in output_sinks. The pull protocol isn't stored — it's derived at runtime
-    // from how the input is currently published (SRT input -> SRT pull, RTMP
-    // input -> RTMP pull).
+    // one or more sinks, stored as a JSON array [{url, audioEncoding}] — sinks
+    // are only ever read as part of their whole output, so they don't need their
+    // own table. The pull protocol isn't stored — it's derived at runtime from
+    // how the input is currently published (SRT input -> SRT pull, RTMP input ->
+    // RTMP pull).
     // last_error stores the most recent ffmpeg failure as "<ts_ms>\n<message>".
     // Cleared when the user explicitly starts the output.
     db.prepare(
@@ -35,31 +35,13 @@ export function setupDatabaseSchema(db: Database.Database): void {
             name            TEXT NOT NULL,
             desired_state   TEXT NOT NULL DEFAULT 'stopped',
             encoding        TEXT NOT NULL DEFAULT 'copy',
-            url             TEXT,
-            audio_encoding  TEXT NOT NULL DEFAULT 'copy',
+            sinks           TEXT NOT NULL DEFAULT '[]',
             last_error      TEXT,
             FOREIGN KEY(pipeline_id) REFERENCES pipelines(id) ON DELETE CASCADE
         )`,
     ).run();
 
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_outputs_pipeline ON outputs(pipeline_id)`).run();
-
-    // Extra sinks only — the primary sink (seq=1) is stored inline in outputs.url.
-    // Populated only for the rare outputs that fan out to multiple destinations.
-    db.prepare(
-        `CREATE TABLE IF NOT EXISTS output_sinks (
-            id              TEXT PRIMARY KEY,
-            output_id       TEXT NOT NULL,
-            seq             INTEGER NOT NULL,
-            url             TEXT NOT NULL,
-            audio_encoding  TEXT NOT NULL DEFAULT 'copy',
-            FOREIGN KEY(output_id) REFERENCES outputs(id) ON DELETE CASCADE
-        )`,
-    ).run();
-
-    db.prepare(
-        `CREATE INDEX IF NOT EXISTS idx_output_sinks_output ON output_sinks(output_id)`,
-    ).run();
 
     db.prepare(
         `CREATE TABLE IF NOT EXISTS settings (

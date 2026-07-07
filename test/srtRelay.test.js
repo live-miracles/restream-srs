@@ -125,7 +125,7 @@ describe('SRT relay service', () => {
         await waitFor(() => service.getStats().pid === 12345);
         assert.equal(service.getStats().status, 'running');
         assert.equal(service.getStats().startedAtMs, startedAtMs);
-        assert.equal(service.isStreamActive('#!::r=live/key01,m=publish'), true);
+        assert.equal(service.getStreamStatus('#!::r=live/key01,m=publish').inputActive, true);
         assert.deepEqual(service.getStreamStatus('#!::r=live/key01,m=publish'), {
             inputActive: true,
             outputConnected: true,
@@ -212,8 +212,8 @@ describe('SRT relay service', () => {
 
         await waitFor(() => service.getStats().lastError);
         assert.equal(service.getStats().status, 'stopped');
-        assert.equal(service.getPort(), 10081);
-        assert.equal(service.isStreamActive('#!::r=live/key02,m=publish'), false);
+        assert.equal(service.getStats().port, 10081);
+        assert.equal(service.getStreamStatus('#!::r=live/key02,m=publish').inputActive, false);
     });
 
     test('reads relay input and status ports from JSON config', async () => {
@@ -237,7 +237,7 @@ describe('SRT relay service', () => {
         service.start();
 
         await waitFor(() => service.getStats().pid === 54321);
-        assert.equal(service.getPort(), 12081);
+        assert.equal(service.getStats().port, 12081);
         assert.equal(fetchedUrl, 'http://127.0.0.1:12082/status');
     });
 
@@ -392,7 +392,10 @@ describe('SRT relay service', () => {
         service.start();
 
         await waitFor(() => service.getStats().pid === 3030);
-        assert.equal(service.isStreamActive('#!::u=bridge-20,r=live/key20,m=publish'), true);
+        assert.equal(
+            service.getStreamStatus('#!::u=bridge-20,r=live/key20,m=publish').inputActive,
+            true,
+        );
         assert.deepEqual(service.getStreamStatus('#!::r=live/key20,m=publish'), {
             inputActive: true,
             outputConnected: false,

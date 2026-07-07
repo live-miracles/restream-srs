@@ -48,7 +48,9 @@ function topLevelOnly(conf: string): string {
 function resolveSrsPath(value: string | null, srsConfigPath: string, fallback: string): string {
     if (!value) return fallback;
     const unquoted = value.replace(/^"|"$/g, '');
-    return path.isAbsolute(unquoted) ? unquoted : path.resolve(path.dirname(srsConfigPath), unquoted);
+    return path.isAbsolute(unquoted)
+        ? unquoted
+        : path.resolve(path.dirname(srsConfigPath), unquoted);
 }
 
 export function readSrsConfigValues(): SrsConfigValues {
@@ -68,7 +70,10 @@ export function readSrsConfigValues(): SrsConfigValues {
         DEFAULT_RTMP_PORT,
     );
     const httpApiBlock = parseBlock(conf, 'http_api');
-    const apiPort = parsePort(parseDirective(httpApiBlock, 'listen') ?? undefined, DEFAULT_API_PORT);
+    const apiPort = parsePort(
+        parseDirective(httpApiBlock, 'listen') ?? undefined,
+        DEFAULT_API_PORT,
+    );
     const srtServerBlock = parseBlock(conf, 'srt_server');
     const srtPort = parsePort(
         parseDirective(srtServerBlock, 'listen') ?? undefined,

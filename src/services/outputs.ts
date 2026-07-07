@@ -83,7 +83,6 @@ export function createOutputService(db: Db): OutputService {
         string,
         { status: 'running' | 'stopped' | 'failed'; pid: number | null }
     >();
-    const bitrates = new Map<string, number | null>();
     const startTimes = new Map<string, number>();
     const progress = new Map<string, OutputProgress>();
     const socketWarnings = new Map<string, SocketWarning>();
@@ -113,7 +112,7 @@ export function createOutputService(db: Db): OutputService {
         const s = statuses.get(outputId) ?? { status: 'stopped' as const, pid: null };
         return {
             ...s,
-            bitrateKbps: bitrates.get(outputId) ?? null,
+            bitrateKbps: progress.get(outputId)?.lastBitrateKbps ?? null,
             startedAtMs: startTimes.get(outputId) ?? null,
             failures: retryState.get(outputId)?.failures ?? 0,
             warningReason: socketWarnings.get(outputId)?.reason ?? null,
@@ -129,7 +128,6 @@ export function createOutputService(db: Db): OutputService {
         if (status === 'running') {
             startTimes.set(outputId, Date.now());
         } else {
-            bitrates.delete(outputId);
             startTimes.delete(outputId);
             progress.delete(outputId);
             socketWarnings.delete(outputId);
@@ -547,9 +545,6 @@ export function createOutputService(db: Db): OutputService {
             buf = lines.pop() ?? '';
             for (const line of lines) {
                 noteOutputProgress(output.id, line);
-                if (line.startsWith('bitrate=')) {
-                    bitrates.set(output.id, parseBitrateKbps(line));
-                }
             }
         });
 

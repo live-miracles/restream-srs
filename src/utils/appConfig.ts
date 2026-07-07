@@ -65,10 +65,7 @@ function readWatchdogConfig(value: unknown): OutputWatchdogConfig {
         warmupMs: asPositiveMs(raw.warmup_ms, DEFAULT_WATCHDOG_CONFIG.warmupMs),
         stallMs: asPositiveMs(raw.stall_ms, DEFAULT_WATCHDOG_CONFIG.stallMs),
         intervalMs: asPositiveMs(raw.interval_ms, DEFAULT_WATCHDOG_CONFIG.intervalMs),
-        socketWarmupMs: asPositiveMs(
-            raw.socket_warmup_ms,
-            DEFAULT_WATCHDOG_CONFIG.socketWarmupMs,
-        ),
+        socketWarmupMs: asPositiveMs(raw.socket_warmup_ms, DEFAULT_WATCHDOG_CONFIG.socketWarmupMs),
         socketGraceMs: asPositiveMs(raw.socket_grace_ms, DEFAULT_WATCHDOG_CONFIG.socketGraceMs),
     };
 }

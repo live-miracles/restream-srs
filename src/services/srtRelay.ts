@@ -30,9 +30,7 @@ export interface SrtRelayStreamStatus {
 }
 
 export interface SrtRelayService {
-    getPort(): number;
     getStats(): SrtRelayStats;
-    isStreamActive(streamId: string): boolean;
     getStreamStatus(streamId: string): SrtRelayStreamStatus;
     start(): void;
     shutdown(): void;
@@ -190,16 +188,8 @@ export function createSrtRelayService(): SrtRelayService {
     }
 
     return {
-        getPort(): number {
-            return readRelayConfig().input_port;
-        },
-
         getStats(): SrtRelayStats {
             return stats;
-        },
-
-        isStreamActive(streamId: string): boolean {
-            return getStreamStatus(streamId).inputActive;
         },
 
         getStreamStatus(streamId: string): SrtRelayStreamStatus {

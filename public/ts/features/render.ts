@@ -490,7 +490,9 @@ function renderInputStats(input: InputHealth): string {
         const checked = input.mediaCheckedAt
             ? new Date(input.mediaCheckedAt).toLocaleTimeString(undefined, { hour12: false })
             : null;
-        return `<p class="text-xs text-error mt-2">${input.mediaError ?? 'Input connected, waiting for valid media.'}${checked ? ` <span class="opacity-60">Last checked ${checked}</span>` : ''}</p>`;
+        const message = input.mediaError ?? 'Input connected, waiting for valid media.';
+        const toneClass = input.mediaError ? 'text-error' : 'text-warning';
+        return `<p class="text-xs ${toneClass} mt-2">${message}${checked ? ` <span class="opacity-60">Last checked ${checked}</span>` : ''}</p>`;
     }
 
     const v = input.video;
@@ -1037,6 +1039,7 @@ function renderPipelineInfo(selectedId: string | null): void {
                 ? pipeline.srtPublishUrl.slice(colonAfterHost + 1, portEnd)
                 : pipeline.srtPublishUrl.slice(colonAfterHost + 1);
         srtEl.dataset.streamId = `#!::r=live/${pipeline.streamKey},m=publish`;
+        srtEl.dataset.passphrase = state.config.srtPassphrase || '';
     }
 
     const bondingCard = document.getElementById('srt-bonding-card');
@@ -1076,6 +1079,7 @@ function renderPipelineInfo(selectedId: string | null): void {
         bondingUrl.dataset.ip = bondingHost;
         bondingUrl.dataset.port = String(bondingPortValue);
         bondingUrl.dataset.streamId = bondingStreamId;
+        bondingUrl.dataset.passphrase = state.config.srtPassphrase || '';
     }
     if (bondingStats) {
         const rxPkts =

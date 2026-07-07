@@ -101,6 +101,7 @@ export interface MetricSample {
 }
 
 const metricsHistory: MetricSample[] = [];
+let metricsStarted = false;
 
 function sampleMetrics(): void {
     const totalMem = os.totalmem();
@@ -116,14 +117,20 @@ function sampleMetrics(): void {
     if (metricsHistory.length > HISTORY_MAX) metricsHistory.shift();
 }
 
-updateDiskStats();
-setInterval(updateDiskStats, DISK_STATS_INTERVAL_MS).unref();
-updateNetStats();
-setInterval(updateNetStats, NET_STATS_INTERVAL_MS).unref();
-sampleMetrics();
-setInterval(sampleMetrics, SAMPLE_INTERVAL_MS).unref();
+function startMetricsSampling(): void {
+    if (metricsStarted) return;
+    metricsStarted = true;
+    updateDiskStats();
+    setInterval(updateDiskStats, DISK_STATS_INTERVAL_MS).unref();
+    updateNetStats();
+    setInterval(updateNetStats, NET_STATS_INTERVAL_MS).unref();
+    sampleMetrics();
+    setInterval(sampleMetrics, SAMPLE_INTERVAL_MS).unref();
+}
 
 export function registerMetricsApi(app: Express): void {
+    startMetricsSampling();
+
     app.get('/api/metrics/system', (_req, res) => {
         const s = metricsHistory[metricsHistory.length - 1];
         const totalMem = os.totalmem();

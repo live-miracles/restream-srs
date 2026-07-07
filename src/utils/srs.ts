@@ -101,17 +101,6 @@ export async function fetchSrsClientsForHealth(): Promise<SrsClient[]> {
     return data.clients || [];
 }
 
-export async function fetchSrsClients(): Promise<SrsClient[]> {
-    const srsApiUrl = readSrsConfigValues().apiUrl;
-    const res = await fetch(`${srsApiUrl}/api/v1/clients/`, {
-        signal: AbortSignal.timeout(SRS_CLIENT_FETCH_TIMEOUT_MS),
-        headers: { Connection: 'close' },
-    });
-    if (!res.ok) throw new Error(`SRS clients API ${res.status}`);
-    const data = (await res.json()) as { code: number; clients?: SrsClient[] };
-    return data.clients || [];
-}
-
 export async function fetchSrsStreams(): Promise<SrsStream[]> {
     const srsApiUrl = readSrsConfigValues().apiUrl;
     const res = await fetch(`${srsApiUrl}/api/v1/streams/`, {

@@ -14,7 +14,6 @@ export interface Pipeline {
 }
 
 export interface OutputSink {
-    seq: number;
     url: string;
     audioEncoding: string;
 }
