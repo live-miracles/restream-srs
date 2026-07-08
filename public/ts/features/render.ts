@@ -1039,25 +1039,34 @@ function drawProbeChart(
     const labelColor = toRgba(base, 0.65);
     const okColor = '#22c55e';
     const failColor = '#ef4444';
-    const m = { left: 28, right: 8, top: 8, bottom: 18 };
-    const cW = displayW - m.left - m.right;
-    const cH = displayH - m.top - m.bottom;
 
     ctx.font = '10px ui-monospace, monospace';
-    ctx.fillStyle = labelColor;
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'middle';
 
     const latencies = samples
         .map((sample) => sample.latencyMs)
         .filter((latency): latency is number => latency != null);
     const peak = roundUpNice(Math.max(50, ...latencies, 0));
+    const yTickValues = [0, peak / 2, peak];
+    const maxYLabelWidth = Math.max(
+        ...yTickValues.map((value) => ctx.measureText(`${Math.round(value)} ms`).width),
+    );
+    const m = {
+        left: Math.max(28, Math.ceil(maxYLabelWidth) + 8),
+        right: 8,
+        top: 8,
+        bottom: 18,
+    };
+    const cW = displayW - m.left - m.right;
+    const cH = displayH - m.top - m.bottom;
     const span = Math.max(1, windowEnd - windowStart);
     const xFor = (ts: number) => m.left + ((ts - windowStart) / span) * cW;
     const yFor = (latencyMs: number) => m.top + cH - (latencyMs / peak) * cH;
 
-    for (let i = 0; i <= 2; i++) {
-        const value = (peak / 2) * i;
+    ctx.fillStyle = labelColor;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+
+    for (const value of yTickValues) {
         const y = yFor(value);
         ctx.beginPath();
         ctx.moveTo(m.left, y);
@@ -1068,7 +1077,7 @@ function drawProbeChart(
         ctx.fillText(`${Math.round(value)} ms`, m.left - 4, y);
     }
 
-    const stepMs = 5 * 60 * 1000;
+    const stepMs = 60 * 1000;
     const firstLabel = Math.ceil(windowStart / stepMs) * stepMs;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
@@ -1174,6 +1183,13 @@ function renderHostConnectionsOverview(): void {
     const rows = targets
         .map((entry) => {
             const latest = entry.latestSample;
+            const windowSamples = entry.history.filter(
+                (sample) => sample.ts >= windowStart && sample.ts <= windowEnd,
+            );
+            const highestLatency = windowSamples.reduce<number | null>((max, sample) => {
+                if (sample.latencyMs == null) return max;
+                return max == null ? sample.latencyMs : Math.max(max, sample.latencyMs);
+            }, null);
             const latestStatus = !latest
                 ? '<span class="badge badge-sm badge-neutral">No Data</span>'
                 : latest.ok
@@ -1191,6 +1207,7 @@ function renderHostConnectionsOverview(): void {
                 <td class="font-mono text-xs">${escHtml(entry.target.host)}:${entry.target.port}</td>
                 <td>${latestStatus}</td>
                 <td class="font-mono text-xs">${latest?.latencyMs != null ? `${Math.round(latest.latencyMs)} ms` : '—'}</td>
+                <td class="font-mono text-xs">${highestLatency != null ? `${Math.round(highestLatency)} ms` : '—'}</td>
                 <td class="font-mono text-xs">${entry.averageLatencyMs != null ? `${Math.round(entry.averageLatencyMs)} ms` : '—'}</td>
                 <td class="font-mono text-xs">${failureRate}%</td>
                 <td class="font-mono text-xs">${lastSeen}</td>
@@ -1222,17 +1239,17 @@ function renderHostConnectionsOverview(): void {
         .join('');
 
     hostsCol.innerHTML = `
-        <div class="mb-4 flex items-center justify-between gap-4">
-            <div>
-                <h2 class="text-lg font-bold">Host Connections</h2>
-                <p class="text-sm opacity-60">TCP probe history for configured platform hosts.</p>
-            </div>
-            <div class="flex items-center gap-3">
-                <div class="text-right text-xs opacity-60">
-                    <div>${targets.length} host${targets.length === 1 ? '' : 's'}</div>
-                    <div>Probe interval ${Math.round((state.hostProbes.intervalMs ?? 15000) / 1000)}s</div>
-                    <div>Updated ${state.hostProbes.generatedAt ? new Date(state.hostProbes.generatedAt).toLocaleTimeString(undefined, { hour12: false }) : '—'}</div>
+        <div class="mb-4 flex items-center justify-between gap-3">
+            <div class="min-w-0 text-sm">
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <span class="badge badge-outline badge-sm font-mono">
+                        Updated ${state.hostProbes.generatedAt ? new Date(state.hostProbes.generatedAt).toLocaleTimeString(undefined, { hour12: false }) : '—'}
+                    </span>
+                    <h2 class="text-base font-bold">Host Connections</h2>
+                    <span class="opacity-60">TCP probe history for configured platform hosts. Probe interval ${state.hostProbes.intervalMs != null ? `${Math.round(state.hostProbes.intervalMs / 1000)}s` : 'unknown'}.</span>
                 </div>
+            </div>
+            <div class="flex shrink-0 items-center gap-3">
                 <button
                     id="host-connections-refresh"
                     type="button"
@@ -1263,8 +1280,9 @@ function renderHostConnectionsOverview(): void {
                         <th>Host</th>
                         <th>Status</th>
                         <th>Latest</th>
+                        <th>15min Higherst</th>
                         <th>Avg</th>
-                        <th>12h Fail</th>
+                        <th>6h Fail</th>
                         <th>Last Sample</th>
                         <th>Resolved IP</th>
                     </tr>
@@ -1272,7 +1290,7 @@ function renderHostConnectionsOverview(): void {
                 <tbody>${rows}</tbody>
             </table>
         </div>
-        <div class="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">${cards}</div>`;
+        <div class="mt-6 grid grid-cols-1 gap-4">${cards}</div>`;
 
     for (const entry of targets) {
         const chartSamples = entry.history.filter(

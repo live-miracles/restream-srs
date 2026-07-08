@@ -3,12 +3,12 @@ import net from 'net';
 import type { Express } from 'express';
 import type { Db, HostProbeSample, HostProbeSummary, HostProbeTarget } from '../types.js';
 
-const PROBE_INTERVAL_MS = 15_000;
-const PROBE_TIMEOUT_MS = 3_000;
+const PROBE_INTERVAL_MS = 5_000;
+const PROBE_TIMEOUT_MS = 1_000;
 const PROBE_CONCURRENCY = 4;
-const HISTORY_RETENTION_MS = 12 * 60 * 60 * 1000;
-const DEFAULT_HISTORY_HOURS = 12;
-const MAX_HISTORY_HOURS = 12;
+const HISTORY_RETENTION_MS = 6 * 60 * 60 * 1000;
+const DEFAULT_HISTORY_HOURS = 6;
+const MAX_HISTORY_HOURS = 6;
 
 export interface HostProbeApiTarget extends HostProbeSummary {
     history: HostProbeSample[];

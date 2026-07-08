@@ -66,7 +66,7 @@ export async function refreshAfterMutation(): Promise<void> {
     await refreshDashboard();
 }
 
-export async function refreshHostProbes(hours = 12): Promise<void> {
+export async function refreshHostProbes(hours = 6): Promise<void> {
     const hostProbesResult = await getHostProbes(hours);
     if (hostProbesResult) {
         state.hostProbes = hostProbesResult;
