@@ -173,6 +173,28 @@ chown -R "$SERVICE_USER:$SERVICE_USER" "$APP_DIR"
 echo "Build complete."
 
 step "8/11 Config and data"
+# SRT passphrase: the repo configs ship a public default, so on first install
+# (when these files don't exist yet at $CONF_DIR) generate a per-server secret
+# and write it to both. On reinstall, each file's currently-deployed
+# passphrase is read before it gets overwritten below and simply written
+# back — no comparisons, no syncing between the two files. Change or disable
+# it (empty disables the check) by editing both files by hand and restarting
+# the services.
+NEW_SRT_PASSPHRASE="$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')"
+if [[ -f "$CONF_DIR/srs.conf" ]]; then
+    SRS_SRT_PASSPHRASE="$(sed -n 's/^[[:space:]]*passphrase[[:space:]]\{1,\}\(.*\);[[:space:]]*$/\1/p' "$CONF_DIR/srs.conf" | head -1)"
+    echo "SRT passphrase (srs.conf): keeping existing value"
+else
+    SRS_SRT_PASSPHRASE="$NEW_SRT_PASSPHRASE"
+    echo "SRT passphrase (srs.conf): generated new secret"
+fi
+if [[ -f "$CONF_DIR/srt-bonding-relay.json" ]]; then
+    RELAY_SRT_PASSPHRASE="$(node -e 'const fs=require("fs");const c=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(c.passphrase||"");' "$CONF_DIR/srt-bonding-relay.json")"
+    echo "SRT passphrase (srt-bonding-relay.json): keeping existing value"
+else
+    RELAY_SRT_PASSPHRASE="$NEW_SRT_PASSPHRASE"
+    echo "SRT passphrase (srt-bonding-relay.json): generated new secret"
+fi
 cp "$APP_DIR/srs.conf" "$CONF_DIR/srs.conf"
 cp "$APP_DIR/srt-bonding-relay.json" "$CONF_DIR/srt-bonding-relay.json"
 echo "Config: refreshed $CONF_DIR/srs.conf from repository"
@@ -180,23 +202,13 @@ echo "Config: refreshed $CONF_DIR/srt-bonding-relay.json from repository"
 # Patch in server-specific log paths (not in the repo's srs.conf).
 sed -i '/^[[:space:]]*srs_log_tank[[:space:]]/d; /^[[:space:]]*srs_log_file[[:space:]]/d' "$CONF_DIR/srs.conf"
 sed -i "/^listen/a srs_log_tank        file;\nsrs_log_file        $LOG_DIR/srs.log;" "$CONF_DIR/srs.conf"
-# SRT passphrase: the repo configs ship a public default, so replace it with a
-# per-server secret. Generated once and reused on reinstalls so encoder URLs
-# keep working across updates. Applied to both the SRS srt_server listener and
-# the bonding relay (which uses it on its listener and its leg into SRS).
-PASS_FILE="$CONF_DIR/.srt-passphrase"
-if [[ ! -s "$PASS_FILE" ]]; then
-    head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' > "$PASS_FILE"
-    echo "SRT passphrase: generated new secret at $PASS_FILE"
-else
-    echo "SRT passphrase: keeping existing $PASS_FILE"
-fi
-chmod 600 "$PASS_FILE"
-chown "$SERVICE_USER:$SERVICE_USER" "$PASS_FILE"
-SRT_PASSPHRASE="$(cat "$PASS_FILE")"
-sed -i "s|^\([[:space:]]*passphrase[[:space:]]\{1,\}\).*;|\1${SRT_PASSPHRASE};|" "$CONF_DIR/srs.conf"
+# Written via node, not sed -i: a hand-typed passphrase containing "&" or "\"
+# would otherwise be reinterpreted as sed replacement syntax and silently
+# corrupted instead of applied verbatim.
+node -e 'const fs=require("fs");const [p,pass]=process.argv.slice(1);const c=fs.readFileSync(p,"utf8").replace(/^([ \t]*passphrase[ \t]+).*;/m,(_,prefix)=>prefix+pass+";");fs.writeFileSync(p,c);' \
+    "$CONF_DIR/srs.conf" "$SRS_SRT_PASSPHRASE"
 node -e 'const fs=require("fs");const [p,pass]=process.argv.slice(1);const c=JSON.parse(fs.readFileSync(p,"utf8"));c.passphrase=pass;fs.writeFileSync(p,JSON.stringify(c,null,4)+"\n");' \
-    "$CONF_DIR/srt-bonding-relay.json" "$SRT_PASSPHRASE"
+    "$CONF_DIR/srt-bonding-relay.json" "$RELAY_SRT_PASSPHRASE"
 cat > "$APP_DIR/restream.json" <<EOF
 {
     "port": 8080,
@@ -394,7 +406,7 @@ echo ""
 echo "Security:"
 echo "  RTMP now listens on 21935 (was 1935) - update your GCP firewall rule"
 echo "  and encoder URLs. The dashboard shows the current publish URLs."
-echo "  SRT requires a passphrase ($CONF_DIR/.srt-passphrase); it is included"
+echo "  SRT requires a passphrase (see $CONF_DIR/srs.conf); it is included"
 echo "  in the SRT publish URLs shown in the dashboard."
 echo ""
 echo "Check status:"

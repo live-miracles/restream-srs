@@ -116,12 +116,17 @@ The repository copies both runtime config files during install:
 SRS only reads its config at startup, and the SRT bonding relay only reads its
 JSON config file at startup.
 
-The repo configs ship a public default SRT passphrase; the installer replaces
-it with a per-server secret (generated once, kept at
-`/etc/restream-srs/.srt-passphrase` and reused across reinstalls) in both
-deployed config files. SRS rejects SRT connections without the passphrase at
-the handshake, for publish and play alike; the dashboard's SRT publish URLs
-include it. To rotate it, delete `.srt-passphrase` and re-run the installer.
+The repo configs ship a public default SRT passphrase; on first install the
+installer generates a random per-server secret and writes it to both files.
+On reinstall it leaves each file's passphrase exactly as deployed — it
+doesn't compare, regenerate, or sync the two. SRS rejects SRT connections
+without the passphrase at the handshake, for publish and play alike; the
+dashboard's SRT publish URLs include it.
+
+To change or disable it, edit both files by hand and restart SRS and the
+relay: `passphrase ;` in `srs.conf`, `"passphrase": ""` in
+`srt-bonding-relay.json`. An empty value in both disables the passphrase
+check entirely — SRS and the relay treat empty the same as unset.
 
 Ingest is further locked down by SRS HTTP hooks handled by the app:
 `on_publish` rejects unknown stream keys, and `on_play` rejects any play not
@@ -155,7 +160,8 @@ ffmpeg -re -stream_loop -1 -i video.mp4 \
   -f flv rtmp://localhost:21935/live/<stream-key>
 ```
 
-SRT (the passphrase must match `srt_server.passphrase` in `srs.conf`):
+SRT (the passphrase must match `srt_server.passphrase` in `srs.conf`; if
+that's disabled, drop `&passphrase=<passphrase>&pbkeylen=16` from the URL):
 ```bash
 ffmpeg -re -stream_loop -1 -i video.mp4 \
   -c:v libx264 -preset veryfast -b:v 2500k -x264-params "repeat-headers=1" \
