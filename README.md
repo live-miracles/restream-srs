@@ -271,7 +271,7 @@ The app reads runtime settings from `restream.json` in the app root.
 | `database_path` | `./db.sqlite` | SQLite database path |
 | `srs_config_path` | `./srs.conf` | SRS config path |
 | `ffmpeg_path` | `ffmpeg` | FFmpeg binary for outputs and previews |
-| `ffprobe_path` | `ffprobe` | FFprobe binary for SRT input media probing |
+| `ffprobe_path` | `ffprobe` | FFprobe binary for input media probing and validation |
 | `output_watchdog.warmup_ms` | `90000` | Output progress watchdog warmup before stall checks |
 | `output_watchdog.stall_ms` | `45000` | Output progress stall window before restarting FFmpeg |
 | `output_watchdog.interval_ms` | `5000` | Output watchdog polling interval |
@@ -347,7 +347,7 @@ The app runs these recovery loops:
 
 | Watchdog | Scope | Restart condition | Notes |
 |----------|-------|-------------------|-------|
-| Health poll / input recovery | SRS reachability, live pipeline inputs, desired running outputs | When SRS and the pipeline input become ready, outputs whose desired state is `running` are started or restarted with staggered timing | Computed once every 5s and shared by dashboard clients |
+| Health poll / input recovery | SRS reachability, live pipeline inputs, desired running outputs | When SRS and the pipeline input become ready, outputs whose desired state is `running` are started or restarted with staggered timing | Computed once every 5s and shared by dashboard clients. RTMP inputs become live from SRS stream metadata (codec, dimensions, positive FPS). SRT inputs are probe-gated by ffprobe. |
 | Output progress watchdog | Every running FFmpeg output process | After warmup, if the input is ready but FFmpeg `total_size` / `out_time_ms` stop advancing for the configured stall window | Protocol-agnostic backstop; covers SRT outputs and local RTMP relays |
 | Remote RTMP socket watchdog | Running outputs with remote RTMP/RTMPS sinks | After socket warmup and grace, if the destination socket is missing or remains in a closing state such as `CLOSE-WAIT` | Uses one `ss -H -tanp` snapshot per watchdog interval; local RTMP/RTMPS sinks are ignored because local input/output sockets are ambiguous |
 
@@ -356,6 +356,14 @@ Both output watchdogs use the same restart path: they write a detailed
 fresh process while the output's desired state remains `running`. The socket
 watchdog is advisory: if `ss` fails or times out, it does not restart anything,
 and a socket warning does not prevent the output-progress watchdog from acting.
+
+Input media validation is separate from the output watchdogs. The health service
+stays on the regular 5s poll, but it validates media on its own cadence:
+
+| Input check | Scope | Cadence | Notes |
+|-------------|-------|---------|-------|
+| RTMP initial media validation | Connected RTMP inputs without a successful probe yet | First probe delayed by 5s, then every 15s while failing | Once ffprobe succeeds, RTMP health uses SRS metadata and no longer re-probes that input. |
+| SRT media validation | Connected SRT inputs | Every 30s while healthy, every 15s while failing | SRT stays probe-gated because the app pulls SRT inputs back over native SRT/MPEG-TS rather than SRS RTMP remuxing. |
 
 ### SRT bonding relay
 
