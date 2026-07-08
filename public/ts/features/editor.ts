@@ -149,9 +149,9 @@ function isValidIpOrCidr(value: string): boolean {
 }
 
 function whitelistIpRowHtml(value = ''): string {
-    return `<div class="flex items-center gap-2" data-whitelist-ip-row>
-        <input type="text" class="input input-sm w-full font-mono text-sm js-whitelist-ip"
-               placeholder="203.0.113.4 or 203.0.113.0/24" value="${escAttr(value)}"
+    return `<div class="flex items-center gap-1 w-40" data-whitelist-ip-row>
+        <input type="text" class="input input-sm w-full font-mono text-xs js-whitelist-ip"
+               placeholder="IP or CIDR" value="${escAttr(value)}"
                oninput="this.classList.remove('input-error')" />
         <button type="button" class="btn btn-xs btn-error btn-outline shrink-0" onclick="removeWhitelistIpRowBtn(this)" aria-label="Remove IP" title="Remove IP">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
