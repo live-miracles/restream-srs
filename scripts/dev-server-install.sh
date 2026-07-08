@@ -140,4 +140,4 @@ build_relay_local
 echo ""
 echo "Run SRS:  npm run srs"
 echo "Run app:  npm run dev"
-echo "Run relay watcher: npm run relay"
+echo "Run relay: npm run relay"

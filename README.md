@@ -244,7 +244,7 @@ npm run srs           # runs ./objs/srs -c srs.conf in the foreground
 
 **3. Start the SRT bonding relay** (terminal 2):
 ```bash
-npm run relay         # auto-clones ../srt-bonding-relay if missing, builds it, runs it, and rebuilds on source changes
+npm run relay         # auto-clones ../srt-bonding-relay if missing, builds it, and runs it (rerun to rebuild after source changes)
 ```
 
 The relay also exposes a local HTTP status endpoint on the default
