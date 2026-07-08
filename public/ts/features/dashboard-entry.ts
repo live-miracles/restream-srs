@@ -63,8 +63,16 @@ declare global {
         previewMaximizeBtn: () => void;
         reloadConfigBtn: () => Promise<void>;
         refreshHostConnectionsBtn: () => Promise<void>;
+        showProblemsOverviewBtn: () => void;
     }
 }
+
+// Jump from the sidebar's warning/error count badges to the overview with the
+// "Problems" filter active, so a red badge is one click from the failing rows.
+window.showProblemsOverviewBtn = () => {
+    state.overviewFilter = 'problems';
+    window.selectPipeline(null);
+};
 
 // Refetch config (and re-render) after the config was changed by another client.
 // refreshAfterMutation invalidates the cached config so it is reloaded, which

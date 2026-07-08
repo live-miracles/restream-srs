@@ -774,6 +774,8 @@ function renderOverview(): void {
 
     const totalOuts = state.pipelines.reduce((s, p) => s + p.outs.length, 0);
     const relayProcessRunning = state.health.srtRelay?.status === 'running';
+    const problemsOnly = state.overviewFilter === 'problems';
+    const isProblem = (st: string): boolean => st === 'warn' || st === 'error';
 
     // ── SRT Bonding Relay ───────────────────────────────
     const activeRelayPipelines = state.pipelines.filter(
@@ -787,6 +789,11 @@ function renderOverview(): void {
             p.srtBonding.recvLossTotal > 0 ||
             p.srtBonding.recvDropTotal > 0,
     );
+    const relayProblemCount = activeRelayPipelines.filter(
+        (p) =>
+            isProblem(relayInputStatus(p, relayProcessRunning)) ||
+            isProblem(relayOutputStatus(p, relayProcessRunning)),
+    ).length;
     let relayRows = '';
     if (activeRelayPipelines.length === 0) {
         relayRows = `<tr><td colspan="10" class="py-4 text-center opacity-50">No active SRT bonding relay sessions.</td></tr>`;
@@ -796,6 +803,7 @@ function renderOverview(): void {
             const outputSt = relayOutputStatus(p, relayProcessRunning);
             const rowWarn = inputSt === 'warn' || outputSt === 'warn';
             const rowError = inputSt === 'error' || outputSt === 'error';
+            if (problemsOnly && !rowWarn && !rowError) continue;
             const rxPackets = p.srtBonding.recvUniquePacketsTotal || p.srtBonding.recvPacketsTotal;
 
             relayRows += `<tr class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(rowError, rowWarn)}>
@@ -811,9 +819,13 @@ function renderOverview(): void {
                 <td class="font-mono text-xs">${p.srtBonding.rttMs != null ? `${p.srtBonding.rttMs.toFixed(p.srtBonding.rttMs >= 10 ? 0 : 1)} ms` : '—'}</td>
             </tr>`;
         }
+        if (problemsOnly && relayRows === '') {
+            relayRows = `<tr><td colspan="10" class="py-4 text-center opacity-50">No relay issues.</td></tr>`;
+        }
     }
 
     // ── Inputs ────────────────────────────────────────────
+    const inputProblemCount = state.pipelines.filter((p) => isProblem(inputStatus(p.input))).length;
     let inputRows = '';
     if (state.pipelines.length === 0) {
         inputRows = `<tr><td colspan="11" class="py-4 text-center opacity-50">No pipelines yet.</td></tr>`;
@@ -823,6 +835,7 @@ function renderOverview(): void {
             const st = inputStatus(inp);
             const isWarn = st === 'warn';
             const isError = st === 'error';
+            if (problemsOnly && !isWarn && !isError) continue;
             const badge =
                 st === 'off'
                     ? `<span class="badge badge-sm badge-neutral">Offline</span>`
@@ -869,9 +882,16 @@ function renderOverview(): void {
                 </tr>`;
             }
         }
+        if (problemsOnly && inputRows === '') {
+            inputRows = `<tr><td colspan="11" class="py-4 text-center opacity-50">No input issues.</td></tr>`;
+        }
     }
 
     // ── Outputs ───────────────────────────────────────────
+    const outputProblemCount = state.pipelines.reduce(
+        (s, p) => s + p.outs.filter((o) => isProblem(outStatus(o, p.input.live))).length,
+        0,
+    );
     let outputRows = '';
     if (totalOuts === 0) {
         outputRows = `<tr><td colspan="11" class="py-4 text-center opacity-50">No outputs yet.</td></tr>`;
@@ -880,6 +900,7 @@ function renderOverview(): void {
             for (const o of p.outs) {
                 const isRunning = o.status === 'running';
                 const st = outStatus(o, p.input.live);
+                if (problemsOnly && !isProblem(st)) continue;
                 const retryPrefix =
                     st === 'error' && o.failures > 0 ? `${ICON_ITERATION_CW}${o.failures} ` : '';
                 const badge =
@@ -915,6 +936,9 @@ function renderOverview(): void {
                     ${td(fmtHz(media?.audio?.sample_rate))}
                 </tr>`;
             }
+        }
+        if (problemsOnly && outputRows === '') {
+            outputRows = `<tr><td colspan="11" class="py-4 text-center opacity-50">No output issues.</td></tr>`;
         }
     }
 
@@ -958,8 +982,19 @@ function renderOverview(): void {
         ${chartCard('chart-tx', 'Uplink', last ? fmtMbps(last.txBps) : '—')}
     </div>`;
 
+    const totalProblems = relayProblemCount + inputProblemCount + outputProblemCount;
+    const filterChips = `
+    <div class="mb-4 flex items-center gap-2">
+        <button id="ov-filter-all" class="btn btn-xs ${problemsOnly ? 'btn-ghost' : 'btn-active'}">All</button>
+        <button id="ov-filter-problems" class="btn btn-xs gap-1 ${problemsOnly ? 'btn-active' : 'btn-ghost'}">
+            Problems
+            <span class="badge badge-xs ${totalProblems > 0 ? 'badge-error' : 'badge-ghost'}">${totalProblems}</span>
+        </button>
+    </div>`;
+
     overviewEl.innerHTML = `
         ${chartsHtml}
+        ${filterChips}
         <h2 class="mb-2 text-lg font-bold">SRT Bonding Relay <span class="badge badge-neutral badge-sm ml-1">${activeRelayPipelines.length}</span></h2>
         <div class="overflow-x-auto mb-6">
             <table class="table table-sm">
@@ -1002,6 +1037,14 @@ function renderOverview(): void {
     });
     document.getElementById('chart-fwd')?.addEventListener('click', () => {
         state.chartOffsetMs = Math.max(0, state.chartOffsetMs - CHART_SCROLL_STEP_MS);
+        renderOverview();
+    });
+    document.getElementById('ov-filter-all')?.addEventListener('click', () => {
+        state.overviewFilter = 'all';
+        renderOverview();
+    });
+    document.getElementById('ov-filter-problems')?.addEventListener('click', () => {
+        state.overviewFilter = 'problems';
         renderOverview();
     });
 

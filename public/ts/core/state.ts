@@ -8,6 +8,8 @@ import type {
     StreamKey,
 } from '../types.js';
 
+export type OverviewFilter = 'all' | 'problems';
+
 export interface AppState {
     config: Partial<ConfigData>;
     health: Partial<HealthData>;
@@ -18,6 +20,10 @@ export interface AppState {
     streamKeys: StreamKey[];
     chartOffsetMs: number;
     hostChartOffsetMs: number;
+    // Overview table filter: 'problems' hides rows that are neither warning
+    // nor error, so a failing input/output is findable at a glance at the
+    // 50-input / 500-output scale.
+    overviewFilter: OverviewFilter;
 }
 
 export const state: AppState = {
@@ -30,4 +36,5 @@ export const state: AppState = {
     streamKeys: [],
     chartOffsetMs: 0,
     hostChartOffsetMs: 0,
+    overviewFilter: 'all',
 };
