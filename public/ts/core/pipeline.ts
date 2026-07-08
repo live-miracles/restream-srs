@@ -30,6 +30,8 @@ const EMPTY_BONDING: SrtBondingStatus = {
     outputConnected: false,
     acceptedBySrs: false,
     publishConflict: false,
+    srsPublisher: null,
+    localSrtPublisherConflict: false,
     retryFailures: 0,
     forwardedPackets: 0,
     forwardedBytes: 0,

@@ -11,6 +11,7 @@ import {
     type AudioTrackInfo,
 } from '../utils/srs.js';
 import { readAppConfig } from '../utils/appConfig.js';
+import { readSrsConfigValues } from '../utils/srsConfig.js';
 import type { Db } from '../types.js';
 import type { OutputService } from './outputs.js';
 import type { SrtRelayService, SrtRelayStats, SrtRelayStreamStatus } from './srtRelay.js';
@@ -19,7 +20,8 @@ import { inputPullUrl, type InputProtocol, type InputState } from './inputState.
 const FFPROBE_CMD = readAppConfig().ffprobePath;
 const FFPROBE_TIMEOUT_MS = 15000;
 const FFPROBE_INITIAL_DELAY_MS = 5000;
-const FFPROBE_REFRESH_MS = 30000;
+const FFPROBE_FAILED_REFRESH_MS = 15000;
+const FFPROBE_HEALTHY_REFRESH_MS = 30000;
 // Stagger concurrent ffprobe launches instead of capping concurrency with a
 // semaphore. The real risk is the thundering-herd burst (all N pipelines firing
 // at the same millisecond after a mass reconnect), not the sustained overlap —
@@ -68,6 +70,8 @@ interface PipelineHealth {
     srtBonding: SrtRelayStreamStatus & {
         acceptedBySrs: boolean;
         publishConflict: boolean;
+        srsPublisher: SrsPublisherInfo | null;
+        localSrtPublisherConflict: boolean;
     };
 }
 
@@ -102,9 +106,20 @@ interface ProbeStatus {
     error: string | null;
 }
 
+interface SrsPublisherInfo {
+    id: string;
+    ip: string | null;
+    type: string | null;
+}
+
 export function isProbeUsable(result: ProbeResult | null): boolean {
     const video = result?.video;
     return !!video?.codec && video.width > 0 && video.height > 0;
+}
+
+function hasUsableSrsVideo(stream: SrsStream | undefined): boolean {
+    const video = stream?.video;
+    return !!video?.codec && video.width > 0 && video.height > 0 && (video.fps ?? 0) > 0;
 }
 
 export function isLoopbackIp(ip: string | null | undefined): boolean {
@@ -115,6 +130,60 @@ function srsClientLooksLikeRelayPublisher(client: SrsClient | undefined): boolea
     if (!client) return false;
     if (!isLoopbackIp(client.ip)) return false;
     return !client.type || client.type === 'srt-publish';
+}
+
+function srsPublisherInfo(client: SrsClient | undefined): SrsPublisherInfo | null {
+    if (!client) return null;
+    return {
+        id: client.id,
+        ip: client.ip ?? null,
+        type: client.type ?? null,
+    };
+}
+
+function isLocalSrsHost(hostname: string): boolean {
+    const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    return (
+        host === 'localhost' ||
+        host === '127.0.0.1' ||
+        host === '::1' ||
+        host.startsWith('127.') ||
+        host === '::ffff:7f00:1' ||
+        host.startsWith('::ffff:127.')
+    );
+}
+
+function extractStreamResource(value: string): string | null {
+    const candidates = [value];
+    try {
+        candidates.push(decodeURIComponent(value));
+    } catch {
+        /* keep the raw candidate only */
+    }
+
+    for (const candidate of candidates) {
+        const match = /(?:^|[?,&#]|::|,)r=([^,&#]+)/.exec(candidate);
+        if (!match?.[1]) continue;
+        return match[1].replace(/^\/+/, '');
+    }
+
+    return null;
+}
+
+export function localSrtOutputTargetsStream(url: string, streamKey: string): boolean {
+    if (!url.startsWith('srt://')) return false;
+
+    const srs = readSrsConfigValues();
+    try {
+        const parsed = new URL(url);
+        const port = parsed.port ? Number(parsed.port) : 0;
+        if (port !== srs.srtPort) return false;
+        if (!isLocalSrsHost(parsed.hostname)) return false;
+    } catch {
+        return false;
+    }
+
+    return extractStreamResource(url) === `live/${streamKey}`;
 }
 
 function probeError(result: ProbeResult | null): string {
@@ -294,7 +363,8 @@ export function createHealthService(
         if (ffprobeTimers.has(pipelineId) || ffprobeInFlight.has(pipelineId)) return;
         const status = ffprobeResults.get(pipelineId);
         if (protocol === 'rtmp' && status?.ok) return;
-        if (status && Date.now() - status.checkedAt < FFPROBE_REFRESH_MS) return;
+        const refreshMs = status?.ok ? FFPROBE_HEALTHY_REFRESH_MS : FFPROBE_FAILED_REFRESH_MS;
+        if (status && Date.now() - status.checkedAt < refreshMs) return;
         const initialDelayMs = status || protocol !== 'rtmp' ? 0 : FFPROBE_INITIAL_DELAY_MS;
         scheduleFfprobe(
             pipelineId,
@@ -338,9 +408,10 @@ export function createHealthService(
             if (!activePipelineIds.has(pipelineId)) clearFfprobeState(pipelineId);
         }
 
+        const outputRows = db.listOutputs();
         const outputsByPipeline = new Map<number, string[]>();
         const lastErrorById = new Map<string, string | null>();
-        for (const o of db.listOutputIds()) {
+        for (const o of outputRows) {
             const ids = outputsByPipeline.get(o.pipelineId);
             if (ids) ids.push(o.id);
             else outputsByPipeline.set(o.pipelineId, [o.id]);
@@ -413,7 +484,9 @@ export function createHealthService(
                     ? 'srt'
                     : 'rtmp'
                 : null;
-            const nowLive = srsReachable ? nowConnected && (probe?.ok ?? false) : prevLive;
+            const nowLive = srsReachable
+                ? nowConnected && (nowSrtInput ? (probe?.ok ?? false) : hasUsableSrsVideo(s))
+                : prevLive;
             // UI should reflect whether the input is currently usable through SRS.
             // Keep nowLive sticky internally for restart/logging behavior during an
             // SRS outage, but don't present a stale green input while SRS is down.
@@ -516,7 +589,18 @@ export function createHealthService(
             const bondingStreamId = `#!::r=live/${pipeline.streamKey},m=publish`;
             const rawBondingStatus = srtRelayService.getStreamStatus(bondingStreamId);
             const publisher = s?.publish?.cid ? publisherByCid.get(s.publish.cid) : undefined;
-            const relayAcceptedBySrs = !!srtStream && srsClientLooksLikeRelayPublisher(publisher);
+            const localSrtPublisherConflict = outputRows.some((output) => {
+                if (output.pipelineId === pipeline.id) return false;
+                if (output.desiredState !== 'running') return false;
+                if (outputService.getStats(output.id).status !== 'running') return false;
+                return output.sinks.some((sink) =>
+                    localSrtOutputTargetsStream(sink.url, pipeline.streamKey),
+                );
+            });
+            const relayAcceptedBySrs =
+                !!srtStream &&
+                srsClientLooksLikeRelayPublisher(publisher) &&
+                !localSrtPublisherConflict;
             const relayPublishConflict =
                 displayConnected &&
                 !!srtStream &&
@@ -526,6 +610,8 @@ export function createHealthService(
                 ...rawBondingStatus,
                 acceptedBySrs: relayAcceptedBySrs,
                 publishConflict: relayPublishConflict,
+                srsPublisher: srsPublisherInfo(publisher),
+                localSrtPublisherConflict,
             };
 
             pipelinesHealth[String(pipeline.id)] = {

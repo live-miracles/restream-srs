@@ -61,7 +61,7 @@ interface RelayStatusResponse {
 }
 
 function extractStreamResource(streamId: string): string | null {
-    const match = /(?:^|[?,,#]|::|,)r=([^,]+)/.exec(streamId);
+    const match = /(?:^|[?,&#]|::|,)r=([^,&#]+)/.exec(streamId);
     if (!match?.[1]) return null;
     return match[1].replace(/^\/+/, '');
 }

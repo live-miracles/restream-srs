@@ -262,10 +262,13 @@ function getBondingIndicator(
     }
 
     if (publishConflict) {
+        const conflictTitle = srtBonding.localSrtPublisherConflict
+            ? 'Bonded SRT input active, but a local pipeline output is already publishing to this stream key in SRS'
+            : 'Bonded SRT input active, but SRS is already using another publisher for this stream key';
         return {
             leftColor: hasRecentInputFlow ? STATUS_COLOR_GOOD : STATUS_COLOR_WARN,
             rightColor: STATUS_COLOR_ERROR,
-            title: 'Bonded SRT input active, but SRS is already using another publisher for this stream key',
+            title: conflictTitle,
         };
     }
 
@@ -1098,6 +1101,16 @@ function renderPipelineInfo(selectedId: string | null): void {
         bondingStats.innerHTML = hasSessionStats
             ? renderCompactMetaRow(
                   [
+                      {
+                          label: 'SRS Pub',
+                          labelTitle:
+                              'The publisher SRS reports as active for this stream key. "local output" means another pipeline output is occupying the stream locally.',
+                          value: pipeline.srtBonding.localSrtPublisherConflict
+                              ? 'local output'
+                              : pipeline.srtBonding.srsPublisher
+                                ? `${pipeline.srtBonding.srsPublisher.ip ?? 'unknown'} ${pipeline.srtBonding.srsPublisher.type ?? ''}`.trim()
+                                : '—',
+                      },
                       {
                           label: 'Rx',
                           labelTitle:

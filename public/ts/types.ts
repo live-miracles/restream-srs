@@ -90,6 +90,12 @@ export interface SrtBondingStatus {
     outputConnected: boolean;
     acceptedBySrs?: boolean;
     publishConflict?: boolean;
+    srsPublisher?: {
+        id: string;
+        ip: string | null;
+        type: string | null;
+    } | null;
+    localSrtPublisherConflict?: boolean;
     retryFailures: number;
     forwardedPackets: number;
     forwardedBytes: number;
