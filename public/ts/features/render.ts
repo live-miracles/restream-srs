@@ -4,6 +4,7 @@ import {
     formatBytesCompact,
     getUrlParam,
     maskStreamKey,
+    maskSecret,
     LOW_BITRATE_KBPS,
     STATUS_COLOR_GOOD,
     STATUS_COLOR_WARN,
@@ -1383,7 +1384,14 @@ function renderPipelineInfo(selectedId: string | null): void {
     }
     if (srtEl) {
         srtEl.dataset.copy = pipeline.srtPublishUrl;
-        srtEl.textContent = pipeline.srtPublishUrl.replace(pipeline.streamKey, masked);
+        let srtDisplayUrl = pipeline.srtPublishUrl.replace(pipeline.streamKey, masked);
+        if (state.config.srtPassphrase) {
+            srtDisplayUrl = srtDisplayUrl.replace(
+                encodeURIComponent(state.config.srtPassphrase),
+                maskSecret(state.config.srtPassphrase),
+            );
+        }
+        srtEl.textContent = srtDisplayUrl;
         const hostStart = 6;
         const colonAfterHost = pipeline.srtPublishUrl.indexOf(':', hostStart);
         srtEl.dataset.ip = pipeline.srtPublishUrl.slice(hostStart, colonAfterHost);
@@ -1428,7 +1436,14 @@ function renderPipelineInfo(selectedId: string | null): void {
         bondingDot.title = indicator.title;
     }
     if (bondingUrl) {
-        bondingUrl.textContent = bondingUrlValue.replace(pipeline.streamKey, masked);
+        let bondingDisplayUrl = bondingUrlValue.replace(pipeline.streamKey, masked);
+        if (state.config.srtPassphrase) {
+            bondingDisplayUrl = bondingDisplayUrl.replace(
+                encodeURIComponent(state.config.srtPassphrase),
+                maskSecret(state.config.srtPassphrase),
+            );
+        }
+        bondingUrl.textContent = bondingDisplayUrl;
         bondingUrl.dataset.copy = bondingUrlValue;
         bondingUrl.dataset.ip = bondingHost;
         bondingUrl.dataset.port = String(bondingPortValue);
@@ -1491,7 +1506,7 @@ function renderPipelineInfo(selectedId: string | null): void {
                   ],
                   'input-meta-row-sm',
               )
-            : '<span class="opacity-70">No SRT session stats yet</span>';
+            : '';
     }
     if (bondingErrWrap && bondingErr && bondingErrTs) {
         const msg = pipeline.srtBonding.lastError;

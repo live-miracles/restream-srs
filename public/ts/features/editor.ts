@@ -16,7 +16,13 @@ function hostProbeRowHtml(slot: number, target?: HostProbeTarget): string {
         <td><input type="text" class="input input-sm w-full font-mono text-sm" data-host-probe-slot="${slot}" data-host-probe-field="host" placeholder="a.rtmp.youtube.com" value="${escAttr(target?.host ?? '')}" /></td>
         <td><input type="number" min="1" max="65535" class="input input-sm w-full font-mono text-sm" data-host-probe-slot="${slot}" data-host-probe-field="port" placeholder="1935" value="${target?.port ?? ''}" /></td>
         <td class="text-right">
-            <button type="button" class="btn btn-ghost btn-xs" onclick="removeHostProbeRowBtn(${slot})" aria-label="Remove host probe">&times;</button>
+            <button type="button" class="btn btn-xs btn-error btn-outline" onclick="removeHostProbeRowBtn(${slot})" aria-label="Remove host probe" title="Remove host probe">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                    <line x1="10" x2="10" y1="11" y2="17" /><line x1="14" x2="14" y1="11" y2="17" />
+                </svg>
+            </button>
         </td>
     </tr>`;
 }

@@ -177,11 +177,9 @@
           </div>
 
           <div class="space-y-2">
-            <div>
-              <p class="text-sm font-medium">Host Connectivity Probes</p>
-              <p class="text-xs opacity-60">
-                Up to 10 hosts. The server probes each configured host:port every 15 seconds and keeps 12 hours of history.
-              </p>
+            <div class="flex items-center justify-between pt-1">
+              <span class="fieldset-legend">Host Connectivity Probes</span>
+              <button id="settings-add-host-probe-btn" type="button" class="btn btn-xs btn-ghost" onclick="addHostProbeRowBtn()">+ Add host</button>
             </div>
             <div class="border-base-content/10 overflow-x-auto rounded-lg border">
               <table class="table-sm table">
@@ -195,9 +193,6 @@
                 </thead>
                 <tbody id="settings-host-probe-rows"></tbody>
               </table>
-            </div>
-            <div class="flex justify-end">
-              <button id="settings-add-host-probe-btn" type="button" class="btn btn-sm btn-outline" onclick="addHostProbeRowBtn()">+</button>
             </div>
           </div>
 
