@@ -1356,6 +1356,13 @@ function renderPipelineInfo(selectedId: string | null): void {
         readersBadge.textContent = `${pipeline.input.readers} reader${pipeline.input.readers === 1 ? '' : 's'}`;
         readersBadge.classList.toggle('hidden', !pipeline.input.connected);
     }
+    const publisherIpBadge = document.getElementById('pipe-publisher-ip-badge');
+    if (publisherIpBadge) {
+        const ip = pipeline.input.publisherIp;
+        const showIp = pipeline.input.connected && ip != null;
+        publisherIpBadge.textContent = showIp ? ip : '';
+        publisherIpBadge.classList.toggle('hidden', !showIp);
+    }
 
     const hasActiveOutputs = pipeline.outs.some((o) => o.desiredState !== 'stopped');
     const deleteBtn = document.getElementById('pipe-delete-btn');
@@ -1562,6 +1569,14 @@ function showDupWarning(url: string, refs: DupRef[]): void {
     modal.showModal();
 }
 
+function restreamSinkLabel(url: string): string | null {
+    for (const p of state.config.pipelines ?? []) {
+        if (url === p.rtmpPublishUrlLocal) return `rtmp:// ${p.name}`;
+        if (url === p.srtPublishUrlLocal) return `srt:// ${p.name}`;
+    }
+    return null;
+}
+
 function renderOutputCard(
     o: OutputView,
     inputLive: boolean,
@@ -1598,7 +1613,10 @@ function renderOutputCard(
                       .map((t) => `A${parseInt(t) + 1}`)
                       .join('+')}</span>`
                 : '';
-        const display = s.url.length > 27 ? s.url.slice(0, 25) + '...' + s.url.slice(-2) : s.url;
+        const restreamLabel = restreamSinkLabel(s.url);
+        const display =
+            restreamLabel ??
+            (s.url.length > 27 ? s.url.slice(0, 25) + '...' + s.url.slice(-2) : s.url);
         const dupRefs = dupUrls.get(s.url);
         const dupWarnBtn = dupRefs
             ? `<button class="btn btn-xs btn-ghost text-warning p-0 leading-none shrink-0" data-action="dup-warn" data-dup-url="${escHtml(s.url)}" data-dup-info="${escHtml(JSON.stringify(dupRefs))}" title="Duplicate destination — click for details">${ICON_WARN}</button>`

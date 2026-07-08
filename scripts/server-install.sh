@@ -295,6 +295,94 @@ systemctl enable fail2ban
 systemctl restart fail2ban
 echo "fail2ban: jail 'restream-srs' active (5 rejected publishes/plays in 10 min => 1 h ban)"
 
+# Lets the dashboard (Settings -> IP Whitelist) keep trusted IPs out of the
+# jail above and unban them live, without restarting fail2ban or
+# restream-srs.service (a restart would kill every in-flight output ffmpeg).
+# Invoked via sudo since restream-srs.service is unprivileged (NoNewPrivileges).
+# The API does full IP/CIDR validation; this script still rejects unsafe tokens
+# before writing root-owned fail2ban config.
+cat > /usr/local/sbin/restream-srs-fail2ban-apply <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+JAIL=restream-srs
+CONF=/etc/fail2ban/jail.d/restream-srs-whitelist.local
+
+if [[ "${1:-}" != "sync" ]]; then
+    echo "usage: $0 sync <ip-or-cidr> [...]" >&2
+    exit 1
+fi
+shift
+
+validate_safe_ip_or_cidr_token() {
+    local value="$1"
+    local addr="${value%%/*}"
+    local prefix=""
+
+    [[ "$value" =~ ^[0-9A-Fa-f:.]+(/[0-9]{1,3})?$ ]] || return 1
+    [[ -n "$addr" ]] || return 1
+
+    if [[ "$value" == */* ]]; then
+        prefix="${value##*/}"
+        [[ "$prefix" =~ ^[0-9]+$ ]] || return 1
+        if [[ "$addr" == *:* ]]; then
+            (( prefix <= 128 )) || return 1
+        else
+            (( prefix <= 32 )) || return 1
+        fi
+    fi
+
+    return 0
+}
+
+for ip in "$@"; do
+    validate_safe_ip_or_cidr_token "$ip" || {
+        echo "ERROR: rejecting invalid IP/CIDR: $ip" >&2
+        exit 1
+    }
+done
+
+# Fail2ban reads this file itself on its own next (re)start, so this write
+# alone is enough regardless of whether fail2ban is up right now.
+TMP_CONF="$(mktemp "${CONF}.XXXXXX")"
+{
+    echo "[$JAIL]"
+    if [[ $# -gt 0 ]]; then
+        printf 'ignoreip = %s\n' "$*"
+    fi
+} > "$TMP_CONF"
+chmod 644 "$TMP_CONF"
+mv "$TMP_CONF" "$CONF"
+
+# Below is the live half, needed only to apply/unban immediately.
+if ! fail2ban-client ping >/dev/null 2>&1; then
+    echo "fail2ban is not running; whitelist file written and will apply once it starts" >&2
+    exit 1
+fi
+
+fail2ban-client reload "$JAIL" >/dev/null
+
+# ignoreip only stops *future* bans; an IP just added to the whitelist that's
+# already sitting in the jail needs an explicit unban. unbanip errors on an
+# IP that isn't currently banned, which is the common case, so ignore that.
+for ip in "$@"; do
+    fail2ban-client set "$JAIL" unbanip "$ip" >/dev/null 2>&1 || true
+done
+EOF
+chown root:root /usr/local/sbin/restream-srs-fail2ban-apply
+chmod 755 /usr/local/sbin/restream-srs-fail2ban-apply
+
+SUDOERS_TMP="$WORK/restream-srs-fail2ban.sudoers"
+cat > "$SUDOERS_TMP" <<EOF
+$SERVICE_USER ALL=(root) NOPASSWD: /usr/local/sbin/restream-srs-fail2ban-apply
+EOF
+if ! visudo -cf "$SUDOERS_TMP"; then
+    echo "ERROR: generated sudoers rule for fail2ban whitelisting failed validation" >&2
+    exit 1
+fi
+install -m 0440 -o root -g root "$SUDOERS_TMP" /etc/sudoers.d/restream-srs-fail2ban
+echo "fail2ban: dashboard IP whitelist wired up (Settings -> IP Whitelist)"
+
 step "11/11 Systemd"
 cat > /etc/systemd/system/srs.service <<EOF
 [Unit]

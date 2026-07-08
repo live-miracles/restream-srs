@@ -11,6 +11,8 @@ export interface Pipeline {
     streamKeyId: number;
     rtmpPublishUrl: string;
     srtPublishUrl: string;
+    rtmpPublishUrlLocal: string;
+    srtPublishUrlLocal: string;
 }
 
 export interface OutputSink {
@@ -199,6 +201,7 @@ export interface ConfigData {
     pipelines: Pipeline[];
     outputs: Output[];
     hostProbeTargets: HostProbeTarget[];
+    whitelistIps: string[];
     encodings: string[];
     streamKeys: StreamKey[];
     serverName: string;

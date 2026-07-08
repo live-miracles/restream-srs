@@ -80,14 +80,22 @@ function dispatch(app, method, route, body) {
     });
 }
 
-function createHarness() {
+function createHarness({ applyIpWhitelist } = {}) {
     const app = express();
 
     const db = createDb(':memory:');
-    registerSettingsApi(app, db);
+    const calls = [];
+    const apply =
+        applyIpWhitelist ??
+        (async (ips) => {
+            calls.push(ips);
+            return { ok: true };
+        });
+    registerSettingsApi(app, db, apply);
 
     return {
         db,
+        whitelistCalls: calls,
         request: (method, route, body) => dispatch(app, method, route, body),
     };
 }
@@ -104,6 +112,9 @@ describe('Settings API integration', () => {
             serverName: 'Control Room',
             publicHost: 'localhost',
             hostProbeTargets: [],
+            whitelistIps: [],
+            whitelistApplied: true,
+            whitelistError: null,
             pending: false,
         });
         assert.equal(harness.db.getSetting('serverName'), 'Control Room');
@@ -123,6 +134,9 @@ describe('Settings API integration', () => {
             serverName: 'New Name',
             publicHost: 'localhost',
             hostProbeTargets: [],
+            whitelistIps: [],
+            whitelistApplied: true,
+            whitelistError: null,
             pending: false,
         });
         assert.equal(harness.db.getSetting('serverName'), 'New Name');
@@ -141,6 +155,9 @@ describe('Settings API integration', () => {
             serverName: 'Control Room',
             publicHost: 'localhost',
             hostProbeTargets: [],
+            whitelistIps: [],
+            whitelistApplied: true,
+            whitelistError: null,
             pending: false,
         });
         assert.equal(harness.db.getSetting('srtPassphrase'), null);
@@ -158,6 +175,9 @@ describe('Settings API integration', () => {
             serverName: 'Control Room',
             publicHost: 'localhost',
             hostProbeTargets: [],
+            whitelistIps: [],
+            whitelistApplied: true,
+            whitelistError: null,
             pending: false,
         });
         assert.equal(harness.db.getSetting('srtPassphrase'), null);
@@ -180,8 +200,51 @@ describe('Settings API integration', () => {
             serverName: 'Control Room',
             publicHost: 'localhost',
             hostProbeTargets,
+            whitelistIps: [],
+            whitelistApplied: true,
+            whitelistError: null,
             pending: false,
         });
         assert.deepEqual(harness.db.listHostProbeTargets(), hostProbeTargets);
+    });
+
+    test('combined settings endpoint saves and dedupes IP whitelist', async () => {
+        const harness = createHarness();
+        const res = await harness.request('POST', '/api/settings', {
+            name: 'Control Room',
+            whitelistIps: ['203.0.113.4', '203.0.113.0/24', '203.0.113.4'],
+        });
+
+        assert.equal(res.status, 200);
+        assert.deepEqual([...res.body.whitelistIps].sort(), ['203.0.113.0/24', '203.0.113.4']);
+        assert.equal(res.body.whitelistApplied, true);
+        assert.deepEqual(harness.db.listWhitelistIps().sort(), ['203.0.113.0/24', '203.0.113.4']);
+        assert.deepEqual(harness.whitelistCalls, [res.body.whitelistIps]);
+    });
+
+    test('combined settings endpoint rejects an invalid whitelist entry', async () => {
+        const harness = createHarness();
+        const res = await harness.request('POST', '/api/settings', {
+            name: 'Control Room',
+            whitelistIps: ['not-an-ip'],
+        });
+
+        assert.equal(res.status, 400);
+        assert.deepEqual(harness.db.listWhitelistIps(), []);
+    });
+
+    test('combined settings endpoint surfaces a fail2ban apply failure without losing the save', async () => {
+        const harness = createHarness({
+            applyIpWhitelist: async () => ({ ok: false, error: 'sudo: a password is required' }),
+        });
+        const res = await harness.request('POST', '/api/settings', {
+            name: 'Control Room',
+            whitelistIps: ['203.0.113.4'],
+        });
+
+        assert.equal(res.status, 200);
+        assert.equal(res.body.whitelistApplied, false);
+        assert.equal(res.body.whitelistError, 'sudo: a password is required');
+        assert.deepEqual(harness.db.listWhitelistIps(), ['203.0.113.4']);
     });
 });

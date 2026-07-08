@@ -23,6 +23,7 @@ import {
 import { registerVersionApi } from './api/version.js';
 import { readAppConfig } from './utils/appConfig.js';
 import { createHostProbeService } from './services/hostProbes.js';
+import { applyIpWhitelist } from './services/fail2ban.js';
 
 const app = express();
 const PORT = readAppConfig().port;
@@ -64,7 +65,7 @@ registerConfigApi(app, db);
 registerPipelineApi(app, db, outputService, previewService, srtRelayService);
 registerOutputApi(app, db, outputService);
 registerPreviewApi(app, previewService);
-registerSettingsApi(app, db);
+registerSettingsApi(app, db, applyIpWhitelist);
 registerVersionApi(app);
 registerMetricsApi(app);
 healthService.registerRoutes(app);

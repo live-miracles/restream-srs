@@ -1,5 +1,7 @@
 import type { Express } from 'express';
 import type { Db, HostProbeTarget } from '../types.js';
+import { normalizeIpWhitelist } from '../utils/ipValidation.js';
+import type { ApplyWhitelistResult } from '../services/fail2ban.js';
 
 const MAX_HOST_PROBE_TARGETS = 10;
 
@@ -27,25 +29,42 @@ function normalizeHostProbeTargets(value: unknown): HostProbeTarget[] | null {
     return targets.sort((a, b) => a.slot - b.slot);
 }
 
-export function registerSettingsApi(app: Express, db: Db): void {
-    app.post('/api/settings', (req, res) => {
+export function registerSettingsApi(
+    app: Express,
+    db: Db,
+    applyIpWhitelist: (ips: string[]) => Promise<ApplyWhitelistResult>,
+): void {
+    app.post('/api/settings', async (req, res) => {
         const name = (req.body?.name as string | undefined)?.trim();
         const publicHost = (req.body?.publicHost as string | undefined)?.trim() ?? null;
         const hostProbeTargets = normalizeHostProbeTargets(req.body?.hostProbeTargets);
+        const whitelistIps = normalizeIpWhitelist(req.body?.whitelistIps);
 
         if (!name) return res.status(400).json({ error: 'name is required' });
         if (hostProbeTargets === null) {
             return res.status(400).json({ error: 'Invalid host probe target configuration' });
         }
+        if (whitelistIps === null) {
+            return res.status(400).json({ error: 'Invalid IP whitelist' });
+        }
 
         db.setSetting('serverName', name);
         if (publicHost !== null) db.setSetting('publicHost', publicHost);
         db.replaceHostProbeTargets(hostProbeTargets);
+        db.replaceWhitelistIps(whitelistIps);
+
+        // Best-effort: the DB write above already succeeded regardless of
+        // whether fail2ban is reachable, so a failure here is a dashboard
+        // warning, not a failed save.
+        const applyResult = await applyIpWhitelist(whitelistIps);
 
         return res.json({
             serverName: name,
             publicHost: publicHost ?? db.getSetting('publicHost') ?? 'localhost',
             hostProbeTargets,
+            whitelistIps,
+            whitelistApplied: applyResult.ok,
+            whitelistError: applyResult.ok ? null : (applyResult.error ?? 'unknown error'),
             pending: false,
         });
     });

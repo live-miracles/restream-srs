@@ -130,6 +130,74 @@ function readHostProbeRows(): HostProbeTarget[] | null {
     return targets;
 }
 
+function isValidIpOrCidr(value: string): boolean {
+    const [addr, mask] = value.split('/');
+    if (mask !== undefined && !/^\d{1,3}$/.test(mask)) return false;
+
+    const ipv4Match = addr.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (ipv4Match) {
+        const octets = ipv4Match.slice(1).map(Number);
+        if (!octets.every((o) => o >= 0 && o <= 255)) return false;
+        return mask === undefined || Number(mask) <= 32;
+    }
+
+    if (/^[0-9a-fA-F:]+$/.test(addr) && addr.includes(':')) {
+        return mask === undefined || Number(mask) <= 128;
+    }
+
+    return false;
+}
+
+function whitelistIpRowHtml(value = ''): string {
+    return `<div class="flex items-center gap-2" data-whitelist-ip-row>
+        <input type="text" class="input input-sm w-full font-mono text-sm js-whitelist-ip"
+               placeholder="203.0.113.4 or 203.0.113.0/24" value="${escAttr(value)}"
+               oninput="this.classList.remove('input-error')" />
+        <button type="button" class="btn btn-xs btn-error btn-outline shrink-0" onclick="removeWhitelistIpRowBtn(this)" aria-label="Remove IP" title="Remove IP">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                <line x1="10" x2="10" y1="11" y2="17" /><line x1="14" x2="14" y1="11" y2="17" />
+            </svg>
+        </button>
+    </div>`;
+}
+
+function renderWhitelistIpRows(ips: string[]): void {
+    const container = document.getElementById('settings-whitelist-ip-rows');
+    if (!container) return;
+    container.innerHTML = ips.map((ip) => whitelistIpRowHtml(ip)).join('');
+}
+
+export function addWhitelistIpRow(): void {
+    const container = document.getElementById('settings-whitelist-ip-rows');
+    container?.insertAdjacentHTML('beforeend', whitelistIpRowHtml());
+}
+
+export function removeWhitelistIpRow(btn: HTMLElement): void {
+    btn.closest('[data-whitelist-ip-row]')?.remove();
+}
+
+function readWhitelistIps(): string[] | null {
+    const inputs = Array.from(
+        document.querySelectorAll<HTMLInputElement>('#settings-whitelist-ip-rows .js-whitelist-ip'),
+    );
+    const ips: string[] = [];
+    let valid = true;
+    for (const input of inputs) {
+        input.classList.remove('input-error');
+        const value = input.value.trim();
+        if (!value) continue;
+        if (!isValidIpOrCidr(value)) {
+            input.classList.add('input-error');
+            valid = false;
+            continue;
+        }
+        ips.push(value);
+    }
+    return valid ? [...new Set(ips)] : null;
+}
+
 // ── Settings ──────────────────────────────────────────
 
 export function openSettings(): void {
@@ -147,6 +215,9 @@ export function openSettings(): void {
     const probeTargets = state.config.hostProbeTargets ?? [];
     renderHostProbeRows(probeTargets);
     if (probeTargets.length === 0) addHostProbeRow();
+    const whitelistIps = state.config.whitelistIps ?? [];
+    renderWhitelistIpRows(whitelistIps);
+    if (whitelistIps.length === 0) addWhitelistIpRow();
     const hasPipelines = (state.config.pipelines?.length ?? 0) > 0;
     const regenBtn = document.getElementById('regen-stream-keys-btn') as HTMLButtonElement;
     const regenHint = document.getElementById('regen-stream-keys-hint') as HTMLElement;
@@ -172,8 +243,10 @@ export async function submitSettingsForm(btn?: HTMLButtonElement): Promise<void>
         document.getElementById('settings-public-host-input') as HTMLInputElement
     ).value.trim();
     const hostProbeTargets = readHostProbeRows();
+    const whitelistIps = readWhitelistIps();
     if (!name) return;
     if (hostProbeTargets === null) return;
+    if (whitelistIps === null) return;
 
     const currentPw = (document.getElementById('current-password-input') as HTMLInputElement).value;
     const newPw = (document.getElementById('new-password-input') as HTMLInputElement).value;
@@ -189,7 +262,7 @@ export async function submitSettingsForm(btn?: HTMLButtonElement): Promise<void>
     }
 
     await withBusy(btn, async () => {
-        const result = await api.updateSettings(name, publicHost, hostProbeTargets);
+        const result = await api.updateSettings(name, publicHost, hostProbeTargets, whitelistIps);
         if (!result) return;
 
         if (changingPassword) {
@@ -202,6 +275,14 @@ export async function submitSettingsForm(btn?: HTMLButtonElement): Promise<void>
         document.title = name;
         (document.getElementById('settings-modal') as HTMLDialogElement).close();
         await refreshAfterMutation();
+
+        // Settings still saved even if this failed (see src/api/settings.ts) —
+        // surface it so a stale/unreachable fail2ban doesn't fail silently.
+        if (!result.whitelistApplied) {
+            api.showError(
+                `IP whitelist saved, but applying it live failed: ${result.whitelistError ?? 'unknown error'}. It will take effect next time fail2ban restarts.`,
+            );
+        }
     });
 }
 
@@ -360,8 +441,8 @@ function detectInstagramKey(url: string): string | null {
 
 function detectServer(url: string): { idx: number; key: string } {
     for (const p of state.config.pipelines ?? []) {
-        if (url === p.rtmpPublishUrl) return { idx: RESTREAM_RTMP_IDX, key: String(p.id) };
-        if (url === p.srtPublishUrl) return { idx: RESTREAM_SRT_IDX, key: String(p.id) };
+        if (url === p.rtmpPublishUrlLocal) return { idx: RESTREAM_RTMP_IDX, key: String(p.id) };
+        if (url === p.srtPublishUrlLocal) return { idx: RESTREAM_SRT_IDX, key: String(p.id) };
     }
     const instagramKey = detectInstagramKey(url);
     if (instagramKey !== null) return { idx: INSTAGRAM_RTMP_IDX, key: instagramKey };
@@ -631,7 +712,9 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
                 continue;
             }
             url =
-                serverIdx === RESTREAM_RTMP_IDX ? pipeline.rtmpPublishUrl : pipeline.srtPublishUrl;
+                serverIdx === RESTREAM_RTMP_IDX
+                    ? pipeline.rtmpPublishUrlLocal
+                    : pipeline.srtPublishUrlLocal;
         } else if (serverIdx === INSTAGRAM_RTMP_IDX) {
             if (keyEl instanceof HTMLInputElement) keyEl.classList.toggle('input-error', !key);
             if (!key) {

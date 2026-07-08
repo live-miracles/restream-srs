@@ -18,12 +18,17 @@ export function registerConfigApi(app: Express, db: Db): void {
             ...p,
             rtmpPublishUrl: rtmpPublishUrl(p.streamKey, host),
             srtPublishUrl: srtPublishUrl(p.streamKey, host, srsSrtPassphrase),
+            // Pipeline-to-pipeline restream destinations stay on this same server,
+            // so route them over localhost instead of bouncing off the public host.
+            rtmpPublishUrlLocal: rtmpPublishUrl(p.streamKey, 'localhost'),
+            srtPublishUrlLocal: srtPublishUrl(p.streamKey, 'localhost', srsSrtPassphrase),
         }));
         res.json({
             configRev: db.getConfigRev(),
             pipelines,
             outputs: db.listOutputs(),
             hostProbeTargets: db.listHostProbeTargets(),
+            whitelistIps: db.listWhitelistIps(),
             encodings: Object.keys(ENCODINGS),
             streamKeys: db.listStreamKeys(),
             serverName: db.getSetting('serverName') ?? 'Restream SRS',

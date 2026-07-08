@@ -93,7 +93,16 @@ export const updateSettings = (
     name: string,
     publicHost: string,
     hostProbeTargets: ConfigData['hostProbeTargets'],
-) => apiRequest('/api/settings', { method: 'POST', body: { name, publicHost, hostProbeTargets } });
+    whitelistIps: ConfigData['whitelistIps'],
+) =>
+    apiRequest<{
+        whitelistIps: string[];
+        whitelistApplied: boolean;
+        whitelistError: string | null;
+    }>('/api/settings', {
+        method: 'POST',
+        body: { name, publicHost, hostProbeTargets, whitelistIps },
+    });
 
 export const createPipeline = () => apiRequest('/api/pipelines', { method: 'POST' });
 
