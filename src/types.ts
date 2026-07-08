@@ -16,6 +16,29 @@ export interface OutputSink {
     audioEncoding: string;
 }
 
+export interface HostProbeTarget {
+    slot: number;
+    label: string;
+    host: string;
+    port: number;
+}
+
+export interface HostProbeSample {
+    ts: number;
+    ok: boolean;
+    latencyMs: number | null;
+    error: string | null;
+    resolvedAddress: string | null;
+}
+
+export interface HostProbeSummary {
+    target: HostProbeTarget;
+    latestSample: HostProbeSample | null;
+    last24hSampleCount: number;
+    last24hFailureCount: number;
+    averageLatencyMs: number | null;
+}
+
 export interface SinkInput {
     url: string;
     audioEncoding?: string;
@@ -45,6 +68,8 @@ export interface Db {
 
     getSetting(key: string): string | null;
     setSetting(key: string, value: string): void;
+    listHostProbeTargets(): HostProbeTarget[];
+    replaceHostProbeTargets(targets: HostProbeTarget[]): void;
 
     listStreamKeys(): StreamKey[];
     regenerateStreamKeys(): StreamKey[];

@@ -2,6 +2,7 @@ import type {
     PipelineView,
     ConfigData,
     HealthData,
+    HostProbeOverview,
     SystemMetrics,
     MetricSample,
     StreamKey,
@@ -13,8 +14,10 @@ export interface AppState {
     pipelines: PipelineView[];
     metrics: Partial<SystemMetrics>;
     metricsHistory: MetricSample[];
+    hostProbes: Partial<HostProbeOverview>;
     streamKeys: StreamKey[];
     chartOffsetMs: number;
+    hostChartOffsetMs: number;
 }
 
 export const state: AppState = {
@@ -23,6 +26,8 @@ export const state: AppState = {
     pipelines: [],
     metrics: {},
     metricsHistory: [],
+    hostProbes: {},
     streamKeys: [],
     chartOffsetMs: 0,
+    hostChartOffsetMs: 0,
 };

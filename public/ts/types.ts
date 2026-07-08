@@ -18,6 +18,36 @@ export interface OutputSink {
     audioEncoding: string;
 }
 
+export interface HostProbeTarget {
+    slot: number;
+    label: string;
+    host: string;
+    port: number;
+}
+
+export interface HostProbeSample {
+    ts: number;
+    ok: boolean;
+    latencyMs: number | null;
+    error: string | null;
+    resolvedAddress: string | null;
+}
+
+export interface HostProbeOverviewTarget {
+    target: HostProbeTarget;
+    latestSample: HostProbeSample | null;
+    last24hSampleCount: number;
+    last24hFailureCount: number;
+    averageLatencyMs: number | null;
+    history: HostProbeSample[];
+}
+
+export interface HostProbeOverview {
+    generatedAt: string;
+    intervalMs: number;
+    targets: HostProbeOverviewTarget[];
+}
+
 export interface Output {
     id: string;
     pipelineId: string;
@@ -136,6 +166,7 @@ export interface InputHealth {
     live: boolean;
     isSrt: boolean;
     mediaOk: boolean | null;
+    mediaProbeStartedAt: number | null;
     mediaCheckedAt: number | null;
     mediaError: string | null;
     recvBitrateKbps: number | null;
@@ -167,6 +198,7 @@ export interface ConfigData {
     configRev: number;
     pipelines: Pipeline[];
     outputs: Output[];
+    hostProbeTargets: HostProbeTarget[];
     encodings: string[];
     streamKeys: StreamKey[];
     serverName: string;

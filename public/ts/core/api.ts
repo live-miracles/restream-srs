@@ -1,6 +1,7 @@
 import type {
     ConfigData,
     HealthData,
+    HostProbeOverview,
     PipelineLog,
     OutputPayload,
     SystemMetrics,
@@ -83,11 +84,16 @@ async function apiRequest<T>(
 
 export const getConfig = () => apiRequest<ConfigData>('/api/config');
 export const getHealth = () => apiRequest<HealthData>('/api/health');
+export const getHostProbes = (hours = 24) =>
+    apiRequest<HostProbeOverview>(`/api/host-probes?hours=${hours}`);
 export const getSystemMetrics = () => apiRequest<SystemMetrics>('/api/metrics/system');
 export const getMetricsHistory = () => apiRequest<MetricSample[]>('/api/metrics/history');
 
-export const updateSettings = (name: string, publicHost: string) =>
-    apiRequest('/api/settings', { method: 'POST', body: { name, publicHost } });
+export const updateSettings = (
+    name: string,
+    publicHost: string,
+    hostProbeTargets: ConfigData['hostProbeTargets'],
+) => apiRequest('/api/settings', { method: 'POST', body: { name, publicHost, hostProbeTargets } });
 
 export const createPipeline = () => apiRequest('/api/pipelines', { method: 'POST' });
 

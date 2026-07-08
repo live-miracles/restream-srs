@@ -22,6 +22,7 @@ import {
 } from './api/auth.js';
 import { registerVersionApi } from './api/version.js';
 import { readAppConfig } from './utils/appConfig.js';
+import { createHostProbeService } from './services/hostProbes.js';
 
 const app = express();
 const PORT = readAppConfig().port;
@@ -50,6 +51,7 @@ const outputService = createOutputService(db, inputState);
 const srtRelayService = createSrtRelayService();
 const healthService = createHealthService(db, outputService, srtRelayService, inputState);
 const previewService = createPreviewService(db, inputState);
+const hostProbeService = createHostProbeService(db);
 
 // Unauthenticated routes
 registerSrsHooks(app, db);
@@ -66,6 +68,7 @@ registerSettingsApi(app, db);
 registerVersionApi(app);
 registerMetricsApi(app);
 healthService.registerRoutes(app);
+hostProbeService.registerRoutes(app);
 registerSrsLogsApi(app, healthService.getSrsEvents);
 
 app.use(
@@ -126,6 +129,7 @@ app.use(
 async function main(): Promise<void> {
     srtRelayService.start();
     healthService.start();
+    hostProbeService.start();
 
     app.listen(PORT, () => {
         console.log(`[server] listening on http://0.0.0.0:${PORT}`);

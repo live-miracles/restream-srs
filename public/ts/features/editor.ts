@@ -2,7 +2,127 @@ import * as api from '../core/api.js';
 import { state } from '../core/state.js';
 import { setUrlParam, maskStreamKey, withBusy, copyText } from '../core/utils.js';
 import { refreshAfterMutation } from './dashboard.js';
-import type { StreamKey, AudioTrackInfo } from '../types.js';
+import type { StreamKey, AudioTrackInfo, HostProbeTarget } from '../types.js';
+
+const MAX_HOST_PROBE_TARGETS = 10;
+
+function escAttr(value: string): string {
+    return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+function hostProbeRowHtml(slot: number, target?: HostProbeTarget): string {
+    return `<tr data-host-probe-row="${slot}">
+        <td><input type="text" class="input input-sm w-full" data-host-probe-slot="${slot}" data-host-probe-field="label" placeholder="YouTube" value="${escAttr(target?.label ?? '')}" /></td>
+        <td><input type="text" class="input input-sm w-full font-mono text-sm" data-host-probe-slot="${slot}" data-host-probe-field="host" placeholder="a.rtmp.youtube.com" value="${escAttr(target?.host ?? '')}" /></td>
+        <td><input type="number" min="1" max="65535" class="input input-sm w-full font-mono text-sm" data-host-probe-slot="${slot}" data-host-probe-field="port" placeholder="1935" value="${target?.port ?? ''}" /></td>
+        <td class="text-right">
+            <button type="button" class="btn btn-ghost btn-xs" onclick="removeHostProbeRowBtn(${slot})" aria-label="Remove host probe">&times;</button>
+        </td>
+    </tr>`;
+}
+
+function nextHostProbeSlot(targets: HostProbeTarget[]): number | null {
+    for (let slot = 1; slot <= MAX_HOST_PROBE_TARGETS; slot++) {
+        if (!targets.some((target) => target.slot === slot)) return slot;
+    }
+    return null;
+}
+
+function syncHostProbeAddButton(targets: HostProbeTarget[]): void {
+    const btn = document.getElementById('settings-add-host-probe-btn') as HTMLButtonElement | null;
+    if (!btn) return;
+    btn.disabled = targets.length >= MAX_HOST_PROBE_TARGETS;
+}
+
+function renderHostProbeRows(targets: HostProbeTarget[]): void {
+    const tbody = document.getElementById('settings-host-probe-rows');
+    if (!tbody) return;
+    const sorted = [...targets].sort((a, b) => a.slot - b.slot);
+    tbody.innerHTML = sorted.map((target) => hostProbeRowHtml(target.slot, target)).join('');
+    syncHostProbeAddButton(sorted);
+}
+
+function currentHostProbeTargetsFromDom(): HostProbeTarget[] {
+    const rows = Array.from(document.querySelectorAll('[data-host-probe-row]'));
+    return rows
+        .map((row) => Number((row as HTMLElement).dataset.hostProbeRow))
+        .filter((slot) => Number.isInteger(slot))
+        .sort((a, b) => a - b)
+        .map((slot) => {
+            const labelEl = document.querySelector(
+                `[data-host-probe-slot="${slot}"][data-host-probe-field="label"]`,
+            ) as HTMLInputElement;
+            const hostEl = document.querySelector(
+                `[data-host-probe-slot="${slot}"][data-host-probe-field="host"]`,
+            ) as HTMLInputElement;
+            const portEl = document.querySelector(
+                `[data-host-probe-slot="${slot}"][data-host-probe-field="port"]`,
+            ) as HTMLInputElement;
+            return {
+                slot,
+                label: labelEl?.value.trim() ?? '',
+                host: hostEl?.value.trim() ?? '',
+                port: Number(portEl?.value.trim() || '1935'),
+            };
+        });
+}
+
+export function addHostProbeRow(): void {
+    const tbody = document.getElementById('settings-host-probe-rows');
+    if (!tbody) return;
+    const targets = currentHostProbeTargetsFromDom();
+    const slot = nextHostProbeSlot(targets);
+    if (slot === null) return;
+    tbody.insertAdjacentHTML('beforeend', hostProbeRowHtml(slot));
+    syncHostProbeAddButton([...targets, { slot, label: '', host: '', port: 1935 }]);
+}
+
+export function removeHostProbeRow(slot: number): void {
+    const row = document.querySelector(`[data-host-probe-row="${slot}"]`);
+    row?.remove();
+    syncHostProbeAddButton(currentHostProbeTargetsFromDom());
+}
+
+function readHostProbeRows(): HostProbeTarget[] | null {
+    const targets: HostProbeTarget[] = [];
+    for (const existing of currentHostProbeTargetsFromDom()) {
+        const slot = existing.slot;
+        const labelEl = document.querySelector(
+            `[data-host-probe-slot="${slot}"][data-host-probe-field="label"]`,
+        ) as HTMLInputElement | null;
+        const hostEl = document.querySelector(
+            `[data-host-probe-slot="${slot}"][data-host-probe-field="host"]`,
+        ) as HTMLInputElement | null;
+        const portEl = document.querySelector(
+            `[data-host-probe-slot="${slot}"][data-host-probe-field="port"]`,
+        ) as HTMLInputElement | null;
+        if (!labelEl || !hostEl || !portEl) continue;
+
+        const label = labelEl.value.trim();
+        const host = hostEl.value.trim();
+        const portRaw = portEl.value.trim();
+
+        labelEl.classList.remove('input-error');
+        hostEl.classList.remove('input-error');
+        portEl.classList.remove('input-error');
+
+        if (!label && !host && !portRaw) continue;
+
+        const port = Number(portRaw || '1935');
+        const valid = !!label && !!host && Number.isInteger(port) && port >= 1 && port <= 65535;
+        if (!valid) {
+            if (!label) labelEl.classList.add('input-error');
+            if (!host) hostEl.classList.add('input-error');
+            if (!Number.isInteger(port) || port < 1 || port > 65535) {
+                portEl.classList.add('input-error');
+            }
+            return null;
+        }
+
+        targets.push({ slot, label, host, port });
+    }
+    return targets;
+}
 
 // ── Settings ──────────────────────────────────────────
 
@@ -18,6 +138,9 @@ export function openSettings(): void {
     (document.getElementById('confirm-password-input') as HTMLInputElement).classList.remove(
         'input-error',
     );
+    const probeTargets = state.config.hostProbeTargets ?? [];
+    renderHostProbeRows(probeTargets);
+    if (probeTargets.length === 0) addHostProbeRow();
     const hasPipelines = (state.config.pipelines?.length ?? 0) > 0;
     const regenBtn = document.getElementById('regen-stream-keys-btn') as HTMLButtonElement;
     const regenHint = document.getElementById('regen-stream-keys-hint') as HTMLElement;
@@ -42,7 +165,9 @@ export async function submitSettingsForm(btn?: HTMLButtonElement): Promise<void>
     const publicHost = (
         document.getElementById('settings-public-host-input') as HTMLInputElement
     ).value.trim();
+    const hostProbeTargets = readHostProbeRows();
     if (!name) return;
+    if (hostProbeTargets === null) return;
 
     const currentPw = (document.getElementById('current-password-input') as HTMLInputElement).value;
     const newPw = (document.getElementById('new-password-input') as HTMLInputElement).value;
@@ -58,7 +183,7 @@ export async function submitSettingsForm(btn?: HTMLButtonElement): Promise<void>
     }
 
     await withBusy(btn, async () => {
-        const result = await api.updateSettings(name, publicHost);
+        const result = await api.updateSettings(name, publicHost, hostProbeTargets);
         if (!result) return;
 
         if (changingPassword) {

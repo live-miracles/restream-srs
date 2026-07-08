@@ -9,6 +9,7 @@ import type {
     OutputSink,
     SinkInput,
     StreamKey,
+    HostProbeTarget,
     Db,
 } from '../types.js';
 
@@ -33,6 +34,15 @@ function rowToPipeline(row: Record<string, unknown>): Pipeline {
 
 function rowToStreamKey(row: Record<string, unknown>): StreamKey {
     return { id: row.id as number, slot: row.slot as number, key: row.key as string };
+}
+
+function rowToHostProbeTarget(row: Record<string, unknown>): HostProbeTarget {
+    return {
+        slot: row.slot as number,
+        label: row.label as string,
+        host: row.host as string,
+        port: row.port as number,
+    };
 }
 
 export function createDb(dbPath?: string): Db {
@@ -75,6 +85,9 @@ export function createDb(dbPath?: string): Db {
     const stmtListStreamKeySlots = sqlite.prepare(
         'SELECT id, slot FROM stream_keys WHERE slot IS NOT NULL ORDER BY slot',
     );
+    const stmtListHostProbeTargets = sqlite.prepare(
+        'SELECT slot, label, host, port FROM host_probe_targets ORDER BY slot',
+    );
     const stmtGetSetting = sqlite.prepare('SELECT value FROM settings WHERE key = ?');
     const stmtSetSetting = sqlite.prepare(
         'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
@@ -82,6 +95,17 @@ export function createDb(dbPath?: string): Db {
 
     // Write prepared statements
     const stmtUpdateStreamKey = sqlite.prepare('UPDATE stream_keys SET key = ? WHERE id = ?');
+    const stmtInsertHostProbeTarget = sqlite.prepare(
+        `INSERT INTO host_probe_targets (slot, label, host, port)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(slot) DO UPDATE SET
+            label = excluded.label,
+            host = excluded.host,
+            port = excluded.port`,
+    );
+    const stmtDeleteHostProbeTarget = sqlite.prepare(
+        'DELETE FROM host_probe_targets WHERE slot = ?',
+    );
     const stmtDeleteOutputsForPipeline = sqlite.prepare(
         'DELETE FROM outputs WHERE pipeline_id = ?',
     );
@@ -191,6 +215,38 @@ export function createDb(dbPath?: string): Db {
 
         setSetting(key: string, value: string): void {
             stmtSetSetting.run(key, value);
+            bumpConfigRev();
+        },
+
+        listHostProbeTargets(): HostProbeTarget[] {
+            return (stmtListHostProbeTargets.all() as Record<string, unknown>[]).map(
+                rowToHostProbeTarget,
+            );
+        },
+
+        replaceHostProbeTargets(targets: HostProbeTarget[]): void {
+            const existing = new Map(
+                (stmtListHostProbeTargets.all() as Record<string, unknown>[]).map((row) => {
+                    const target = rowToHostProbeTarget(row);
+                    return [target.slot, target];
+                }),
+            );
+            const incomingSlots = new Set(targets.map((target) => target.slot));
+            sqlite.transaction(() => {
+                for (const target of targets) {
+                    stmtInsertHostProbeTarget.run(
+                        target.slot,
+                        target.label,
+                        target.host,
+                        target.port,
+                    );
+                }
+                for (const [slot] of existing) {
+                    if (!incomingSlots.has(slot)) {
+                        stmtDeleteHostProbeTarget.run(slot);
+                    }
+                }
+            })();
             bumpConfigRev();
         },
 

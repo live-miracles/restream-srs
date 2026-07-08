@@ -14,6 +14,7 @@ import { state } from '../core/state.js';
 import type {
     AudioInfo,
     AudioTrackInfo,
+    HostProbeOverviewTarget,
     InputHealth,
     MetricSample,
     OutputView,
@@ -452,6 +453,16 @@ function renderPipelineList(): void {
                         ? STATUS_COLOR_GOOD
                         : STATUS_COLOR_OFF;
             const selected = p.id === selectedId ? 'bg-base-100' : '';
+            const inputStateForTitle = inputStatus(p.input);
+            const inputTitle = p.input.live
+                ? inputStateForTitle === 'warn'
+                    ? 'Input bitrate is below warning threshold.'
+                    : ''
+                : inputStateForTitle === 'warn' || inputStateForTitle === 'error'
+                  ? [inputStatusMessage(p.input), formatMediaProbeStatus(p.input)]
+                        .filter(Boolean)
+                        .join(' ')
+                  : '';
 
             const badge = (n: number, cls: string) =>
                 n > 0 ? `<div class="badge badge-sm ${cls} px-2">${n}</div>` : '';
@@ -464,7 +475,7 @@ function renderPipelineList(): void {
                 : '';
 
             return `<li>
-            <div class="flex items-center gap-2 ${selected} cursor-pointer js-select-pipeline" data-id="${p.id}">
+            <div class="flex items-center gap-2 ${selected} cursor-pointer js-select-pipeline" data-id="${p.id}" title="${escHtml(inputTitle)}">
                 <div class="rounded-box h-5 w-5 shrink-0" style="background:linear-gradient(90deg,${inColor},${inColor} 45%,#242933 45%,#242933 55%,${outColor} 55%)"></div>
                 ${badge(outGood, 'badge-success')}
                 ${badge(outWarn, 'badge-warning')}
@@ -495,15 +506,28 @@ function formatUptime(ms: number | null): string {
     return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${sec}s` : `${sec}s`;
 }
 
+function formatMediaProbeStatus(input: InputHealth): string | null {
+    if (input.mediaCheckedAt) {
+        return `Last ffprobe ${new Date(input.mediaCheckedAt).toLocaleTimeString(undefined, { hour12: false })}`;
+    }
+    if (input.mediaProbeStartedAt) {
+        return `ffprobe started ${new Date(input.mediaProbeStartedAt).toLocaleTimeString(undefined, { hour12: false })}`;
+    }
+    if (input.connected && !input.live) return 'ffprobe not run yet';
+    return null;
+}
+
+function inputStatusMessage(input: InputHealth): string {
+    return input.mediaError ?? 'Input connected, waiting for valid media.';
+}
+
 function renderInputStats(input: InputHealth): string {
     if (!input.connected) return '';
     if (!input.live) {
-        const checked = input.mediaCheckedAt
-            ? new Date(input.mediaCheckedAt).toLocaleTimeString(undefined, { hour12: false })
-            : null;
-        const message = input.mediaError ?? 'Input connected, waiting for valid media.';
+        const probeStatus = formatMediaProbeStatus(input);
+        const message = inputStatusMessage(input);
         const toneClass = input.mediaError ? 'text-error' : 'text-warning';
-        return `<p class="text-xs ${toneClass} mt-2">${message}${checked ? ` <span class="opacity-60">Last checked ${checked}</span>` : ''}</p>`;
+        return `<p class="text-xs ${toneClass} mt-2">${escHtml(message)}${probeStatus ? ` <span class="opacity-60">${escHtml(probeStatus)}</span>` : ''}</p>`;
     }
 
     const v = input.video;
@@ -803,9 +827,9 @@ function renderOverview(): void {
                 st === 'off'
                     ? `<span class="badge badge-sm badge-neutral">Offline</span>`
                     : st === 'error'
-                      ? `<span class="badge badge-sm badge-error">Media Error</span>`
+                      ? `<span class="badge badge-sm badge-error" title="${escHtml([inputStatusMessage(inp), formatMediaProbeStatus(inp)].filter(Boolean).join(' '))}">Media Error</span>`
                       : st === 'warn'
-                        ? `<span class="badge badge-sm badge-warning">${inp.live ? 'Low Bitrate' : 'Probing'}</span>`
+                        ? `<span class="badge badge-sm badge-warning" title="${escHtml(inp.live ? 'Input bitrate is below warning threshold.' : [inputStatusMessage(inp), formatMediaProbeStatus(inp)].filter(Boolean).join(' '))}">${inp.live ? 'Low Bitrate' : 'Probing'}</span>`
                         : `<span class="badge badge-sm badge-success">Live</span>`;
             const protocolLabel = isRelayAcceptedBySrs(p) ? 'Relay' : inp.isSrt ? 'SRT' : 'RTMP';
             const audioTracks = inp.audioTracks.length > 0 ? inp.audioTracks : null;
@@ -987,21 +1011,322 @@ function renderOverview(): void {
     };
 }
 
+function drawProbeChart(
+    id: string,
+    samples: Array<{ ts: number; ok: boolean; latencyMs: number | null }>,
+    windowStart: number,
+    windowEnd: number,
+): void {
+    const canvas = document.getElementById(id) as HTMLCanvasElement | null;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const displayW = canvas.clientWidth || 480;
+    const displayH = canvas.clientHeight || 110;
+    canvas.width = displayW * dpr;
+    canvas.height = displayH * dpr;
+    ctx.scale(dpr, dpr);
+
+    ctx.clearRect(0, 0, displayW, displayH);
+    const base = getComputedStyle(canvas).color;
+    const toRgba = (c: string, a: number) =>
+        c.startsWith('rgb(')
+            ? c.replace('rgb(', 'rgba(').replace(')', `, ${a})`)
+            : `rgba(128,128,128,${a})`;
+    const gridColor = toRgba(base, 0.18);
+    const labelColor = toRgba(base, 0.65);
+    const okColor = '#22c55e';
+    const failColor = '#ef4444';
+    const m = { left: 28, right: 8, top: 8, bottom: 18 };
+    const cW = displayW - m.left - m.right;
+    const cH = displayH - m.top - m.bottom;
+
+    ctx.font = '10px ui-monospace, monospace';
+    ctx.fillStyle = labelColor;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+
+    const latencies = samples
+        .map((sample) => sample.latencyMs)
+        .filter((latency): latency is number => latency != null);
+    const peak = roundUpNice(Math.max(50, ...latencies, 0));
+    const span = Math.max(1, windowEnd - windowStart);
+    const xFor = (ts: number) => m.left + ((ts - windowStart) / span) * cW;
+    const yFor = (latencyMs: number) => m.top + cH - (latencyMs / peak) * cH;
+
+    for (let i = 0; i <= 2; i++) {
+        const value = (peak / 2) * i;
+        const y = yFor(value);
+        ctx.beginPath();
+        ctx.moveTo(m.left, y);
+        ctx.lineTo(displayW - m.right, y);
+        ctx.strokeStyle = gridColor;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillText(`${Math.round(value)} ms`, m.left - 4, y);
+    }
+
+    const stepMs = 5 * 60 * 1000;
+    const firstLabel = Math.ceil(windowStart / stepMs) * stepMs;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    for (let ts = firstLabel; ts <= windowEnd + 1; ts += stepMs) {
+        const x = xFor(ts);
+        ctx.beginPath();
+        ctx.moveTo(x, m.top);
+        ctx.lineTo(x, displayH - m.bottom);
+        ctx.strokeStyle = toRgba(base, 0.1);
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        const d = new Date(ts);
+        ctx.fillText(
+            `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`,
+            x,
+            displayH - 14,
+        );
+    }
+
+    const okSamples = samples.filter((sample) => sample.ok && sample.latencyMs != null) as Array<{
+        ts: number;
+        ok: true;
+        latencyMs: number;
+    }>;
+    if (okSamples.length > 0) {
+        ctx.beginPath();
+        ctx.moveTo(xFor(okSamples[0].ts), yFor(okSamples[0].latencyMs));
+        for (let i = 1; i < okSamples.length; i++) {
+            ctx.lineTo(xFor(okSamples[i].ts), yFor(okSamples[i].latencyMs));
+        }
+        ctx.strokeStyle = okColor;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+    }
+
+    for (const sample of samples) {
+        if (sample.ok) continue;
+        const x = xFor(sample.ts);
+        ctx.beginPath();
+        ctx.moveTo(x, m.top);
+        ctx.lineTo(x, displayH - m.bottom);
+        ctx.strokeStyle = toRgba(failColor, 0.85);
+        ctx.lineWidth = 1;
+        ctx.stroke();
+    }
+}
+
+function renderHostConnectionsOverview(): void {
+    const hostsCol = document.getElementById('hosts-col');
+    if (!hostsCol) return;
+
+    const configuredTargets = state.config.hostProbeTargets ?? [];
+    const targets = state.hostProbes.targets ?? [];
+    if (configuredTargets.length === 0) {
+        hostsCol.innerHTML = `
+            <div class="rounded-xl border border-dashed border-base-content/15 p-8 text-center">
+                <h2 class="text-lg font-semibold">No Host Probes Configured</h2>
+                <p class="mt-2 text-sm opacity-60">Open Settings and add up to 10 host targets to monitor connectivity.</p>
+            </div>`;
+        return;
+    }
+
+    if (targets.length === 0) {
+        hostsCol.innerHTML = `
+            <div class="rounded-xl border border-dashed border-base-content/15 p-8 text-center">
+                <h2 class="text-lg font-semibold">Probe History Not Loaded</h2>
+                <p class="mt-2 text-sm opacity-60">Host targets are configured, but probe history is fetched only when you click refresh.</p>
+                <button
+                    type="button"
+                    class="btn btn-sm btn-outline mt-4 gap-2"
+                    onclick="refreshHostConnectionsBtn()"
+                    title="Refresh host connections">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" class="block h-4 w-4 shrink-0 fill-current" aria-hidden="true">
+                        <path d="M10 3a7 7 0 0 1 6.56 4.57.75.75 0 1 1-1.4.53A5.5 5.5 0 1 0 14.5 13H12a.75.75 0 0 1 0-1.5h4.25A.75.75 0 0 1 17 12.25v4.25a.75.75 0 0 1-1.5 0v-1.77A7 7 0 1 1 10 3Z" />
+                    </svg>
+                    Load Probe History
+                </button>
+            </div>`;
+        return;
+    }
+
+    const allHistory = targets.flatMap((entry) => entry.history);
+    const oldest =
+        allHistory.length > 0
+            ? allHistory.reduce((min, sample) => Math.min(min, sample.ts), allHistory[0].ts)
+            : null;
+    const offset = state.hostChartOffsetMs;
+    const windowEnd = Date.now() - offset;
+    const windowStart = windowEnd - CHART_WINDOW_MS;
+    const maxOffset = oldest != null ? Math.max(0, Date.now() - oldest - CHART_WINDOW_MS) : 0;
+    const atLive = offset === 0;
+    const atStart = offset >= maxOffset && maxOffset > 0;
+    const fmtTs = (ts: number) => {
+        const d = new Date(ts);
+        return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+    };
+    const rangeLabel = `<span class="inline-flex justify-center w-28">${
+        atLive
+            ? `<span class="badge badge-success badge-xs gap-1">LIVE</span>`
+            : `<span class="font-mono text-xs opacity-60">${fmtTs(windowStart)} – ${fmtTs(windowEnd)}</span>`
+    }</span>`;
+
+    const rows = targets
+        .map((entry) => {
+            const latest = entry.latestSample;
+            const latestStatus = !latest
+                ? '<span class="badge badge-sm badge-neutral">No Data</span>'
+                : latest.ok
+                  ? '<span class="badge badge-sm badge-success">Healthy</span>'
+                  : '<span class="badge badge-sm badge-error">Down</span>';
+            const failureRate =
+                entry.last24hSampleCount > 0
+                    ? Math.round((entry.last24hFailureCount / entry.last24hSampleCount) * 100)
+                    : 0;
+            const lastSeen = latest
+                ? new Date(latest.ts).toLocaleTimeString(undefined, { hour12: false })
+                : '—';
+            return `<tr>
+                <td class="font-semibold">${escHtml(entry.target.label)}</td>
+                <td class="font-mono text-xs">${escHtml(entry.target.host)}:${entry.target.port}</td>
+                <td>${latestStatus}</td>
+                <td class="font-mono text-xs">${latest?.latencyMs != null ? `${Math.round(latest.latencyMs)} ms` : '—'}</td>
+                <td class="font-mono text-xs">${entry.averageLatencyMs != null ? `${Math.round(entry.averageLatencyMs)} ms` : '—'}</td>
+                <td class="font-mono text-xs">${failureRate}%</td>
+                <td class="font-mono text-xs">${lastSeen}</td>
+                <td class="font-mono text-xs">${latest?.resolvedAddress ?? '—'}</td>
+            </tr>`;
+        })
+        .join('');
+
+    const cards = targets
+        .map((entry) => {
+            const latest = entry.latestSample;
+            const errorText =
+                latest && !latest.ok ? (latest.error ?? 'probe failed') : 'no recent failures';
+            const canvasId = `host-probe-chart-${entry.target.slot}`;
+            return `<div class="bg-base-300 rounded-xl p-4">
+                <div class="mb-3 flex items-start justify-between gap-3">
+                    <div>
+                        <h3 class="font-semibold">${escHtml(entry.target.label)}</h3>
+                        <p class="font-mono text-xs opacity-60">${escHtml(entry.target.host)}:${entry.target.port}</p>
+                    </div>
+                    <div class="text-right">
+                        <div class="font-mono text-sm">${latest?.latencyMs != null ? `${Math.round(latest.latencyMs)} ms` : '—'}</div>
+                        <div class="text-xs ${latest?.ok === false ? 'text-error' : 'opacity-60'}">${escHtml(errorText)}</div>
+                    </div>
+                </div>
+                <canvas id="${canvasId}" style="width:100%;height:110px;display:block"></canvas>
+            </div>`;
+        })
+        .join('');
+
+    hostsCol.innerHTML = `
+        <div class="mb-4 flex items-center justify-between gap-4">
+            <div>
+                <h2 class="text-lg font-bold">Host Connections</h2>
+                <p class="text-sm opacity-60">TCP probe history for configured platform hosts.</p>
+            </div>
+            <div class="flex items-center gap-3">
+                <div class="text-right text-xs opacity-60">
+                    <div>${targets.length} host${targets.length === 1 ? '' : 's'}</div>
+                    <div>Probe interval ${Math.round((state.hostProbes.intervalMs ?? 15000) / 1000)}s</div>
+                    <div>Updated ${state.hostProbes.generatedAt ? new Date(state.hostProbes.generatedAt).toLocaleTimeString(undefined, { hour12: false }) : '—'}</div>
+                </div>
+                <button
+                    id="host-connections-refresh"
+                    type="button"
+                    class="btn btn-sm btn-ghost btn-square inline-flex items-center justify-center leading-none"
+                    onclick="refreshHostConnectionsBtn()"
+                    title="Refresh host connections">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" class="block h-4 w-4 shrink-0 fill-current" aria-hidden="true">
+                        <path d="M10 3a7 7 0 0 1 6.56 4.57.75.75 0 1 1-1.4.53A5.5 5.5 0 1 0 14.5 13H12a.75.75 0 0 1 0-1.5h4.25A.75.75 0 0 1 17 12.25v4.25a.75.75 0 0 1-1.5 0v-1.77A7 7 0 1 1 10 3Z" />
+                    </svg>
+                </button>
+            </div>
+        </div>
+        <div class="bg-base-300 mb-4 rounded-xl p-4 text-sm leading-6 opacity-85">
+            Use this view to correlate output failures with basic reachability to the configured ingest hosts. A healthy line means the server could open a TCP connection to that host and port at that time; red markers mean the connect probe failed or timed out. This is useful for ruling in or out broad network-path problems from the server to YouTube, Facebook, or other destinations.
+            <br /><br />
+            Limitations: these probes do not perform a full RTMP or RTMPS publish handshake, and they do not prove the destination will accept or keep a live stream session open. A host can look healthy here while the platform still rejects, resets, or drops an actual publish connection.
+        </div>
+        <div class="mb-2 flex items-center justify-center gap-2 px-1">
+            <button id="host-chart-back" class="btn btn-xs btn-ghost" ${atStart || maxOffset === 0 ? 'disabled' : ''}>&#8592; 10 min</button>
+            ${rangeLabel}
+            <button id="host-chart-fwd" class="btn btn-xs btn-ghost" ${atLive ? 'disabled' : ''}>10 min &#8594;</button>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>Label</th>
+                        <th>Host</th>
+                        <th>Status</th>
+                        <th>Latest</th>
+                        <th>Avg</th>
+                        <th>12h Fail</th>
+                        <th>Last Sample</th>
+                        <th>Resolved IP</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+        <div class="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">${cards}</div>`;
+
+    for (const entry of targets) {
+        const chartSamples = entry.history.filter(
+            (sample) => sample.ts >= windowStart && sample.ts <= windowEnd,
+        );
+        drawProbeChart(
+            `host-probe-chart-${entry.target.slot}`,
+            chartSamples,
+            windowStart,
+            windowEnd,
+        );
+    }
+
+    document.getElementById('host-chart-back')?.addEventListener('click', () => {
+        state.hostChartOffsetMs = Math.min(
+            state.hostChartOffsetMs + CHART_SCROLL_STEP_MS,
+            maxOffset,
+        );
+        renderHostConnectionsOverview();
+    });
+    document.getElementById('host-chart-fwd')?.addEventListener('click', () => {
+        state.hostChartOffsetMs = Math.max(0, state.hostChartOffsetMs - CHART_SCROLL_STEP_MS);
+        renderHostConnectionsOverview();
+    });
+}
+
 function renderPipelineInfo(selectedId: string | null): void {
     const pipeline = selectedId ? state.pipelines.find((p) => p.id === selectedId) : null;
     const col = document.getElementById('pipe-info-col');
     const outsCol = document.getElementById('outs-col');
     const overviewCol = document.getElementById('overview-col');
+    const hostsCol = document.getElementById('hosts-col');
+    const inHostView = getUrlParam('view') === 'hosts';
+
+    if (inHostView) {
+        col?.classList.add('hidden');
+        outsCol?.classList.add('hidden');
+        overviewCol?.classList.add('hidden');
+        hostsCol?.classList.remove('hidden');
+        renderHostConnectionsOverview();
+        return;
+    }
 
     if (!pipeline) {
         col?.classList.add('hidden');
         outsCol?.classList.add('hidden');
         overviewCol?.classList.remove('hidden');
+        hostsCol?.classList.add('hidden');
         renderOverview();
         return;
     }
 
     overviewCol?.classList.add('hidden');
+    hostsCol?.classList.add('hidden');
 
     col?.classList.remove('hidden');
     outsCol?.classList.remove('hidden');
@@ -1487,6 +1812,9 @@ export function renderMetrics(): void {
 
 export function renderPipelines(): void {
     const selectedId = getUrlParam('p');
+    const inHostView = getUrlParam('view') === 'hosts';
+    const hostsBtn = document.getElementById('host-connections-nav-btn');
+    hostsBtn?.classList.toggle('btn-active', inHostView);
     renderPipelineList();
     renderPipelineInfo(selectedId);
 }

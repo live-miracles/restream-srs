@@ -1,8 +1,15 @@
 import { getUrlParam, setUrlParam, copyText } from '../core/utils.js';
 import { state } from '../core/state.js';
-import { refreshDashboard, refreshAfterMutation } from './dashboard.js';
+import {
+    invalidateHostProbes,
+    refreshDashboard,
+    refreshAfterMutation,
+    refreshHostProbes,
+} from './dashboard.js';
 import {
     openSettings,
+    addHostProbeRow,
+    removeHostProbeRow,
     submitSettingsForm,
     logoutUser,
     regenerateStreamKeysBtn,
@@ -26,7 +33,10 @@ import {
 declare global {
     interface Window {
         openSrsLogsBtn: () => Promise<void>;
+        openHostConnectionsBtn: () => Promise<void>;
         openSettingsBtn: () => void;
+        addHostProbeRowBtn: () => void;
+        removeHostProbeRowBtn: (slot: number) => void;
         settingsFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
         logoutBtn: () => Promise<void>;
         regenerateStreamKeysBtn: (btn?: HTMLButtonElement) => Promise<void>;
@@ -52,6 +62,7 @@ declare global {
         previewReloadBtn: () => void;
         previewMaximizeBtn: () => void;
         reloadConfigBtn: () => Promise<void>;
+        refreshHostConnectionsBtn: () => Promise<void>;
     }
 }
 
@@ -61,7 +72,18 @@ declare global {
 window.reloadConfigBtn = () => refreshAfterMutation();
 
 window.openSrsLogsBtn = () => showSrsLogs();
+window.openHostConnectionsBtn = async () => {
+    void import('./preview.js').then(({ stopCurrentPreview }) => stopCurrentPreview());
+    setUrlParam('p', null);
+    setUrlParam('view', 'hosts');
+    await refreshDashboard();
+};
+window.refreshHostConnectionsBtn = async () => {
+    await refreshHostProbes();
+};
 window.openSettingsBtn = () => openSettings();
+window.addHostProbeRowBtn = () => addHostProbeRow();
+window.removeHostProbeRowBtn = (slot) => removeHostProbeRow(slot);
 window.settingsFormBtn = (btn) => submitSettingsForm(btn);
 window.logoutBtn = () => logoutUser();
 window.regenerateStreamKeysBtn = (btn) => regenerateStreamKeysBtn(btn);
@@ -69,6 +91,7 @@ window.regenerateStreamKeysBtn = (btn) => regenerateStreamKeysBtn(btn);
 window.selectPipeline = (id) => {
     void import('./preview.js').then(({ stopCurrentPreview }) => stopCurrentPreview());
     setUrlParam('p', id);
+    setUrlParam('view', null);
     void refreshDashboard();
 };
 

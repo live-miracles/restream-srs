@@ -12,6 +12,7 @@ const EMPTY_INPUT: InputHealth = {
     live: false,
     isSrt: false,
     mediaOk: null,
+    mediaProbeStartedAt: null,
     mediaCheckedAt: null,
     mediaError: null,
     recvBitrateKbps: null,

@@ -37,6 +37,7 @@ export interface InputHealth {
     live: boolean;
     isSrt: boolean;
     mediaOk: boolean | null;
+    mediaProbeStartedAt: number | null;
     mediaCheckedAt: number | null;
     mediaError: string | null;
     recvBitrateKbps: number | null;
@@ -101,6 +102,7 @@ interface ProbeResult {
 
 interface ProbeStatus {
     result: ProbeResult | null;
+    startedAt: number;
     checkedAt: number;
     ok: boolean;
     error: string | null;
@@ -297,6 +299,7 @@ export function createHealthService(
     const ffprobeResults = new Map<number, ProbeStatus>();
     const ffprobeTimers = new Map<number, NodeJS.Timeout>();
     const ffprobeInFlight = new Set<number>();
+    const ffprobeStartedAt = new Map<number, number>();
     const ffprobeChildren = new Map<number, ChildProcess>();
     const ffprobeGenerations = new Map<number, number>();
 
@@ -312,6 +315,7 @@ export function createHealthService(
         if (timer) clearTimeout(timer);
         ffprobeTimers.delete(pipelineId);
         ffprobeInFlight.delete(pipelineId);
+        ffprobeStartedAt.delete(pipelineId);
         const child = ffprobeChildren.get(pipelineId);
         if (child && child.exitCode == null && child.signalCode == null) {
             child.kill('SIGKILL');
@@ -333,6 +337,8 @@ export function createHealthService(
         const timer = setTimeout(async () => {
             ffprobeTimers.delete(pipelineId);
             ffprobeInFlight.add(pipelineId);
+            const startedAt = Date.now();
+            ffprobeStartedAt.set(pipelineId, startedAt);
             try {
                 const result = await runFfprobe(url, (child) => {
                     ffprobeChildren.set(pipelineId, child);
@@ -341,12 +347,14 @@ export function createHealthService(
                 const ok = isProbeUsable(result);
                 ffprobeResults.set(pipelineId, {
                     result,
+                    startedAt,
                     checkedAt: Date.now(),
                     ok,
                     error: ok ? null : probeError(result),
                 });
             } finally {
                 ffprobeInFlight.delete(pipelineId);
+                ffprobeStartedAt.delete(pipelineId);
                 ffprobeChildren.delete(pipelineId);
             }
         }, delayMs);
@@ -469,6 +477,7 @@ export function createHealthService(
             const prevLive = inputState.isLive(pipeline.id);
             const s = srsReachable ? liveByPath.get(path) : undefined;
             const nowConnected = srsReachable ? !!s : prevConnected;
+            const nowSrtInput = !!s?.tcUrl?.startsWith('srt://');
             const prevPublisherCid = inputPublisherCid.get(pipeline.id) ?? null;
             const publisherCid = s?.publish?.cid ?? null;
             const publisherChanged =
@@ -478,14 +487,16 @@ export function createHealthService(
                 publisherCid !== prevPublisherCid;
             if (publisherChanged) clearFfprobeState(pipeline.id);
             const probe = ffprobeResults.get(pipeline.id) ?? null;
-            const nowSrtInput = !!s?.tcUrl?.startsWith('srt://');
             const nowProtocol: InputProtocol | null = nowConnected
                 ? nowSrtInput
                     ? 'srt'
                     : 'rtmp'
                 : null;
             const nowLive = srsReachable
-                ? nowConnected && (nowSrtInput ? (probe?.ok ?? false) : hasUsableSrsVideo(s))
+                ? nowConnected &&
+                  (nowSrtInput
+                      ? (probe?.ok ?? false)
+                      : hasUsableSrsVideo(s) || (probe?.ok ?? false))
                 : prevLive;
             // UI should reflect whether the input is currently usable through SRS.
             // Keep nowLive sticky internally for restart/logging behavior during an
@@ -622,6 +633,11 @@ export function createHealthService(
                         !!srtStream ||
                         (displayConnected && inputState.getProtocol(pipeline.id) === 'srt'),
                     mediaOk: displayConnected ? displayMediaOk : null,
+                    mediaProbeStartedAt: displayConnected
+                        ? ((ffprobeInFlight.has(pipeline.id)
+                              ? ffprobeStartedAt.get(pipeline.id)
+                              : mediaProbe?.startedAt) ?? null)
+                        : null,
                     mediaCheckedAt: displayConnected ? (mediaProbe?.checkedAt ?? null) : null,
                     mediaError: displayConnected ? displayMediaError : null,
                     recvBitrateKbps: s?.kbps?.recv_30s ?? null,
@@ -667,6 +683,7 @@ export function createHealthService(
         }
         ffprobeTimers.clear();
         ffprobeInFlight.clear();
+        ffprobeStartedAt.clear();
         for (const child of ffprobeChildren.values()) {
             if (child.exitCode == null && child.signalCode == null) {
                 child.kill('SIGKILL');

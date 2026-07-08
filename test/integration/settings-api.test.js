@@ -103,6 +103,7 @@ describe('Settings API integration', () => {
         assert.deepEqual(res.body, {
             serverName: 'Control Room',
             publicHost: 'localhost',
+            hostProbeTargets: [],
             pending: false,
         });
         assert.equal(harness.db.getSetting('serverName'), 'Control Room');
@@ -121,6 +122,7 @@ describe('Settings API integration', () => {
         assert.deepEqual(res.body, {
             serverName: 'New Name',
             publicHost: 'localhost',
+            hostProbeTargets: [],
             pending: false,
         });
         assert.equal(harness.db.getSetting('serverName'), 'New Name');
@@ -138,6 +140,7 @@ describe('Settings API integration', () => {
         assert.deepEqual(res.body, {
             serverName: 'Control Room',
             publicHost: 'localhost',
+            hostProbeTargets: [],
             pending: false,
         });
         assert.equal(harness.db.getSetting('srtPassphrase'), null);
@@ -154,8 +157,31 @@ describe('Settings API integration', () => {
         assert.deepEqual(res.body, {
             serverName: 'Control Room',
             publicHost: 'localhost',
+            hostProbeTargets: [],
             pending: false,
         });
         assert.equal(harness.db.getSetting('srtPassphrase'), null);
+    });
+
+    test('combined settings endpoint saves host probe targets', async () => {
+        const harness = createHarness();
+        const hostProbeTargets = [
+            { slot: 1, label: 'YouTube', host: 'a.rtmp.youtube.com', port: 1935 },
+            { slot: 2, label: 'Facebook', host: 'live-api-s.facebook.com', port: 443 },
+        ];
+
+        const res = await harness.request('POST', '/api/settings', {
+            name: 'Control Room',
+            hostProbeTargets,
+        });
+
+        assert.equal(res.status, 200);
+        assert.deepEqual(res.body, {
+            serverName: 'Control Room',
+            publicHost: 'localhost',
+            hostProbeTargets,
+            pending: false,
+        });
+        assert.deepEqual(harness.db.listHostProbeTargets(), hostProbeTargets);
     });
 });

@@ -13,6 +13,21 @@
     <div class="navbar bg-base-100 border-base-content/10 shrink-0 border-b">
       <div class="flex flex-1 items-center gap-3">
         <button class="btn btn-ghost px-2 text-xl font-bold" id="server-name-display" onclick="selectPipeline(null)">Restream SRS</button>
+        <button
+          id="host-connections-nav-btn"
+          class="btn btn-square btn-sm btn-ghost opacity-70"
+          type="button"
+          onclick="openHostConnectionsBtn()"
+          title="Host Connections"
+          aria-label="Host Connections">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8 16a4 4 0 1 1 0-8" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M16 8a4 4 0 1 1 0 8" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 12h.01" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 8h.01" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 16h.01" />
+          </svg>
+        </button>
         <button class="btn btn-square btn-sm btn-ghost opacity-70" onclick="openSrsLogsBtn()" title="SRS Logs" aria-label="SRS Logs">
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -136,7 +151,7 @@
 
     <!-- Settings modal -->
     <dialog id="settings-modal" class="modal">
-      <div class="modal-box w-full max-w-xl">
+      <div class="modal-box w-full max-w-4xl">
         <div class="mt-2 space-y-3 px-4">
           <h2 class="text-xl font-bold">Settings</h2>
 
@@ -159,6 +174,31 @@
               <legend class="fieldset-legend">Public Host</legend>
               <input type="text" id="settings-public-host-input" class="input w-full font-mono text-sm" placeholder="localhost" />
             </fieldset>
+          </div>
+
+          <div class="space-y-2">
+            <div>
+              <p class="text-sm font-medium">Host Connectivity Probes</p>
+              <p class="text-xs opacity-60">
+                Up to 10 hosts. The server probes each configured host:port every 15 seconds and keeps 12 hours of history.
+              </p>
+            </div>
+            <div class="border-base-content/10 overflow-x-auto rounded-lg border">
+              <table class="table-sm table">
+                <thead>
+                  <tr>
+                    <th>Label</th>
+                    <th>Domain / IP</th>
+                    <th class="w-28">Port</th>
+                    <th class="w-16"></th>
+                  </tr>
+                </thead>
+                <tbody id="settings-host-probe-rows"></tbody>
+              </table>
+            </div>
+            <div class="flex justify-end">
+              <button id="settings-add-host-probe-btn" type="button" class="btn btn-sm btn-outline" onclick="addHostProbeRowBtn()">+</button>
+            </div>
           </div>
 
           <!-- Regenerate Stream Keys -->
@@ -993,6 +1033,7 @@
 
       <!-- Overview: all pipelines table (spans middle + right columns) -->
       <div class="bg-base-200 col-span-2 mt-4 hidden overflow-y-auto rounded-xl p-4 shadow" id="overview-col"></div>
+      <div class="bg-base-200 col-span-2 mt-4 hidden overflow-y-auto rounded-xl p-4 shadow" id="hosts-col"></div>
     </div>
     <script>
       function togglePwVisibility(inputId, btn) {
