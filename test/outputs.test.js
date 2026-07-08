@@ -152,7 +152,7 @@ describe('output watchdog', () => {
         assert.equal(service.getStats('out1').failures, 1);
         assert.match(db.lastError, /watchdog: ffmpeg output stalled; restarting process/);
         assert.match(db.lastError, /last_total_size=4096/);
-        assert.match(db.lastError, /last_out_time_ms=1000000/);
+        assert.match(db.lastError, /last_out_time_us=1000000/);
         assert.match(db.lastError, /last_bitrate_kbps=3200/);
         assert.match(db.lastError, /Connection reset by peer/);
         assert.match(db.lastError, /Restarting output: no ffmpeg output progress for \d+s/);

@@ -202,6 +202,10 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
             return;
         }
 
+        // ffmpeg quirk: the '-progress' key is named out_time_ms but its value
+        // is MICROSECONDS (same as out_time_us; kept for compatibility). The
+        // watchdog only compares it monotonically so the unit doesn't affect
+        // behavior, but error messages must label it as µs.
         const outTimeMs = parseProgressNumber(line, 'out_time_ms=');
         if (outTimeMs != null && (p.lastOutTimeMs == null || outTimeMs > p.lastOutTimeMs)) {
             p.lastOutTimeMs = outTimeMs;
@@ -232,7 +236,7 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
             `no_output_progress_for=${stalledForSec}s`,
             `last_progress_line_age=${progressAgeSec == null ? 'unknown' : `${progressAgeSec}s`}`,
             `last_total_size=${formatNullable(p?.lastTotalSize ?? null)}`,
-            `last_out_time_ms=${formatNullable(p?.lastOutTimeMs ?? null)}`,
+            `last_out_time_us=${formatNullable(p?.lastOutTimeMs ?? null)}`,
             `last_bitrate_kbps=${formatNullable(p?.lastBitrateKbps ?? null)}`,
             stderr ? `ffmpeg stderr tail:\n${stderr}` : 'ffmpeg stderr tail: <empty>',
             `Restarting output: no ffmpeg output progress for ${stalledForSec}s`,
@@ -258,7 +262,7 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
             `socket_warning=${reason}`,
             socketSnapshot,
             `last_total_size=${formatNullable(p?.lastTotalSize ?? null)}`,
-            `last_out_time_ms=${formatNullable(p?.lastOutTimeMs ?? null)}`,
+            `last_out_time_us=${formatNullable(p?.lastOutTimeMs ?? null)}`,
             `last_bitrate_kbps=${formatNullable(p?.lastBitrateKbps ?? null)}`,
             p?.stderrTail.trim()
                 ? `ffmpeg stderr tail:\n${p.stderrTail.trim()}`

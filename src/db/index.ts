@@ -203,6 +203,34 @@ export function createDb(dbPath?: string): Db {
         return id;
     }
 
+    // Insert one output row without bumping the config revision — callers bump
+    // once per logical write (single create or a whole bulk batch).
+    function insertOutput({
+        pipelineId,
+        name,
+        videoEncoding = 'copy',
+        sinks,
+    }: {
+        pipelineId: number;
+        name: string;
+        videoEncoding?: string;
+        sinks: SinkInput[];
+    }): string {
+        const seqRow = sqlite
+            .prepare(
+                'SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM outputs WHERE pipeline_id = ?',
+            )
+            .get(pipelineId) as { next_seq: number };
+        const seq = seqRow.next_seq;
+        const id = `${pipelineId}-${seq}`;
+        sqlite
+            .prepare(
+                'INSERT INTO outputs (id, pipeline_id, seq, name, desired_state, encoding, sinks) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            )
+            .run(id, pipelineId, seq, name, 'stopped', videoEncoding, sinksToJson(sinks));
+        return id;
+    }
+
     return {
         getSetting(key: string): string | null {
             const row = stmtGetSetting.get(key) as { value: string } | undefined;
@@ -312,21 +340,24 @@ export function createDb(dbPath?: string): Db {
             return result.changes > 0;
         },
 
-        createOutput({ pipelineId, name, videoEncoding = 'copy', sinks }): Output {
-            const seqRow = sqlite
-                .prepare(
-                    'SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM outputs WHERE pipeline_id = ?',
-                )
-                .get(pipelineId) as { next_seq: number };
-            const seq = seqRow.next_seq;
-            const id = `${pipelineId}-${seq}`;
-            sqlite
-                .prepare(
-                    'INSERT INTO outputs (id, pipeline_id, seq, name, desired_state, encoding, sinks) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                )
-                .run(id, pipelineId, seq, name, 'stopped', videoEncoding, sinksToJson(sinks));
+        createOutput(params): Output {
+            const id = insertOutput(params);
             bumpConfigRev();
             return getOutputById(id)!;
+        },
+
+        // Bulk create is all-or-nothing: a failure partway through (e.g. disk
+        // error) must not leave a half-created batch behind, and the config
+        // revision bumps once for the whole batch instead of once per row.
+        createOutputs(paramsList): Output[] {
+            const ids: string[] = [];
+            sqlite.transaction(() => {
+                for (const params of paramsList) {
+                    ids.push(insertOutput(params));
+                }
+            })();
+            bumpConfigRev();
+            return ids.map((id) => getOutputById(id)!);
         },
 
         getOutput(id: string): Output | null {
