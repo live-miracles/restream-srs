@@ -839,11 +839,12 @@ function renderOverview(): void {
         ms != null ? `${ms.toFixed(ms >= 10 ? 0 : 1)} ms` : '—';
     const legCells = (leg: SrtBondingLeg | null): string => {
         if (!leg)
-            return `${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}`;
+            return `${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}`;
         const color = legStateDotColor(leg.state);
         const rx = leg.recvUniquePacketsTotal ?? leg.recvPacketsTotal;
         return `
-            <td class="font-mono text-xs">${escapeHtml(leg.ip)}:${leg.port}</td>
+            <td class="font-mono text-xs">${escapeHtml(leg.ip)}</td>
+            <td class="font-mono text-xs">${leg.port}</td>
             <td><span class="inline-flex items-center gap-1"><span class="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style="background:${color}"></span>${escapeHtml(leg.state)}</span></td>
             <td class="font-mono text-xs">${fmtRtt(leg.rttMs)}</td>
             <td class="font-mono text-xs">${rx != null ? formatCompactCount(rx) : '—'}</td>
@@ -878,8 +879,7 @@ function renderOverview(): void {
                 <td class="font-mono text-xs"${rowspan}>${formatCompactCount(p.srtBonding.retransTotal)}</td>
                 <td class="font-mono text-xs"${rowspan}>${formatCompactCount(p.srtBonding.recvLossTotal)}</td>
                 <td class="font-mono text-xs"${rowspan}>${formatCompactCount(p.srtBonding.recvDropTotal)}</td>
-                <td class="font-mono text-xs"${rowspan}>${formatBytesCompact(p.srtBonding.forwardedBytes)}</td>
-                <td class="font-mono text-xs"${rowspan}>${fmtRtt(p.srtBonding.inputRttMs)} / ${fmtRtt(p.srtBonding.outputRttMs)}</td>`;
+                <td class="font-mono text-xs"${rowspan}>${formatBytesCompact(p.srtBonding.forwardedBytes)}</td>`;
 
             if (legs.length > 1) {
                 relayRows += legs
@@ -1093,7 +1093,7 @@ function renderOverview(): void {
         <h2 class="mb-2 text-lg font-bold">SRT Bonding Relay <span class="badge badge-neutral badge-sm ml-1">${activeRelayPipelines.length}</span></h2>
         <div class="overflow-x-auto mb-6">
             <table class="table table-sm table-relay">
-                ${thead(['Pipeline', 'Input', 'Output', 'Leg', 'State', 'RTT', 'Rx', 'Loss', 'Drop', 'Rexmit', 'Rx', 'Fwd', 'Rexmit', 'Loss', 'Drop', 'Bytes', 'In/Out RTT'])}
+                ${thead(['Pipeline', 'Input', 'Output', 'IP', 'Port', 'State', 'RTT', 'Rx', 'Loss', 'Drop', 'Rexmit', 'Rx', 'Fwd', 'Rexmit', 'Loss', 'Drop', 'Bytes'])}
                 <tbody>${relayRows}</tbody>
             </table>
         </div>
@@ -1680,18 +1680,6 @@ function renderPipelineInfo(selectedId: string | null): void {
                           label: 'Drop',
                           value: formatCompactCount(pipeline.srtBonding.recvDropTotal),
                       },
-                      ...(pipeline.srtBonding.inputRttMs != null
-                          ? [
-                                {
-                                    label: 'In RTT',
-                                    labelTitle:
-                                        'Estimated round-trip time between the upstream bonded SRT sender and this relay (combined group).',
-                                    value: `${pipeline.srtBonding.inputRttMs.toFixed(
-                                        pipeline.srtBonding.inputRttMs >= 10 ? 0 : 1,
-                                    )}ms`,
-                                },
-                            ]
-                          : []),
                   ],
                   'input-meta-row-sm',
               )
@@ -1704,15 +1692,6 @@ function renderPipelineInfo(selectedId: string | null): void {
         bondingOutputStats.innerHTML = hasOutputStats
             ? renderCompactMetaRow(
                   [
-                      {
-                          label: 'Out RTT',
-                          labelTitle:
-                              'Round-trip time on the single downstream SRT connection from the relay to SRS (output is never bonded).',
-                          value:
-                              b.outputRttMs != null
-                                  ? `${b.outputRttMs.toFixed(b.outputRttMs >= 10 ? 0 : 1)}ms`
-                                  : '—',
-                      },
                       {
                           label: 'Out Sent',
                           labelTitle: 'Packets sent on the downstream output connection.',
