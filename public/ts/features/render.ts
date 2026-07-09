@@ -399,21 +399,6 @@ function legStateDotColor(state: SrtBondingLeg['state']): string {
     }
 }
 
-function renderLegsCompact(legs: SrtBondingLeg[]): string {
-    if (legs.length === 0) return '<span class="opacity-50">—</span>';
-    return `<span class="inline-flex flex-wrap items-center gap-x-2 gap-y-0.5">${legs
-        .map((leg) => {
-            const color = legStateDotColor(leg.state);
-            return (
-                `<span class="inline-flex items-center gap-1" title="${leg.ip}:${leg.port} — ${leg.state}">` +
-                `<span class="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style="background:${color}"></span>` +
-                `<span class="font-mono text-xs">${leg.ip}</span>` +
-                `</span>`
-            );
-        })
-        .join('')}</span>`;
-}
-
 function relayStatusBadge(
     status: RelayFlowStatus,
     labels: Record<RelayFlowStatus, string>,
@@ -850,9 +835,26 @@ function renderOverview(): void {
             !isOffline(relayInputStatus(p, relayProcessRunning)) ||
             !isOffline(relayOutputStatus(p, relayProcessRunning)),
     ).length;
+    const fmtRtt = (ms: number | null): string =>
+        ms != null ? `${ms.toFixed(ms >= 10 ? 0 : 1)} ms` : '—';
+    const legCells = (leg: SrtBondingLeg | null): string => {
+        if (!leg)
+            return `${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}`;
+        const color = legStateDotColor(leg.state);
+        const rx = leg.recvUniquePacketsTotal ?? leg.recvPacketsTotal;
+        return `
+            <td class="font-mono text-xs">${escapeHtml(leg.ip)}:${leg.port}</td>
+            <td><span class="inline-flex items-center gap-1"><span class="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style="background:${color}"></span>${escapeHtml(leg.state)}</span></td>
+            <td class="font-mono text-xs">${fmtRtt(leg.rttMs)}</td>
+            <td class="font-mono text-xs">${rx != null ? formatCompactCount(rx) : '—'}</td>
+            <td class="font-mono text-xs">${leg.recvLossTotal != null ? formatCompactCount(leg.recvLossTotal) : '—'}</td>
+            <td class="font-mono text-xs">${leg.recvDropTotal != null ? formatCompactCount(leg.recvDropTotal) : '—'}</td>
+            <td class="font-mono text-xs">${leg.retransTotal != null ? formatCompactCount(leg.retransTotal) : '—'}</td>`;
+    };
+
     let relayRows = '';
     if (activeRelayPipelines.length === 0) {
-        relayRows = `<tr><td colspan="11" class="py-4 text-center opacity-50">No active SRT bonding relay sessions.</td></tr>`;
+        relayRows = `<tr><td colspan="17" class="py-4 text-center opacity-50">No active SRT bonding relay sessions.</td></tr>`;
     } else {
         for (const p of activeRelayPipelines) {
             const inputSt = relayInputStatus(p, relayProcessRunning);
@@ -862,27 +864,38 @@ function renderOverview(): void {
             if (problemsOnly && !rowWarn && !rowError) continue;
             if (activeOnly && isOffline(inputSt) && isOffline(outputSt)) continue;
             const rxPackets = p.srtBonding.recvUniquePacketsTotal || p.srtBonding.recvPacketsTotal;
-            const fmtRtt = (ms: number | null): string =>
-                ms != null ? `${ms.toFixed(ms >= 10 ? 0 : 1)} ms` : '—';
 
-            relayRows += `<tr class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(rowError, rowWarn)}>
-                <td class="overview-name-col font-semibold">${escapeHtml(p.name)}</td>
-                <td>${relayStatusBadge(inputSt, { good: 'Active', warn: 'Stalled', error: 'Error', off: 'Idle' })}</td>
-                <td>${relayStatusBadge(outputSt, { good: 'Forwarding', warn: 'Pending', error: 'Not accepted', off: 'Idle' })}</td>
-                <td>${renderLegsCompact(p.srtBonding.legs)}</td>
-                <td class="font-mono text-xs">${formatCompactCount(rxPackets)}</td>
-                <td class="font-mono text-xs">${formatCompactCount(p.srtBonding.forwardedPackets)}</td>
-                <td class="font-mono text-xs">${formatCompactCount(p.srtBonding.retransTotal)}</td>
-                <td class="font-mono text-xs">${formatCompactCount(p.srtBonding.recvLossTotal)}</td>
-                <td class="font-mono text-xs">${formatCompactCount(p.srtBonding.recvDropTotal)}</td>
-                <td class="font-mono text-xs">${formatBytesCompact(p.srtBonding.forwardedBytes)}</td>
-                <td class="font-mono text-xs">${fmtRtt(p.srtBonding.inputRttMs)} / ${fmtRtt(p.srtBonding.outputRttMs)}</td>
-            </tr>`;
+            const legs = p.srtBonding.legs;
+            const rowspan = legs.length > 1 ? ` rowspan="${legs.length}"` : '';
+            const rowAttr = `class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(rowError, rowWarn)}`;
+            const sharedCells = `
+                <td class="font-semibold"${rowspan}>${escapeHtml(p.name)}</td>
+                <td${rowspan}>${relayStatusBadge(inputSt, { good: 'Active', warn: 'Stalled', error: 'Error', off: 'Idle' })}</td>
+                <td${rowspan}>${relayStatusBadge(outputSt, { good: 'Forwarding', warn: 'Pending', error: 'Not accepted', off: 'Idle' })}</td>`;
+            const totalsCells = `
+                <td class="font-mono text-xs"${rowspan}>${formatCompactCount(rxPackets)}</td>
+                <td class="font-mono text-xs"${rowspan}>${formatCompactCount(p.srtBonding.forwardedPackets)}</td>
+                <td class="font-mono text-xs"${rowspan}>${formatCompactCount(p.srtBonding.retransTotal)}</td>
+                <td class="font-mono text-xs"${rowspan}>${formatCompactCount(p.srtBonding.recvLossTotal)}</td>
+                <td class="font-mono text-xs"${rowspan}>${formatCompactCount(p.srtBonding.recvDropTotal)}</td>
+                <td class="font-mono text-xs"${rowspan}>${formatBytesCompact(p.srtBonding.forwardedBytes)}</td>
+                <td class="font-mono text-xs"${rowspan}>${fmtRtt(p.srtBonding.inputRttMs)} / ${fmtRtt(p.srtBonding.outputRttMs)}</td>`;
+
+            if (legs.length > 1) {
+                relayRows += legs
+                    .map(
+                        (leg, i) =>
+                            `<tr ${rowAttr}>${i === 0 ? sharedCells : ''}${legCells(leg)}${i === 0 ? totalsCells : ''}</tr>`,
+                    )
+                    .join('');
+            } else {
+                relayRows += `<tr ${rowAttr}>${sharedCells}${legCells(legs[0] ?? null)}${totalsCells}</tr>`;
+            }
         }
         if (problemsOnly && relayRows === '') {
-            relayRows = `<tr><td colspan="11" class="py-4 text-center opacity-50">No relay issues.</td></tr>`;
+            relayRows = `<tr><td colspan="17" class="py-4 text-center opacity-50">No relay issues.</td></tr>`;
         } else if (activeOnly && relayRows === '') {
-            relayRows = `<tr><td colspan="11" class="py-4 text-center opacity-50">No active relay sessions.</td></tr>`;
+            relayRows = `<tr><td colspan="17" class="py-4 text-center opacity-50">No active relay sessions.</td></tr>`;
         }
     }
 
@@ -1079,8 +1092,8 @@ function renderOverview(): void {
         ${filterChips}
         <h2 class="mb-2 text-lg font-bold">SRT Bonding Relay <span class="badge badge-neutral badge-sm ml-1">${activeRelayPipelines.length}</span></h2>
         <div class="overflow-x-auto mb-6">
-            <table class="table table-sm">
-                ${thead(['Pipeline', 'Input', 'Output', 'Legs', 'Rx', 'Fwd', 'Rexmit', 'Loss', 'Drop', 'Bytes', 'In/Out RTT'])}
+            <table class="table table-sm table-relay">
+                ${thead(['Pipeline', 'Input', 'Output', 'Leg', 'State', 'RTT', 'Rx', 'Loss', 'Drop', 'Rexmit', 'Rx', 'Fwd', 'Rexmit', 'Loss', 'Drop', 'Bytes', 'In/Out RTT'])}
                 <tbody>${relayRows}</tbody>
             </table>
         </div>
