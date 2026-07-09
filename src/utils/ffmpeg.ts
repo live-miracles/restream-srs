@@ -66,8 +66,9 @@ export interface SinkSpec {
 // -rw_timeout unit). SRS holds publisher-less pulls open indefinitely, so without
 // this an output whose input never returns (or sits on a stale half-open socket)
 // would hang "running" forever. On timeout ffmpeg exits, the retry loop takes
-// over, and the output is restarted once the input is live again.
-const INPUT_TIMEOUT_US = 10 * 60 * 1_000_000; // 10 minutes
+// over, and the output is restarted once the input is live again. Exported so
+// the preview's ffmpeg pull uses the same bound.
+export const INPUT_TIMEOUT_US = 10 * 60 * 1_000_000; // 10 minutes
 
 // Build a single ffmpeg command that pulls the input once and fans it out to
 // every sink. The shared video encoding is applied per sink; each sink picks its

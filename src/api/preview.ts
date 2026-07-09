@@ -19,6 +19,17 @@ export function registerPreviewApi(app: Express, previewService: PreviewService)
         }
     });
 
+    // Refreshes the preview's keepalive TTL. The dashboard calls this every 15s
+    // while a preview is attached; previews with no keepalive are reaped so a
+    // closed browser tab cannot leave a transcode running forever. Returns
+    // active=false when the preview no longer exists (reaped or crashed) so the
+    // client can tear its player down.
+    app.post('/api/pipelines/:id/preview/keepalive', (req, res) => {
+        const id = parseInt(req.params.id);
+        if (isNaN(id)) return res.status(400).json({ error: 'invalid id' });
+        return res.json({ active: previewService.keepalive(id) });
+    });
+
     app.post('/api/pipelines/:id/preview/stop', (req, res) => {
         const id = parseInt(req.params.id);
         if (isNaN(id)) return res.status(400).json({ error: 'invalid id' });

@@ -3,12 +3,21 @@ import type { ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { readAppConfig } from '../utils/appConfig.js';
+import { INPUT_TIMEOUT_US } from '../utils/ffmpeg.js';
 import type { Db } from '../types.js';
 import type { InputState } from './inputState.js';
 
 const FFMPEG_CMD = readAppConfig().ffmpegPath;
 const STDERR_TAIL_BYTES = 2000;
 const STOP_WAIT_MS = 200;
+// A preview transcodes continuously (~half a core), and stopping it relies on
+// the browser calling /preview/stop — which never happens when the operator
+// simply closes the tab. The dashboard therefore sends a keepalive every 15s
+// while a preview is attached, and previews not refreshed within the TTL are
+// reaped. 90s tolerates background-tab timer throttling (browsers clamp hidden
+// tabs to one timer fire per minute) and a couple of lost requests.
+const KEEPALIVE_TTL_MS = 90_000;
+const REAP_INTERVAL_MS = 15_000;
 
 function resolveBaseDir(): string {
     return path.join(path.dirname(readAppConfig().databasePath), 'hls');
@@ -30,20 +39,61 @@ async function waitForPlaylist(m3u8Path: string, timeoutMs: number): Promise<voi
 
 export interface PreviewService {
     start(pipelineId: number, audioTrackCount?: number): Promise<{ hlsUrl: string }>;
+    keepalive(pipelineId: number): boolean;
     stop(pipelineId: number): void;
     shutdown(): void;
     baseDir: string;
 }
 
-export function createPreviewService(db: Db, inputState: InputState): PreviewService {
+export interface PreviewServiceOptions {
+    ttlMs?: number;
+    reapIntervalMs?: number;
+}
+
+interface PreviewEntry {
+    proc: ChildProcess;
+    // The URL the browser was given for this preview. Returned as-is for a
+    // second start on the same pipeline — recomputing it from the new request's
+    // track count could name a playlist the running ffmpeg never writes.
+    hlsUrl: string;
+    lastKeepaliveMs: number;
+}
+
+export function createPreviewService(
+    db: Db,
+    inputState: InputState,
+    options: PreviewServiceOptions = {},
+): PreviewService {
     const baseDir = resolveBaseDir();
-    const procs = new Map<number, ChildProcess>();
+    const previews = new Map<number, PreviewEntry>();
+    const ttlMs = options.ttlMs ?? KEEPALIVE_TTL_MS;
+    const reapIntervalMs = options.reapIntervalMs ?? REAP_INTERVAL_MS;
+
+    // Reap previews whose dashboard client went away without stopping them
+    // (closed tab, crashed browser) — otherwise the transcode runs forever.
+    const reapTimer = setInterval(() => {
+        const now = Date.now();
+        for (const [pipelineId, entry] of previews) {
+            if (now - entry.lastKeepaliveMs > ttlMs) {
+                console.log(`[preview] ${pipelineId} reaping: no keepalive for ${ttlMs}ms`);
+                doStop(pipelineId);
+            }
+        }
+    }, reapIntervalMs);
+    reapTimer.unref?.();
+
+    function keepalive(pipelineId: number): boolean {
+        const entry = previews.get(pipelineId);
+        if (!entry) return false;
+        entry.lastKeepaliveMs = Date.now();
+        return true;
+    }
 
     function doStop(pipelineId: number): void {
-        const proc = procs.get(pipelineId);
-        if (!proc) return;
-        procs.delete(pipelineId);
-        proc.kill('SIGTERM');
+        const entry = previews.get(pipelineId);
+        if (!entry) return;
+        previews.delete(pipelineId);
+        entry.proc.kill('SIGTERM');
         console.log(`[preview] ${pipelineId} stopping`);
     }
 
@@ -55,12 +105,20 @@ export function createPreviewService(db: Db, inputState: InputState): PreviewSer
         const inputProtocol = inputState.getProtocol(pipelineId) ?? 'rtmp';
         const inputUrl = inputState.pullUrl(pipelineId, pipeline.streamKey);
 
+        // A preview is already running: refresh its keepalive and hand back the
+        // URL it was started with (its playlist layout may differ from what this
+        // request's track count would produce).
+        const existing = previews.get(pipelineId);
+        if (existing) {
+            existing.lastKeepaliveMs = Date.now();
+            return { hlsUrl: existing.hlsUrl };
+        }
+
         // Multiple audio tracks (only possible on an SRT input) become switchable
         // HLS renditions via a master playlist; otherwise a single media playlist.
         const multiTrack = audioTrackCount > 1;
         const playlistName = multiTrack ? 'master.m3u8' : 'index.m3u8';
         const hlsUrl = `/hls/${pipelineId}/${playlistName}`;
-        if (procs.has(pipelineId)) return { hlsUrl };
 
         const outDir = path.join(baseDir, String(pipelineId));
         fs.rmSync(outDir, { recursive: true, force: true });
@@ -173,12 +231,27 @@ export function createPreviewService(db: Db, inputState: InputState): PreviewSer
             readyPlaylist = path.join(outDir, 'index.m3u8');
         }
 
-        const proc = spawn(FFMPEG_CMD, ['-fflags', '+genpts', '-i', inputUrl, ...outputArgs], {
-            stdio: ['ignore', 'ignore', 'pipe'],
-            env: process.env,
-        });
+        // -rw_timeout mirrors the output pull: SRS holds publisher-less pulls
+        // open indefinitely, so a preview whose input never returns would sit
+        // blocked on read forever instead of exiting.
+        const proc = spawn(
+            FFMPEG_CMD,
+            [
+                '-fflags',
+                '+genpts',
+                '-rw_timeout',
+                String(INPUT_TIMEOUT_US),
+                '-i',
+                inputUrl,
+                ...outputArgs,
+            ],
+            {
+                stdio: ['ignore', 'ignore', 'pipe'],
+                env: process.env,
+            },
+        );
 
-        procs.set(pipelineId, proc);
+        previews.set(pipelineId, { proc, hlsUrl, lastKeepaliveMs: Date.now() });
         console.log(
             `[preview] ${pipelineId} started pid=${proc.pid} ${inputProtocol} multiTrack=${multiTrack} tracks=${audioTrackCount}`,
         );
@@ -189,10 +262,10 @@ export function createPreviewService(db: Db, inputState: InputState): PreviewSer
         });
 
         proc.on('exit', (code, signal) => {
-            if (procs.get(pipelineId) === proc) procs.delete(pipelineId);
+            if (previews.get(pipelineId)?.proc === proc) previews.delete(pipelineId);
             // Clean up this pipeline's HLS dir unless a newer preview now owns it
             // (covers both a user stop, which clears the map entry first, and a crash).
-            if (!procs.has(pipelineId)) {
+            if (!previews.has(pipelineId)) {
                 fs.rm(outDir, { recursive: true, force: true }, () => {});
             }
             if (code && code !== 0 && signal !== 'SIGTERM' && signal !== 'SIGKILL') {
@@ -215,15 +288,16 @@ export function createPreviewService(db: Db, inputState: InputState): PreviewSer
     }
 
     function shutdown(): void {
-        for (const proc of procs.values()) {
+        clearInterval(reapTimer);
+        for (const entry of previews.values()) {
             try {
-                proc.kill('SIGKILL');
+                entry.proc.kill('SIGKILL');
             } catch {
                 /* already gone */
             }
         }
-        procs.clear();
+        previews.clear();
     }
 
-    return { start, stop: doStop, shutdown, baseDir };
+    return { start, keepalive, stop: doStop, shutdown, baseDir };
 }
