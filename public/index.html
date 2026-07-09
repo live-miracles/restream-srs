@@ -544,7 +544,11 @@
             <span><span id="pipe-cnt">0</span> Inputs</span>
             <div class="flex gap-1">
               <div class="badge badge-sm badge-success px-2" id="pipe-oks" title="Live"></div>
-              <div class="badge badge-sm badge-warning px-2" id="pipe-warns" title="Low bitrate"></div>
+              <div
+                class="badge badge-sm badge-warning cursor-pointer px-2"
+                id="pipe-warns"
+                onclick="showProblemsOverviewBtn()"
+                title="Warnings — click to view problems"></div>
               <div class="badge badge-sm badge-neutral px-2" id="pipe-offs" title="Offline"></div>
             </div>
           </div>
@@ -552,8 +556,16 @@
             <span><span id="out-cnt">0</span> Outputs</span>
             <div class="flex gap-1">
               <div class="badge badge-sm badge-success px-2" id="out-oks" title="Running"></div>
-              <div class="badge badge-sm badge-warning px-2" id="out-warns" title="Low bitrate"></div>
-              <div class="badge badge-sm badge-error px-2" id="out-errors" title="Failed"></div>
+              <div
+                class="badge badge-sm badge-warning cursor-pointer px-2"
+                id="out-warns"
+                onclick="showProblemsOverviewBtn()"
+                title="Low bitrate — click to view problems"></div>
+              <div
+                class="badge badge-sm badge-error cursor-pointer px-2"
+                id="out-errors"
+                onclick="showProblemsOverviewBtn()"
+                title="Failed — click to view problems"></div>
               <div class="badge badge-sm badge-neutral px-2" id="out-offs" title="Stopped"></div>
             </div>
           </div>

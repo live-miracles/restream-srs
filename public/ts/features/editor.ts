@@ -146,9 +146,9 @@ function isValidIpOrCidr(value: string): boolean {
 
 function whitelistIpRowHtml(label = '', ips = ''): string {
     return `<tr data-whitelist-ip-row>
-        <td><input type="text" class="input input-sm w-full js-whitelist-label" placeholder="Office" value="${escAttr(label)}" /></td>
+        <td><input type="text" class="input input-sm w-full js-whitelist-label" placeholder="Office" value="${escapeHtml(label)}" /></td>
         <td><input type="text" class="input input-sm w-full font-mono text-xs js-whitelist-ip"
-               placeholder="203.0.113.4, 203.0.113.0/24" value="${escAttr(ips)}"
+               placeholder="203.0.113.4, 203.0.113.0/24" value="${escapeHtml(ips)}"
                oninput="this.classList.remove('input-error')" /></td>
         <td class="text-right">
             <button type="button" class="btn btn-xs btn-error btn-outline" onclick="removeWhitelistIpRowBtn(this)" aria-label="Remove row" title="Remove row">
@@ -233,10 +233,10 @@ function renderFail2banBans(data: Fail2banBansData | null): void {
     tbody.innerHTML = data.bans
         .map((b) => {
             const label = FAIL2BAN_JAIL_LABELS[b.jail] ?? b.jail;
-            const title = b.reason ? ` title="${escAttr(b.reason)}"` : '';
+            const title = b.reason ? ` title="${escapeHtml(b.reason)}"` : '';
             return `<tr>
-                <td class="font-mono text-xs">${escAttr(b.ip)}</td>
-                <td class="text-xs"${title}>${escAttr(label)}</td>
+                <td class="font-mono text-xs">${escapeHtml(b.ip)}</td>
+                <td class="text-xs"${title}>${escapeHtml(label)}</td>
                 <td class="text-xs">${fmtBanTs(b.bannedAt)}</td>
                 <td class="text-xs">${fmtBanTs(b.unbanAt)}</td>
             </tr>`;
