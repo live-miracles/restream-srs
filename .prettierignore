@@ -6,3 +6,4 @@ output.css
 *.md
 *.yml
 .claude/
+public/vendor/

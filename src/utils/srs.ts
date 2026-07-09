@@ -64,6 +64,10 @@ export interface SrsClient {
 export async function kickSrsClientsByStream(app: string, stream: string): Promise<void> {
     const srsApiUrl = readSrsConfigValues().apiUrl;
     const PAGE_SIZE = 100;
+
+    // Collect all matching client ids first, then delete. Deleting while
+    // paginating shifts SRS's offset-based pages under us, skipping clients.
+    const toKick: string[] = [];
     let start = 0;
     while (true) {
         const res = await fetch(`${srsApiUrl}/api/v1/clients?start=${start}&count=${PAGE_SIZE}`, {
@@ -76,14 +80,18 @@ export async function kickSrsClientsByStream(app: string, stream: string): Promi
         const clients = data.clients ?? [];
         for (const client of clients) {
             if (client.app === app && client.stream === stream) {
-                await fetch(`${srsApiUrl}/api/v1/clients/${client.id}`, {
-                    method: 'DELETE',
-                    signal: AbortSignal.timeout(SRS_CLIENT_FETCH_TIMEOUT_MS),
-                }).catch(() => {});
+                toKick.push(client.id);
             }
         }
         if (clients.length < PAGE_SIZE) break;
         start += PAGE_SIZE;
+    }
+
+    for (const id of toKick) {
+        await fetch(`${srsApiUrl}/api/v1/clients/${id}`, {
+            method: 'DELETE',
+            signal: AbortSignal.timeout(SRS_CLIENT_FETCH_TIMEOUT_MS),
+        }).catch(() => {});
     }
 }
 

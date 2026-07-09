@@ -81,7 +81,7 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
             validated.push({ name, videoEncoding, sinks: parsed.sinks });
         }
 
-        const created = validated.map((v) => db.createOutput({ pipelineId, ...v }));
+        const created = db.createOutputs(validated.map((v) => ({ pipelineId, ...v })));
         return res.status(201).json(created);
     });
 
@@ -114,6 +114,16 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
         const output = db.getOutput(outId);
         if (!output || output.pipelineId !== parseInt(pipelineId)) {
             return res.status(404).json({ error: 'Output not found' });
+        }
+
+        // The UI disables Save for running outputs, but a client holding stale
+        // config could still submit — the running ffmpeg would keep the old
+        // sinks while the DB shows the new ones until the next restart.
+        if (
+            output.desiredState !== 'stopped' ||
+            outputService.getStats(outId).status === 'running'
+        ) {
+            return res.status(409).json({ error: 'Stop the output before editing it' });
         }
 
         const name = (req.body?.name as string | undefined)?.trim() ?? output.name;

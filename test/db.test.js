@@ -155,6 +155,41 @@ describe('Output CRUD', () => {
         assert.equal(o2.seq, 2);
     });
 
+    test('createOutputs creates a batch with sequential seq numbers', () => {
+        const db = makeDb();
+        const p = db.createPipeline();
+        const revBefore = db.getConfigRev();
+        const created = db.createOutputs([
+            { pipelineId: p.id, name: 'A', sinks: [{ url: 'rtmp://a' }] },
+            { pipelineId: p.id, name: 'B', videoEncoding: '720p', sinks: [{ url: 'rtmp://b' }] },
+            { pipelineId: p.id, name: 'C', sinks: [{ url: 'srt://c' }] },
+        ]);
+        assert.deepEqual(
+            created.map((o) => [o.name, o.seq]),
+            [
+                ['A', 1],
+                ['B', 2],
+                ['C', 3],
+            ],
+        );
+        assert.equal(created[1].videoEncoding, '720p');
+        assert.equal(db.listOutputsForPipeline(p.id).length, 3);
+        assert.ok(db.getConfigRev() > revBefore);
+    });
+
+    test('createOutputs rolls the whole batch back when one row fails', () => {
+        const db = makeDb();
+        const p = db.createPipeline();
+        assert.throws(() =>
+            db.createOutputs([
+                { pipelineId: p.id, name: 'A', sinks: [{ url: 'rtmp://a' }] },
+                // Violates the outputs.pipeline_id NOT NULL constraint mid-batch.
+                { pipelineId: null, name: 'B', sinks: [{ url: 'rtmp://b' }] },
+            ]),
+        );
+        assert.equal(db.listOutputsForPipeline(p.id).length, 0);
+    });
+
     test('setOutputDesiredState persists the change', () => {
         const db = makeDb();
         const p = db.createPipeline();
