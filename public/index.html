@@ -172,7 +172,21 @@
                 <input type="text" id="settings-public-host-input" class="input w-full font-mono text-sm" placeholder="localhost" />
               </fieldset>
             </div>
-            <div class="flex justify-end">
+            <div class="flex items-center justify-end gap-2">
+              <span id="settings-general-save-success" class="text-success hidden" aria-hidden="true">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="3"
+                  stroke-linecap="round"
+                  stroke-linejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              </span>
               <button type="button" class="btn btn-sm btn-accent" onclick="settingsGeneralFormBtn(this)">Save</button>
             </div>
           </div>
@@ -326,7 +340,23 @@
             </div>
             <div class="flex items-center justify-between gap-3">
               <p class="text-xs opacity-70">Leave password fields blank to keep current password.</p>
-              <button type="button" class="btn btn-sm btn-accent shrink-0" onclick="settingsPasswordFormBtn(this)">Save</button>
+              <div class="flex shrink-0 items-center gap-2">
+                <span id="settings-password-save-success" class="text-success hidden" aria-hidden="true">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="3"
+                    stroke-linecap="round"
+                    stroke-linejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                </span>
+                <button type="button" class="btn btn-sm btn-accent" onclick="settingsPasswordFormBtn(this)">Save</button>
+              </div>
             </div>
           </div>
 
@@ -359,7 +389,21 @@
                 <tbody id="settings-host-probe-rows"></tbody>
               </table>
             </div>
-            <div class="flex justify-end">
+            <div class="flex items-center justify-end gap-2">
+              <span id="settings-host-probes-save-success" class="text-success hidden" aria-hidden="true">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="3"
+                  stroke-linecap="round"
+                  stroke-linejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              </span>
               <button type="button" class="btn btn-sm btn-accent" onclick="settingsHostProbesFormBtn(this)">Save</button>
             </div>
           </div>
@@ -389,7 +433,21 @@
               multiple entries, e.g.
               <span class="font-mono">203.0.113.4, 203.0.113.0/24</span>. Labels are for your own reference only.
             </p>
-            <div class="flex justify-end">
+            <div class="flex items-center justify-end gap-2">
+              <span id="settings-whitelist-save-success" class="text-success hidden" aria-hidden="true">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="3"
+                  stroke-linecap="round"
+                  stroke-linejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              </span>
               <button type="button" class="btn btn-sm btn-accent" onclick="settingsWhitelistFormBtn(this)">Save</button>
             </div>
           </div>
