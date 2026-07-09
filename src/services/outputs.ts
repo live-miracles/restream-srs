@@ -90,6 +90,7 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
     const stopRequested = new Set<string>();
     const watchdogKills = new Set<string>();
     const startLocks = new Set<string>();
+    let shuttingDown = false;
     const retryState = new Map<string, { failures: number; timer: NodeJS.Timeout | null }>();
     const watchdogTimer = setInterval(checkOutputWatchdog, OUTPUT_WATCHDOG_INTERVAL_MS);
     watchdogTimer.unref?.();
@@ -566,9 +567,19 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
                 }
             }
 
-            if (!wasStop && db.getOutput(output.id)?.desiredState === 'running') {
+            if (shuttingDown) return;
+            const desiredRunning = db.getOutput(output.id)?.desiredState === 'running';
+            if (!wasStop && desiredRunning) {
                 getRetry(output.id).failures++;
                 scheduleRetry(output);
+            } else if (wasStop && desiredRunning) {
+                // A start arrived while this stop's kill was still in flight:
+                // start() saw status 'running' and bailed, and a requested stop
+                // schedules no retry — so without this, nothing would ever
+                // respawn the process and the output would sit at
+                // desired-running/actual-stopped until the next input
+                // offline→online edge. Restart promptly; not a failure.
+                scheduleTryStart(output.id, 0);
             }
         });
     }
@@ -647,6 +658,7 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
         clearRetryState: clearRetry,
 
         shutdown(): void {
+            shuttingDown = true;
             clearInterval(watchdogTimer);
             for (const r of retryState.values()) {
                 if (r.timer) clearTimeout(r.timer);
