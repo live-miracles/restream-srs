@@ -1322,49 +1322,50 @@ function renderHostConnectionsOverview(): void {
             : `<span class="font-mono text-xs opacity-60">${fmtTs(windowStart)} – ${fmtTs(windowEnd)}</span>`
     }</span>`;
 
-    const rows = targets
-        .map((entry) => {
-            const latest = entry.latestSample;
-            const windowSamples = entry.history.filter(
-                (sample) => sample.ts >= windowStart && sample.ts <= windowEnd,
-            );
-            const highestLatency = windowSamples.reduce<number | null>((max, sample) => {
-                if (sample.latencyMs == null) return max;
-                return max == null ? sample.latencyMs : Math.max(max, sample.latencyMs);
-            }, null);
-            const latestStatus = !latest
-                ? '<span class="badge badge-sm badge-neutral">No Data</span>'
-                : latest.ok
-                  ? '<span class="badge badge-sm badge-success">Healthy</span>'
-                  : '<span class="badge badge-sm badge-error">Down</span>';
-            const failureRate =
-                entry.last24hSampleCount > 0
-                    ? Math.round((entry.last24hFailureCount / entry.last24hSampleCount) * 100)
-                    : 0;
-            const lastSeen = latest
-                ? new Date(latest.ts).toLocaleTimeString(undefined, { hour12: false })
-                : '—';
-            return `<tr>
+    const rendered = targets.map((entry) => {
+        const latest = entry.latestSample;
+        const windowSamples = entry.history.filter(
+            (sample) => sample.ts >= windowStart && sample.ts <= windowEnd,
+        );
+        const highestLatency = windowSamples.reduce<number | null>((max, sample) => {
+            if (sample.latencyMs == null) return max;
+            return max == null ? sample.latencyMs : Math.max(max, sample.latencyMs);
+        }, null);
+        const latestStatus = !latest
+            ? '<span class="badge badge-sm badge-neutral">No Data</span>'
+            : latest.ok
+              ? '<span class="badge badge-sm badge-success">Healthy</span>'
+              : '<span class="badge badge-sm badge-error">Down</span>';
+        const lastSeen = latest
+            ? new Date(latest.ts).toLocaleTimeString(undefined, { hour12: false })
+            : '—';
+        const row = `<tr>
                 <td class="font-semibold">${escapeHtml(entry.target.label)}</td>
                 <td class="font-mono text-xs">${escapeHtml(entry.target.host)}:${entry.target.port}</td>
                 <td>${latestStatus}</td>
                 <td class="font-mono text-xs">${latest?.latencyMs != null ? `${Math.round(latest.latencyMs)} ms` : '—'}</td>
                 <td class="font-mono text-xs">${highestLatency != null ? `${Math.round(highestLatency)} ms` : '—'}</td>
                 <td class="font-mono text-xs">${entry.averageLatencyMs != null ? `${Math.round(entry.averageLatencyMs)} ms` : '—'}</td>
-                <td class="font-mono text-xs">${failureRate}%</td>
+                <td class="font-mono text-xs">${entry.historyFailureCount}</td>
                 <td class="font-mono text-xs">${lastSeen}</td>
                 <td class="font-mono text-xs">${latest?.resolvedAddress ?? '—'}</td>
             </tr>`;
-        })
-        .join('');
 
-    const cards = targets
-        .map((entry) => {
-            const latest = entry.latestSample;
-            const errorText =
-                latest && !latest.ok ? (latest.error ?? 'probe failed') : 'no recent failures';
-            const canvasId = `host-probe-chart-${entry.target.slot}`;
-            return `<div class="bg-base-300 rounded-xl p-4">
+        // "no recent failures" must reflect the visible window, not just the
+        // single latest sample — a probe can fail repeatedly and still recover
+        // on the very next tick, which would otherwise mask the burst.
+        const windowFailures = windowSamples.filter((sample) => !sample.ok);
+        const lastWindowFailure = windowFailures[windowFailures.length - 1] ?? null;
+        const errorText =
+            latest && !latest.ok
+                ? (latest.error ?? 'probe failed')
+                : lastWindowFailure
+                  ? `${windowFailures.length} failure${windowFailures.length === 1 ? '' : 's'} in this window, last at ${new Date(lastWindowFailure.ts).toLocaleTimeString(undefined, { hour12: false })}`
+                  : 'no recent failures';
+        const errorTone =
+            latest && !latest.ok ? 'text-error' : lastWindowFailure ? 'text-warning' : 'opacity-60';
+        const canvasId = `host-probe-chart-${entry.target.slot}`;
+        const card = `<div class="bg-base-300 rounded-xl p-4">
                 <div class="mb-3 flex items-start justify-between gap-3">
                     <div>
                         <h3 class="font-semibold">${escapeHtml(entry.target.label)}</h3>
@@ -1372,13 +1373,17 @@ function renderHostConnectionsOverview(): void {
                     </div>
                     <div class="text-right">
                         <div class="font-mono text-sm">${latest?.latencyMs != null ? `${Math.round(latest.latencyMs)} ms` : '—'}</div>
-                        <div class="text-xs ${latest?.ok === false ? 'text-error' : 'opacity-60'}">${escapeHtml(errorText)}</div>
+                        <div class="text-xs ${errorTone}">${escapeHtml(errorText)}</div>
                     </div>
                 </div>
                 <canvas id="${canvasId}" style="width:100%;height:110px;display:block"></canvas>
             </div>`;
-        })
-        .join('');
+
+        return { row, card };
+    });
+
+    const rows = rendered.map((r) => r.row).join('');
+    const cards = rendered.map((r) => r.card).join('');
 
     hostsCol.innerHTML = `
         <div class="mb-4 flex items-center justify-between gap-3">
@@ -1465,14 +1470,44 @@ function renderPipelineInfo(selectedId: string | null): void {
     const outsCol = document.getElementById('outs-col');
     const overviewCol = document.getElementById('overview-col');
     const hostsCol = document.getElementById('hosts-col');
-    const inHostView = getUrlParam('view') === 'hosts';
+    const logsCol = document.getElementById('srs-logs-col');
+    const settingsCol = document.getElementById('settings-col');
+    const view = getUrlParam('view');
+    const inHostView = view === 'hosts';
+    const inLogsView = view === 'logs';
+    const inSettingsView = view === 'settings';
 
     if (inHostView) {
         col?.classList.add('hidden');
         outsCol?.classList.add('hidden');
         overviewCol?.classList.add('hidden');
+        logsCol?.classList.add('hidden');
+        settingsCol?.classList.add('hidden');
         hostsCol?.classList.remove('hidden');
         renderHostConnectionsOverview();
+        return;
+    }
+
+    // Logs/Settings content is populated once on navigation (see
+    // dashboard-entry.ts), not on every poll — re-rendering here would wipe out
+    // in-progress edits (e.g. a half-typed password) every 5 seconds.
+    if (inLogsView) {
+        col?.classList.add('hidden');
+        outsCol?.classList.add('hidden');
+        overviewCol?.classList.add('hidden');
+        hostsCol?.classList.add('hidden');
+        settingsCol?.classList.add('hidden');
+        logsCol?.classList.remove('hidden');
+        return;
+    }
+
+    if (inSettingsView) {
+        col?.classList.add('hidden');
+        outsCol?.classList.add('hidden');
+        overviewCol?.classList.add('hidden');
+        hostsCol?.classList.add('hidden');
+        logsCol?.classList.add('hidden');
+        settingsCol?.classList.remove('hidden');
         return;
     }
 
@@ -1481,12 +1516,16 @@ function renderPipelineInfo(selectedId: string | null): void {
         outsCol?.classList.add('hidden');
         overviewCol?.classList.remove('hidden');
         hostsCol?.classList.add('hidden');
+        logsCol?.classList.add('hidden');
+        settingsCol?.classList.add('hidden');
         renderOverview();
         return;
     }
 
     overviewCol?.classList.add('hidden');
     hostsCol?.classList.add('hidden');
+    logsCol?.classList.add('hidden');
+    settingsCol?.classList.add('hidden');
 
     col?.classList.remove('hidden');
     outsCol?.classList.remove('hidden');
@@ -2072,9 +2111,13 @@ export function renderMetrics(): void {
 
 export function renderPipelines(): void {
     const selectedId = getUrlParam('p');
-    const inHostView = getUrlParam('view') === 'hosts';
+    const view = getUrlParam('view');
     const hostsBtn = document.getElementById('host-connections-nav-btn');
-    hostsBtn?.classList.toggle('btn-active', inHostView);
+    hostsBtn?.classList.toggle('btn-active', view === 'hosts');
+    const logsBtn = document.getElementById('srs-logs-nav-btn');
+    logsBtn?.classList.toggle('btn-active', view === 'logs');
+    const settingsBtn = document.getElementById('settings-nav-btn');
+    settingsBtn?.classList.toggle('btn-active', view === 'settings');
     renderPipelineList();
     renderPipelineInfo(selectedId);
 }

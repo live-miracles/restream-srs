@@ -142,8 +142,8 @@ function buildResponse(
         return {
             target,
             latestSample,
-            last24hSampleCount: history.length,
-            last24hFailureCount: history.filter((sample) => !sample.ok).length,
+            historySampleCount: history.length,
+            historyFailureCount: history.filter((sample) => !sample.ok).length,
             averageLatencyMs,
             history,
         };

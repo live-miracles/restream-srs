@@ -111,9 +111,7 @@ export function flashSaveSuccess(id: string): void {
     el.classList.remove('hidden');
     const existingTimer = Number(el.dataset.flashTimer);
     if (existingTimer) window.clearTimeout(existingTimer);
-    el.dataset.flashTimer = String(
-        window.setTimeout(() => el.classList.add('hidden'), 1000),
-    );
+    el.dataset.flashTimer = String(window.setTimeout(() => el.classList.add('hidden'), 1000));
 }
 
 export async function copyText(text: string): Promise<void> {

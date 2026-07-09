@@ -1,6 +1,13 @@
 import * as api from '../core/api.js';
 import { state } from '../core/state.js';
-import { setUrlParam, maskStreamKey, withBusy, copyText, escapeHtml, flashSaveSuccess } from '../core/utils.js';
+import {
+    setUrlParam,
+    maskStreamKey,
+    withBusy,
+    copyText,
+    escapeHtml,
+    flashSaveSuccess,
+} from '../core/utils.js';
 import { refreshAfterMutation } from './dashboard.js';
 import type { StreamKey, AudioTrackInfo, HostProbeTarget, Fail2banBansData } from '../types.js';
 
@@ -253,7 +260,6 @@ export async function refreshFail2banBans(btn?: HTMLButtonElement): Promise<void
 // ── Settings ──────────────────────────────────────────
 
 export function openSettings(): void {
-    const modal = document.getElementById('settings-modal') as HTMLDialogElement;
     const current = state.config.serverName ?? 'Restream SRS';
     (document.getElementById('settings-server-name-input') as HTMLInputElement).value = current;
     (document.getElementById('settings-public-host-input') as HTMLInputElement).value =
@@ -279,7 +285,6 @@ export function openSettings(): void {
     const regenHint = document.getElementById('regen-stream-keys-hint') as HTMLElement;
     regenBtn.disabled = hasPipelines;
     regenHint.classList.toggle('hidden', !hasPipelines);
-    modal.showModal();
     void api.getVersion().then((v) => {
         if (!v) return;
         (document.getElementById('v-commit') as HTMLElement).textContent = v.commit;
@@ -919,14 +924,10 @@ export function showOutputError(pipelineId: string, outId: string): void {
 }
 
 export async function showSrsLogs(): Promise<void> {
-    const modal = document.getElementById('logs-modal') as HTMLDialogElement | null;
-    const titleEl = document.getElementById('logs-modal-title');
-    const contentEl = document.getElementById('logs-modal-content');
-    if (!modal || !contentEl) return;
+    const contentEl = document.getElementById('srs-logs-content');
+    if (!contentEl) return;
 
-    if (titleEl) titleEl.textContent = 'SRS Logs';
     contentEl.textContent = 'Loading…';
-    modal.showModal();
 
     const data = await api.getSrsLogs();
     if (!data) return;
@@ -938,9 +939,23 @@ export async function showSrsLogs(): Promise<void> {
             .replace(/\[ERROR\]/g, '<span class="text-error font-semibold">[ERROR]</span>')
             .replace(/\[WARNING\]/g, '<span class="text-warning font-semibold">[WARNING]</span>');
 
-    let html = '<p class="text-xs font-semibold uppercase opacity-50 mb-2">Connectivity</p>';
+    let html =
+        '<p class="text-xs font-semibold uppercase opacity-50 mb-2">SRS Output (last 200 lines)</p>';
+    if (data.logTail.length === 0) {
+        const msg =
+            data.logFileExists === false
+                ? 'SRS log file not found. SRS may not have been started yet.'
+                : 'SRS log file is empty — no log output yet.';
+        html += `<p class="text-sm opacity-50 mb-4">${msg}</p>`;
+    } else {
+        html += `<div id="srs-log-tail" class="h-[32rem] overflow-y-auto rounded-xl border border-white/10 bg-black p-3">
+            <pre class="text-gray-300 whitespace-pre-wrap break-all">${data.logTail.map((l) => colorizeLevel(esc(l))).join('\n')}</pre>
+        </div>`;
+    }
+
+    html += '<p class="text-xs font-semibold uppercase opacity-50 mt-4 mb-2">Connectivity</p>';
     if (data.events.length === 0) {
-        html += '<p class="text-sm opacity-50 mb-4">No events recorded yet.</p>';
+        html += '<p class="text-sm opacity-50">No events recorded yet.</p>';
     } else {
         html += [...data.events]
             .reverse()
@@ -955,22 +970,9 @@ export async function showSrsLogs(): Promise<void> {
             .join('');
     }
 
-    html +=
-        '<p class="text-xs font-semibold uppercase opacity-50 mt-4 mb-2">SRS Output (last 200 lines)</p>';
-    if (data.logTail.length === 0) {
-        const msg =
-            data.logFileExists === false
-                ? 'SRS log file not found. SRS may not have been started yet.'
-                : 'SRS log file is empty — no log output yet.';
-        html += `<p class="text-sm opacity-50">${msg}</p>`;
-    } else {
-        html += `<div class="rounded-xl border border-white/10 bg-black p-3">
-            <pre class="text-gray-300 whitespace-pre-wrap break-all">${data.logTail.map((l) => colorizeLevel(esc(l))).join('\n')}</pre>
-        </div>`;
-    }
-
     contentEl.innerHTML = html;
-    contentEl.scrollTop = contentEl.scrollHeight;
+    const tailEl = document.getElementById('srs-log-tail');
+    if (tailEl) tailEl.scrollTop = tailEl.scrollHeight;
 }
 
 // ── Output copy / paste ───────────────────────────────

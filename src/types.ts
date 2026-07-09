@@ -34,8 +34,8 @@ export interface HostProbeSample {
 export interface HostProbeSummary {
     target: HostProbeTarget;
     latestSample: HostProbeSample | null;
-    last24hSampleCount: number;
-    last24hFailureCount: number;
+    historySampleCount: number;
+    historyFailureCount: number;
     averageLatencyMs: number | null;
 }
 
