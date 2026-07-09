@@ -88,6 +88,15 @@ export interface Db {
         videoEncoding?: string;
         sinks: SinkInput[];
     }): Output;
+    // All-or-nothing batch create (single transaction, single configRev bump).
+    createOutputs(
+        paramsList: {
+            pipelineId: number;
+            name: string;
+            videoEncoding?: string;
+            sinks: SinkInput[];
+        }[],
+    ): Output[];
     getOutput(id: string): Output | null;
     listOutputs(): Output[];
     listOutputIds(): { id: string; pipelineId: number; lastError: string | null }[];
