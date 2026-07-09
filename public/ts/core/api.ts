@@ -90,19 +90,26 @@ export const getHostProbes = (hours = 24) =>
 export const getSystemMetrics = () => apiRequest<SystemMetrics>('/api/metrics/system');
 export const getMetricsHistory = () => apiRequest<MetricSample[]>('/api/metrics/history');
 
-export const updateSettings = (
-    name: string,
-    publicHost: string,
-    hostProbeTargets: ConfigData['hostProbeTargets'],
-    whitelistIps: ConfigData['whitelistIps'],
-) =>
+export const updateGeneralSettings = (name: string, publicHost: string) =>
+    apiRequest<{ serverName: string; publicHost: string }>('/api/settings/general', {
+        method: 'POST',
+        body: { name, publicHost },
+    });
+
+export const updateHostProbes = (hostProbeTargets: ConfigData['hostProbeTargets']) =>
+    apiRequest<{ hostProbeTargets: ConfigData['hostProbeTargets'] }>('/api/settings/host-probes', {
+        method: 'POST',
+        body: { hostProbeTargets },
+    });
+
+export const updateWhitelist = (whitelistIps: ConfigData['whitelistIps']) =>
     apiRequest<{
         whitelistIps: string[];
         whitelistApplied: boolean;
         whitelistError: string | null;
-    }>('/api/settings', {
+    }>('/api/settings/whitelist', {
         method: 'POST',
-        body: { name, publicHost, hostProbeTargets, whitelistIps },
+        body: { whitelistIps },
     });
 
 export const createPipeline = () => apiRequest('/api/pipelines', { method: 'POST' });

@@ -13,7 +13,10 @@ import {
     addWhitelistIpRow,
     removeWhitelistIpRow,
     refreshFail2banBans,
-    submitSettingsForm,
+    submitGeneralSettingsForm,
+    submitHostProbesForm,
+    submitWhitelistForm,
+    submitPasswordForm,
     logoutUser,
     regenerateStreamKeysBtn,
     createPipeline,
@@ -43,7 +46,10 @@ declare global {
         addWhitelistIpRowBtn: () => void;
         removeWhitelistIpRowBtn: (btn: HTMLElement) => void;
         refreshFail2banBansBtn: (btn?: HTMLButtonElement) => Promise<void>;
-        settingsFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
+        settingsGeneralFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
+        settingsHostProbesFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
+        settingsWhitelistFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
+        settingsPasswordFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
         logoutBtn: () => Promise<void>;
         regenerateStreamKeysBtn: (btn?: HTMLButtonElement) => Promise<void>;
         selectPipeline: (id: string | null) => void;
@@ -93,7 +99,10 @@ window.removeHostProbeRowBtn = (slot) => removeHostProbeRow(slot);
 window.addWhitelistIpRowBtn = () => addWhitelistIpRow();
 window.removeWhitelistIpRowBtn = (btn) => removeWhitelistIpRow(btn);
 window.refreshFail2banBansBtn = (btn) => refreshFail2banBans(btn);
-window.settingsFormBtn = (btn) => submitSettingsForm(btn);
+window.settingsGeneralFormBtn = (btn) => submitGeneralSettingsForm(btn);
+window.settingsHostProbesFormBtn = (btn) => submitHostProbesForm(btn);
+window.settingsWhitelistFormBtn = (btn) => submitWhitelistForm(btn);
+window.settingsPasswordFormBtn = (btn) => submitPasswordForm(btn);
 window.logoutBtn = () => logoutUser();
 window.regenerateStreamKeysBtn = (btn) => regenerateStreamKeysBtn(btn);
 

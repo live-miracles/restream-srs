@@ -295,45 +295,44 @@ export function openSettings(): void {
     });
 }
 
-export async function submitSettingsForm(btn?: HTMLButtonElement): Promise<void> {
+export async function submitGeneralSettingsForm(btn?: HTMLButtonElement): Promise<void> {
     const name = (
         document.getElementById('settings-server-name-input') as HTMLInputElement
     ).value.trim();
     const publicHost = (
         document.getElementById('settings-public-host-input') as HTMLInputElement
     ).value.trim();
-    const hostProbeTargets = readHostProbeRows();
-    const whitelistIps = readWhitelistIps();
     if (!name) return;
-    if (hostProbeTargets === null) return;
-    if (whitelistIps === null) return;
-
-    const currentPw = (document.getElementById('current-password-input') as HTMLInputElement).value;
-    const newPw = (document.getElementById('new-password-input') as HTMLInputElement).value;
-    const confirmPw = (document.getElementById('confirm-password-input') as HTMLInputElement).value;
-    const confirmEl = document.getElementById('confirm-password-input') as HTMLInputElement;
-    const changingPassword = currentPw || newPw || confirmPw;
-
-    if (changingPassword) {
-        if (!currentPw || !newPw || !confirmPw || newPw !== confirmPw) {
-            confirmEl.classList.add('input-error');
-            return;
-        }
-    }
 
     await withBusy(btn, async () => {
-        const result = await api.updateSettings(name, publicHost, hostProbeTargets, whitelistIps);
+        const result = await api.updateGeneralSettings(name, publicHost);
         if (!result) return;
-
-        if (changingPassword) {
-            const pwResult = await api.changePassword(currentPw, newPw);
-            if (!pwResult) return;
-        }
 
         const el = document.getElementById('server-name-display');
         if (el) el.textContent = name;
         document.title = name;
-        (document.getElementById('settings-modal') as HTMLDialogElement).close();
+        await refreshAfterMutation();
+    });
+}
+
+export async function submitHostProbesForm(btn?: HTMLButtonElement): Promise<void> {
+    const hostProbeTargets = readHostProbeRows();
+    if (hostProbeTargets === null) return;
+
+    await withBusy(btn, async () => {
+        const result = await api.updateHostProbes(hostProbeTargets);
+        if (!result) return;
+        await refreshAfterMutation();
+    });
+}
+
+export async function submitWhitelistForm(btn?: HTMLButtonElement): Promise<void> {
+    const whitelistIps = readWhitelistIps();
+    if (whitelistIps === null) return;
+
+    await withBusy(btn, async () => {
+        const result = await api.updateWhitelist(whitelistIps);
+        if (!result) return;
         await refreshAfterMutation();
 
         // Settings still saved even if this failed (see src/api/settings.ts) —
@@ -343,6 +342,26 @@ export async function submitSettingsForm(btn?: HTMLButtonElement): Promise<void>
                 `IP whitelist saved, but applying it live failed: ${result.whitelistError ?? 'unknown error'}. It will take effect next time fail2ban restarts.`,
             );
         }
+    });
+}
+
+export async function submitPasswordForm(btn?: HTMLButtonElement): Promise<void> {
+    const currentPw = (document.getElementById('current-password-input') as HTMLInputElement).value;
+    const newPw = (document.getElementById('new-password-input') as HTMLInputElement).value;
+    const confirmPw = (document.getElementById('confirm-password-input') as HTMLInputElement).value;
+    const confirmEl = document.getElementById('confirm-password-input') as HTMLInputElement;
+
+    if (!currentPw || !newPw || !confirmPw || newPw !== confirmPw) {
+        confirmEl.classList.add('input-error');
+        return;
+    }
+
+    await withBusy(btn, async () => {
+        const result = await api.changePassword(currentPw, newPw);
+        if (!result) return;
+        (document.getElementById('current-password-input') as HTMLInputElement).value = '';
+        (document.getElementById('new-password-input') as HTMLInputElement).value = '';
+        (document.getElementById('confirm-password-input') as HTMLInputElement).value = '';
     });
 }
 

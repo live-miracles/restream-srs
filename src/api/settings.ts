@@ -35,23 +35,38 @@ export function registerSettingsApi(
     applyIpWhitelist: (ips: string[]) => Promise<ApplyWhitelistResult>,
     getBannedIps: () => Promise<GetBannedIpsResult>,
 ): void {
-    app.post('/api/settings', async (req, res) => {
+    app.post('/api/settings/general', (req, res) => {
         const name = (req.body?.name as string | undefined)?.trim();
         const publicHost = (req.body?.publicHost as string | undefined)?.trim() ?? null;
-        const hostProbeTargets = normalizeHostProbeTargets(req.body?.hostProbeTargets);
-        const whitelistIps = normalizeIpWhitelist(req.body?.whitelistIps);
 
         if (!name) return res.status(400).json({ error: 'name is required' });
+
+        db.setSetting('serverName', name);
+        if (publicHost !== null) db.setSetting('publicHost', publicHost);
+
+        return res.json({
+            serverName: name,
+            publicHost: publicHost ?? db.getSetting('publicHost') ?? 'localhost',
+        });
+    });
+
+    app.post('/api/settings/host-probes', (req, res) => {
+        const hostProbeTargets = normalizeHostProbeTargets(req.body?.hostProbeTargets);
         if (hostProbeTargets === null) {
             return res.status(400).json({ error: 'Invalid host probe target configuration' });
         }
+
+        db.replaceHostProbeTargets(hostProbeTargets);
+
+        return res.json({ hostProbeTargets });
+    });
+
+    app.post('/api/settings/whitelist', async (req, res) => {
+        const whitelistIps = normalizeIpWhitelist(req.body?.whitelistIps);
         if (whitelistIps === null) {
             return res.status(400).json({ error: 'Invalid IP whitelist' });
         }
 
-        db.setSetting('serverName', name);
-        if (publicHost !== null) db.setSetting('publicHost', publicHost);
-        db.replaceHostProbeTargets(hostProbeTargets);
         db.replaceWhitelistIps(whitelistIps);
 
         // Best-effort: the DB write above already succeeded regardless of
@@ -60,13 +75,9 @@ export function registerSettingsApi(
         const applyResult = await applyIpWhitelist(whitelistIps);
 
         return res.json({
-            serverName: name,
-            publicHost: publicHost ?? db.getSetting('publicHost') ?? 'localhost',
-            hostProbeTargets,
             whitelistIps,
             whitelistApplied: applyResult.ok,
             whitelistError: applyResult.ok ? null : (applyResult.error ?? 'unknown error'),
-            pending: false,
         });
     });
 
