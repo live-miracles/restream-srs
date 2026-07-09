@@ -321,9 +321,9 @@ echo "fail2ban: jail 'srt-bonding-relay' active (5 bad SRT passphrases in 10 min
 # Lets the dashboard (Settings -> IP Whitelist) keep trusted IPs out of the
 # jail above and unban them live, without restarting fail2ban or
 # restream-srs.service (a restart would kill every in-flight output ffmpeg).
-# Invoked via sudo since restream-srs.service is unprivileged (NoNewPrivileges).
-# The API does full IP/CIDR validation; this script still rejects unsafe tokens
-# before writing root-owned fail2ban config.
+# Invoked via sudo since restream-srs.service is unprivileged. The API does
+# full IP/CIDR validation; this script still rejects unsafe tokens before
+# writing root-owned fail2ban config.
 cat > /usr/local/sbin/restream-srs-fail2ban-apply <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -573,7 +573,8 @@ RestartSec=2
 LimitNOFILE=1048576
 TasksMax=infinity
 LimitNPROC=infinity
-NoNewPrivileges=true
+# Intentionally omit NoNewPrivileges: the dashboard uses sudoers-limited helper
+# scripts to read/apply fail2ban state.
 PrivateTmp=true
 ProtectSystem=full
 ReadWritePaths=$DATA_DIR $CONF_DIR

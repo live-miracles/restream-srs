@@ -93,9 +93,9 @@ build_relay_local() {
 }
 
 # Sets up the same `restream-srs` / `srt-bonding-relay` jails
-# scripts/server-install.sh sets up in production, plus the read-only status
-# script and helper the dashboard's "fail2ban Currently Banned" table calls
-# via sudo. Unlike production, `npm run dev` runs as you rather than a
+# scripts/server-install.sh sets up in production, plus the helper scripts the
+# dashboard calls via sudo for Settings -> IP Whitelist and "fail2ban Currently
+# Banned". Unlike production, `npm run dev` runs as you rather than a
 # dedicated service user, and isn't a systemd unit - so the jails'
 # `backend = systemd` won't see real rejected-publish attempts from a dev
 # run. To see the table populated, ban a harmless test-only IP by hand:
@@ -150,6 +150,73 @@ bantime = 3600
 EOF
 
     sudo systemctl restart fail2ban
+
+    sudo tee /usr/local/sbin/restream-srs-fail2ban-apply >/dev/null <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+JAILS=(restream-srs srt-bonding-relay)
+
+if [[ "${1:-}" != "sync" ]]; then
+    echo "usage: $0 sync <ip-or-cidr> [...]" >&2
+    exit 1
+fi
+shift
+
+validate_safe_ip_or_cidr_token() {
+    local value="$1"
+    local addr="${value%%/*}"
+    local prefix=""
+
+    [[ "$value" =~ ^[0-9A-Fa-f:.]+(/[0-9]{1,3})?$ ]] || return 1
+    [[ -n "$addr" ]] || return 1
+
+    if [[ "$value" == */* ]]; then
+        prefix="${value##*/}"
+        [[ "$prefix" =~ ^[0-9]+$ ]] || return 1
+        if [[ "$addr" == *:* ]]; then
+            (( prefix <= 128 )) || return 1
+        else
+            (( prefix <= 32 )) || return 1
+        fi
+    fi
+
+    return 0
+}
+
+for ip in "$@"; do
+    validate_safe_ip_or_cidr_token "$ip" || {
+        echo "ERROR: rejecting invalid IP/CIDR: $ip" >&2
+        exit 1
+    }
+done
+
+for JAIL in "${JAILS[@]}"; do
+    CONF="/etc/fail2ban/jail.d/${JAIL}-whitelist.local"
+    TMP_CONF="$(mktemp "${CONF}.XXXXXX")"
+    {
+        echo "[$JAIL]"
+        if [[ $# -gt 0 ]]; then
+            printf 'ignoreip = %s\n' "$*"
+        fi
+    } > "$TMP_CONF"
+    chmod 644 "$TMP_CONF"
+    mv "$TMP_CONF" "$CONF"
+done
+
+if ! fail2ban-client ping >/dev/null 2>&1; then
+    echo "fail2ban is not running; whitelist files written and will apply once it starts" >&2
+    exit 1
+fi
+
+for JAIL in "${JAILS[@]}"; do
+    fail2ban-client reload "$JAIL" >/dev/null
+    for ip in "$@"; do
+        fail2ban-client set "$JAIL" unbanip "$ip" >/dev/null 2>&1 || true
+    done
+done
+EOF
+    sudo chmod 755 /usr/local/sbin/restream-srs-fail2ban-apply
 
     sudo tee /usr/local/sbin/restream-srs-fail2ban-status >/dev/null <<'PYEOF'
 #!/usr/bin/env python3
@@ -228,11 +295,11 @@ if __name__ == "__main__":
 PYEOF
     sudo chmod 755 /usr/local/sbin/restream-srs-fail2ban-status
 
-    echo "$USER ALL=(root) NOPASSWD: /usr/local/sbin/restream-srs-fail2ban-status" \
-        | sudo tee /etc/sudoers.d/restream-srs-fail2ban-status-dev >/dev/null
-    sudo visudo -cf /etc/sudoers.d/restream-srs-fail2ban-status-dev
+    echo "$USER ALL=(root) NOPASSWD: /usr/local/sbin/restream-srs-fail2ban-apply, /usr/local/sbin/restream-srs-fail2ban-status" \
+        | sudo tee /etc/sudoers.d/restream-srs-fail2ban-dev >/dev/null
+    sudo visudo -cf /etc/sudoers.d/restream-srs-fail2ban-dev
 
-    echo "fail2ban: jails 'restream-srs'/'srt-bonding-relay' configured; dashboard ban list wired up for $USER"
+    echo "fail2ban: jails 'restream-srs'/'srt-bonding-relay' configured; dashboard fail2ban controls wired up for $USER"
 }
 
 mkdir -p "$REPO_DIR/objs"

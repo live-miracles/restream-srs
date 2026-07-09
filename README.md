@@ -275,16 +275,6 @@ bonded-input status.
 npm run dev           # tsx watch + tsc watch + tailwind watch
 ```
 
-**Optional: test the fail2ban ban list locally.** If you have fail2ban
-installed, `scripts/dev-fail2ban-test-setup.sh` sets up the same jails
-production uses and bans a harmless test-only IP, so Settings ->
-"fail2ban Currently Banned" has something to show. Root-only and opt-in
-(reads/writes fail2ban config, sudoers, iptables) - not part of step 1,
-run by hand:
-```bash
-bash scripts/dev-fail2ban-test-setup.sh
-```
-
 ---
 
 ## Configuration
