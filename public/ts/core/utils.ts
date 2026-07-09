@@ -3,6 +3,19 @@ export function setInnerText(id: string, val: unknown): void {
     if (el) el.textContent = String(val ?? '');
 }
 
+// Escape a string for interpolation into HTML built with template literals.
+// Safe for both text content and double-quoted attribute values. Must be
+// applied to every user- or publisher-controlled string (pipeline/output
+// names, ffprobe track metadata, URLs, error output) before it reaches
+// innerHTML.
+export function escapeHtml(s: string): string {
+    return s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
 export function getUrlParam(key: string): string | null {
     return new URLSearchParams(window.location.search).get(key);
 }

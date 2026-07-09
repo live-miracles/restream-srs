@@ -1,3 +1,4 @@
+import { escapeHtml } from '../core/utils.js';
 import type { PipelineView } from '../types.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -431,7 +432,7 @@ export function populatePreviewTrackSelect(pipeline: PipelineView): void {
     const prev = sel.value;
     const opts: string[] = [];
     for (const t of tracks) {
-        const label = [t.language, t.title].filter(Boolean).join(' ');
+        const label = escapeHtml([t.language, t.title].filter(Boolean).join(' '));
         opts.push(
             `<option value="${t.index}">Track ${t.index + 1}${label ? ` (${label})` : ''}</option>`,
         );

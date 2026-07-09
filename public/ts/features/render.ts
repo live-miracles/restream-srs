@@ -1,5 +1,6 @@
 import {
     setInnerText,
+    escapeHtml,
     formatBitrate,
     formatBytesCompact,
     getUrlParam,
@@ -523,13 +524,13 @@ function renderPipelineList(): void {
                 : '';
 
             return `<li>
-            <div class="flex items-center gap-2 ${selected} cursor-pointer js-select-pipeline" data-id="${p.id}" title="${escHtml(inputTitle)}">
+            <div class="flex items-center gap-2 ${selected} cursor-pointer js-select-pipeline" data-id="${p.id}" title="${escapeHtml(inputTitle)}">
                 <div class="rounded-box h-5 w-5 shrink-0" style="background:linear-gradient(90deg,${inColor},${inColor} 45%,#242933 45%,#242933 55%,${outColor} 55%)"></div>
                 ${badge(outGood, 'badge-success')}
                 ${badge(outWarn, 'badge-warning')}
                 ${badge(outFailed, 'badge-error')}
                 ${badge(outOff, 'badge-ghost')}
-                <a class="truncate min-w-0">${p.name}</a>
+                <a class="truncate min-w-0">${escapeHtml(p.name)}</a>
                 ${uptimeSpan}
                 ${inputTypeBadge}
             </div>
@@ -575,7 +576,7 @@ function renderInputStats(input: InputHealth): string {
         const probeStatus = formatMediaProbeStatus(input);
         const message = inputStatusMessage(input);
         const toneClass = input.mediaError ? 'text-error' : 'text-warning';
-        return `<p class="text-xs ${toneClass} mt-2">${escHtml(message)}${probeStatus ? ` <span class="opacity-60">${escHtml(probeStatus)}</span>` : ''}</p>`;
+        return `<p class="text-xs ${toneClass} mt-2">${escapeHtml(message)}${probeStatus ? ` <span class="opacity-60">${escapeHtml(probeStatus)}</span>` : ''}</p>`;
     }
 
     const v = input.video;
@@ -609,7 +610,7 @@ function renderInputStats(input: InputHealth): string {
             <tbody>
                 ${input.audioTracks
                     .map((t) => {
-                        const label = [t.language, t.title].filter(Boolean).join(' — ');
+                        const label = escapeHtml([t.language, t.title].filter(Boolean).join(' — '));
                         return `<tr>
                         <td class="font-mono">${t.index + 1}</td>
                         <td>${t.codec || '—'}</td>
@@ -849,7 +850,7 @@ function renderOverview(): void {
                 ms != null ? `${ms.toFixed(ms >= 10 ? 0 : 1)} ms` : '—';
 
             relayRows += `<tr class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(rowError, rowWarn)}>
-                <td class="overview-name-col font-semibold">${p.name}</td>
+                <td class="overview-name-col font-semibold">${escapeHtml(p.name)}</td>
                 <td>${relayStatusBadge(inputSt, { good: 'Active', warn: 'Stalled', error: 'Error', off: 'Idle' })}</td>
                 <td>${relayStatusBadge(outputSt, { good: 'Forwarding', warn: 'Pending', error: 'Not accepted', off: 'Idle' })}</td>
                 <td>${renderLegsCompact(p.srtBonding.legs)}</td>
@@ -878,9 +879,9 @@ function renderOverview(): void {
                 st === 'off'
                     ? `<span class="badge badge-sm badge-neutral">Offline</span>`
                     : st === 'error'
-                      ? `<span class="badge badge-sm badge-error" title="${escHtml([inputStatusMessage(inp), formatMediaProbeStatus(inp)].filter(Boolean).join(' '))}">Media Error</span>`
+                      ? `<span class="badge badge-sm badge-error" title="${escapeHtml([inputStatusMessage(inp), formatMediaProbeStatus(inp)].filter(Boolean).join(' '))}">Media Error</span>`
                       : st === 'warn'
-                        ? `<span class="badge badge-sm badge-warning" title="${escHtml(inp.live ? 'Input bitrate is below warning threshold.' : [inputStatusMessage(inp), formatMediaProbeStatus(inp)].filter(Boolean).join(' '))}">${inp.live ? 'Low Bitrate' : 'Probing'}</span>`
+                        ? `<span class="badge badge-sm badge-warning" title="${escapeHtml(inp.live ? 'Input bitrate is below warning threshold.' : [inputStatusMessage(inp), formatMediaProbeStatus(inp)].filter(Boolean).join(' '))}">${inp.live ? 'Low Bitrate' : 'Probing'}</span>`
                         : `<span class="badge badge-sm badge-success">Live</span>`;
             const protocolLabel = isRelayAcceptedBySrs(p) ? 'Relay' : inp.isSrt ? 'SRT' : 'RTMP';
             const audioTracks = inp.audioTracks.length > 0 ? inp.audioTracks : null;
@@ -888,7 +889,7 @@ function renderOverview(): void {
                 audioTracks && audioTracks.length > 1 ? ` rowspan="${audioTracks.length}"` : '';
             const rowAttr = `class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(isError, isWarn)}`;
             const sharedCells = `
-                <td class="overview-name-col font-semibold"${rowspan}>${p.name}</td>
+                <td class="overview-name-col font-semibold"${rowspan}>${escapeHtml(p.name)}</td>
                 <td${rowspan}>${badge}</td>
                 <td class="font-mono text-xs"${rowspan}>${inp.live ? formatUptime(inp.uptimeMs) : '—'}</td>
                 <td class="font-mono text-xs"${rowspan}>${inp.connected ? formatBitrate(inp.recvBitrateKbps) : '—'}</td>
@@ -902,7 +903,7 @@ function renderOverview(): void {
                     .map((t, i) => {
                         const label =
                             t.title || t.language
-                                ? ` <span class="opacity-40 text-xs">${[t.language, t.title].filter(Boolean).join(' ')}</span>`
+                                ? ` <span class="opacity-40 text-xs">${escapeHtml([t.language, t.title].filter(Boolean).join(' '))}</span>`
                                 : '';
                         return `<tr ${rowAttr}>${i === 0 ? sharedCells : ''}
                         <td class="font-mono text-xs">${t.codec || '—'}${label}</td>
@@ -940,7 +941,7 @@ function renderOverview(): void {
                           ? `<span class="badge badge-sm badge-success">Running</span>`
                           : st === 'warn'
                             ? o.warningReason
-                                ? `<span class="badge badge-sm badge-warning" title="${escHtml(o.warningReason)}">Warning</span>`
+                                ? `<span class="badge badge-sm badge-warning" title="${escapeHtml(o.warningReason)}">Warning</span>`
                                 : o.bitrateKbps === null
                                   ? `<span class="badge badge-sm badge-warning">No Output</span>`
                                   : `<span class="badge badge-sm badge-warning">Low Bitrate</span>`
@@ -952,7 +953,7 @@ function renderOverview(): void {
                 const media = isOn ? deriveOutputMedia(p.input, o) : null;
                 const outUptimeMs = o.startedAtMs !== null ? Date.now() - o.startedAtMs : null;
                 outputRows += `<tr class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(st === 'error', st === 'warn')}>
-                    <td class="overview-name-col"><span class="opacity-40 text-xs">${p.name} ·</span> ${o.name}</td>
+                    <td class="overview-name-col"><span class="opacity-40 text-xs">${escapeHtml(p.name)} ·</span> ${escapeHtml(o.name)}</td>
                     <td>${badge}</td>
                     <td class="font-mono text-xs">${outUptimeMs !== null ? formatUptime(outUptimeMs) : '—'}</td>
                     ${td(formatBitrate(o.bitrateKbps))}
@@ -1254,8 +1255,8 @@ function renderHostConnectionsOverview(): void {
                 ? new Date(latest.ts).toLocaleTimeString(undefined, { hour12: false })
                 : '—';
             return `<tr>
-                <td class="font-semibold">${escHtml(entry.target.label)}</td>
-                <td class="font-mono text-xs">${escHtml(entry.target.host)}:${entry.target.port}</td>
+                <td class="font-semibold">${escapeHtml(entry.target.label)}</td>
+                <td class="font-mono text-xs">${escapeHtml(entry.target.host)}:${entry.target.port}</td>
                 <td>${latestStatus}</td>
                 <td class="font-mono text-xs">${latest?.latencyMs != null ? `${Math.round(latest.latencyMs)} ms` : '—'}</td>
                 <td class="font-mono text-xs">${highestLatency != null ? `${Math.round(highestLatency)} ms` : '—'}</td>
@@ -1276,12 +1277,12 @@ function renderHostConnectionsOverview(): void {
             return `<div class="bg-base-300 rounded-xl p-4">
                 <div class="mb-3 flex items-start justify-between gap-3">
                     <div>
-                        <h3 class="font-semibold">${escHtml(entry.target.label)}</h3>
-                        <p class="font-mono text-xs opacity-60">${escHtml(entry.target.host)}:${entry.target.port}</p>
+                        <h3 class="font-semibold">${escapeHtml(entry.target.label)}</h3>
+                        <p class="font-mono text-xs opacity-60">${escapeHtml(entry.target.host)}:${entry.target.port}</p>
                     </div>
                     <div class="text-right">
                         <div class="font-mono text-sm">${latest?.latencyMs != null ? `${Math.round(latest.latencyMs)} ms` : '—'}</div>
-                        <div class="text-xs ${latest?.ok === false ? 'text-error' : 'opacity-60'}">${escHtml(errorText)}</div>
+                        <div class="text-xs ${latest?.ok === false ? 'text-error' : 'opacity-60'}">${escapeHtml(errorText)}</div>
                     </div>
                 </div>
                 <canvas id="${canvasId}" style="width:100%;height:110px;display:block"></canvas>
@@ -1670,14 +1671,6 @@ const ICON_INFO = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14
 const ICON_ITERATION_CW = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 3 3-3 3"/><path d="M15 5a9 9 0 1 1-3 16.9"/></svg>`;
 const ICON_WARN = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>`;
 
-function escHtml(s: string): string {
-    return s
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-}
-
 type DupRef = { pipelineName: string; outputName: string };
 
 function showDupWarning(url: string, refs: DupRef[]): void {
@@ -1689,7 +1682,7 @@ function showDupWarning(url: string, refs: DupRef[]): void {
     listEl.innerHTML = refs
         .map(
             (r) =>
-                `<li><span class="font-semibold">${escHtml(r.pipelineName)}</span> → ${escHtml(r.outputName)}</li>`,
+                `<li><span class="font-semibold">${escapeHtml(r.pipelineName)}</span> → ${escapeHtml(r.outputName)}</li>`,
         )
         .join('');
     modal.showModal();
@@ -1745,7 +1738,7 @@ function renderOutputCard(
             (s.url.length > 27 ? s.url.slice(0, 25) + '...' + s.url.slice(-2) : s.url);
         const dupRefs = dupUrls.get(s.url);
         const dupWarnBtn = dupRefs
-            ? `<button class="btn btn-xs btn-ghost text-warning p-0 leading-none shrink-0" data-action="dup-warn" data-dup-url="${escHtml(s.url)}" data-dup-info="${escHtml(JSON.stringify(dupRefs))}" title="Duplicate destination — click for details">${ICON_WARN}</button>`
+            ? `<button class="btn btn-xs btn-ghost text-warning p-0 leading-none shrink-0" data-action="dup-warn" data-dup-url="${escapeHtml(s.url)}" data-dup-info="${escapeHtml(JSON.stringify(dupRefs))}" title="Duplicate destination — click for details">${ICON_WARN}</button>`
             : '';
         return { display, trackBadge, dupRefs, dupWarnBtn };
     };
@@ -1757,7 +1750,7 @@ function renderOutputCard(
         const codeClass = dupRefs
             ? 'text-xs font-normal text-warning whitespace-nowrap'
             : 'text-xs font-normal opacity-60 whitespace-nowrap';
-        inlineSink = `<code class="${codeClass}" title="${escHtml(o.sinks[0].url)}">${display}</code>${dupWarnBtn}${trackBadge}`;
+        inlineSink = `<code class="${codeClass}" title="${escapeHtml(o.sinks[0].url)}">${display}</code>${dupWarnBtn}${trackBadge}`;
     } else if (o.sinks.length > 1) {
         belowSinks = `<div class="space-y-0.5 pl-2">${o.sinks
             .map((s) => {
@@ -1765,7 +1758,7 @@ function renderOutputCard(
                 const codeClass = dupRefs
                     ? 'text-xs font-normal text-warning'
                     : 'text-xs font-normal opacity-60';
-                return `<div class="flex items-center gap-1 min-w-0"><code class="${codeClass}" title="${escHtml(s.url)}">${display}</code>${dupWarnBtn}${trackBadge}</div>`;
+                return `<div class="flex items-center gap-1 min-w-0"><code class="${codeClass}" title="${escapeHtml(s.url)}">${display}</code>${dupWarnBtn}${trackBadge}</div>`;
             })
             .join('')}</div>`;
     }
@@ -1788,14 +1781,14 @@ function renderOutputCard(
         ? `<div class="flex items-center gap-2 pl-2 mt-0.5 min-w-0">
                 ${retryBadge}
                 <span class="text-xs ${lastErrorColor} shrink-0">${lastErrorTs}</span>
-                <span class="text-xs ${lastErrorColor} truncate">${escHtml(lastErrorLine)}</span>
+                <span class="text-xs ${lastErrorColor} truncate">${escapeHtml(lastErrorLine)}</span>
                 <button class="btn btn-xs btn-ghost p-0 leading-none shrink-0 ${lastErrorColor}" data-action="error-info" data-out-id="${o.id}" title="View full error">${ICON_INFO}</button>
            </div>`
         : '';
     const warningHtml = o.warningReason
         ? `<div class="flex items-center gap-2 pl-2 mt-0.5 min-w-0">
                 <span class="text-warning shrink-0">${ICON_WARN}</span>
-                <span class="text-xs text-warning truncate">${escHtml(o.warningReason)}</span>
+                <span class="text-xs text-warning truncate">${escapeHtml(o.warningReason)}</span>
            </div>`
         : '';
 
@@ -1810,7 +1803,7 @@ function renderOutputCard(
                         data-action="${isStopped ? 'start' : 'stop'}" data-out-id="${o.id}"${isPending ? ' disabled' : ''}>
                         ${isStopped ? 'Start' : 'Stop'}
                     </button>
-                    <span>${o.name}</span>
+                    <span>${escapeHtml(o.name)}</span>
                 </div>
                 ${badges.join('')}
                 ${inlineSink}
