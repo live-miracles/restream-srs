@@ -823,6 +823,10 @@ function renderOverview(): void {
 
     const totalOuts = state.pipelines.reduce((s, p) => s + p.outs.length, 0);
     const relayProcessRunning = state.health.srtRelay?.status === 'running';
+    const activeOnly = state.overviewFilter === 'active';
+    const problemsOnly = state.overviewFilter === 'problems';
+    const isProblem = (st: string): boolean => st === 'warn' || st === 'error';
+    const isOffline = (st: string): boolean => st === 'off';
 
     // ── SRT Bonding Relay ───────────────────────────────
     const activeRelayPipelines = state.pipelines.filter(
@@ -836,6 +840,16 @@ function renderOverview(): void {
             p.srtBonding.recvLossTotal > 0 ||
             p.srtBonding.recvDropTotal > 0,
     );
+    const relayProblemCount = activeRelayPipelines.filter(
+        (p) =>
+            isProblem(relayInputStatus(p, relayProcessRunning)) ||
+            isProblem(relayOutputStatus(p, relayProcessRunning)),
+    ).length;
+    const relayActiveCount = activeRelayPipelines.filter(
+        (p) =>
+            !isOffline(relayInputStatus(p, relayProcessRunning)) ||
+            !isOffline(relayOutputStatus(p, relayProcessRunning)),
+    ).length;
     let relayRows = '';
     if (activeRelayPipelines.length === 0) {
         relayRows = `<tr><td colspan="11" class="py-4 text-center opacity-50">No active SRT bonding relay sessions.</td></tr>`;
@@ -845,6 +859,8 @@ function renderOverview(): void {
             const outputSt = relayOutputStatus(p, relayProcessRunning);
             const rowWarn = inputSt === 'warn' || outputSt === 'warn';
             const rowError = inputSt === 'error' || outputSt === 'error';
+            if (problemsOnly && !rowWarn && !rowError) continue;
+            if (activeOnly && isOffline(inputSt) && isOffline(outputSt)) continue;
             const rxPackets = p.srtBonding.recvUniquePacketsTotal || p.srtBonding.recvPacketsTotal;
             const fmtRtt = (ms: number | null): string =>
                 ms != null ? `${ms.toFixed(ms >= 10 ? 0 : 1)} ms` : '—';
@@ -863,18 +879,27 @@ function renderOverview(): void {
                 <td class="font-mono text-xs">${fmtRtt(p.srtBonding.inputRttMs)} / ${fmtRtt(p.srtBonding.outputRttMs)}</td>
             </tr>`;
         }
+        if (problemsOnly && relayRows === '') {
+            relayRows = `<tr><td colspan="11" class="py-4 text-center opacity-50">No relay issues.</td></tr>`;
+        } else if (activeOnly && relayRows === '') {
+            relayRows = `<tr><td colspan="11" class="py-4 text-center opacity-50">No active relay sessions.</td></tr>`;
+        }
     }
 
     // ── Inputs ────────────────────────────────────────────
+    const inputProblemCount = state.pipelines.filter((p) => isProblem(inputStatus(p.input))).length;
+    const inputActiveCount = state.pipelines.filter((p) => !isOffline(inputStatus(p.input))).length;
     let inputRows = '';
     if (state.pipelines.length === 0) {
-        inputRows = `<tr><td colspan="11" class="py-4 text-center opacity-50">No pipelines yet.</td></tr>`;
+        inputRows = `<tr><td colspan="12" class="py-4 text-center opacity-50">No pipelines yet.</td></tr>`;
     } else {
         for (const p of state.pipelines) {
             const inp = p.input;
             const st = inputStatus(inp);
             const isWarn = st === 'warn';
             const isError = st === 'error';
+            if (problemsOnly && !isWarn && !isError) continue;
+            if (activeOnly && isOffline(st)) continue;
             const badge =
                 st === 'off'
                     ? `<span class="badge badge-sm badge-neutral">Offline</span>`
@@ -921,17 +946,32 @@ function renderOverview(): void {
                 </tr>`;
             }
         }
+        if (problemsOnly && inputRows === '') {
+            inputRows = `<tr><td colspan="12" class="py-4 text-center opacity-50">No input issues.</td></tr>`;
+        } else if (activeOnly && inputRows === '') {
+            inputRows = `<tr><td colspan="12" class="py-4 text-center opacity-50">No active inputs.</td></tr>`;
+        }
     }
 
     // ── Outputs ───────────────────────────────────────────
+    const outputProblemCount = state.pipelines.reduce(
+        (s, p) => s + p.outs.filter((o) => isProblem(outStatus(o, p.input.live))).length,
+        0,
+    );
+    const outputActiveCount = state.pipelines.reduce(
+        (s, p) => s + p.outs.filter((o) => !isOffline(outStatus(o, p.input.live))).length,
+        0,
+    );
     let outputRows = '';
     if (totalOuts === 0) {
-        outputRows = `<tr><td colspan="11" class="py-4 text-center opacity-50">No outputs yet.</td></tr>`;
+        outputRows = `<tr><td colspan="12" class="py-4 text-center opacity-50">No outputs yet.</td></tr>`;
     } else {
         for (const p of state.pipelines) {
             for (const o of p.outs) {
                 const isRunning = o.status === 'running';
                 const st = outStatus(o, p.input.live);
+                if (problemsOnly && !isProblem(st)) continue;
+                if (activeOnly && isOffline(st)) continue;
                 const retryPrefix =
                     st === 'error' && o.failures > 0 ? `${ICON_ITERATION_CW}${o.failures} ` : '';
                 const badge =
@@ -967,6 +1007,11 @@ function renderOverview(): void {
                     ${td(fmtHz(media?.audio?.sample_rate))}
                 </tr>`;
             }
+        }
+        if (problemsOnly && outputRows === '') {
+            outputRows = `<tr><td colspan="12" class="py-4 text-center opacity-50">No output issues.</td></tr>`;
+        } else if (activeOnly && outputRows === '') {
+            outputRows = `<tr><td colspan="12" class="py-4 text-center opacity-50">No active outputs.</td></tr>`;
         }
     }
 
@@ -1010,8 +1055,28 @@ function renderOverview(): void {
         ${chartCard('chart-tx', 'Uplink', last ? fmtMbps(last.txBps) : '—')}
     </div>`;
 
+    const totalAll = activeRelayPipelines.length + state.pipelines.length + totalOuts;
+    const totalActive = relayActiveCount + inputActiveCount + outputActiveCount;
+    const totalProblems = relayProblemCount + inputProblemCount + outputProblemCount;
+    const filterChips = `
+    <div role="tablist" class="tabs tabs-lift mb-4">
+        <a role="tab" id="ov-filter-all" aria-selected="${state.overviewFilter === 'all'}" class="tab gap-1 ${state.overviewFilter === 'all' ? 'tab-active' : ''}">
+            All
+            <span class="badge badge-xs badge-ghost">${totalAll}</span>
+        </a>
+        <a role="tab" id="ov-filter-active" aria-selected="${activeOnly}" class="tab gap-1 ${activeOnly ? 'tab-active' : ''}">
+            Active
+            <span class="badge badge-xs badge-ghost">${totalActive}</span>
+        </a>
+        <a role="tab" id="ov-filter-problems" aria-selected="${problemsOnly}" class="tab gap-1 ${problemsOnly ? 'tab-active' : ''}">
+            Issues
+            <span class="badge badge-xs badge-ghost">${totalProblems}</span>
+        </a>
+    </div>`;
+
     overviewEl.innerHTML = `
         ${chartsHtml}
+        ${filterChips}
         <h2 class="mb-2 text-lg font-bold">SRT Bonding Relay <span class="badge badge-neutral badge-sm ml-1">${activeRelayPipelines.length}</span></h2>
         <div class="overflow-x-auto mb-6">
             <table class="table table-sm">
@@ -1054,6 +1119,18 @@ function renderOverview(): void {
     });
     document.getElementById('chart-fwd')?.addEventListener('click', () => {
         state.chartOffsetMs = Math.max(0, state.chartOffsetMs - CHART_SCROLL_STEP_MS);
+        renderOverview();
+    });
+    document.getElementById('ov-filter-all')?.addEventListener('click', () => {
+        state.overviewFilter = 'all';
+        renderOverview();
+    });
+    document.getElementById('ov-filter-active')?.addEventListener('click', () => {
+        state.overviewFilter = 'active';
+        renderOverview();
+    });
+    document.getElementById('ov-filter-problems')?.addEventListener('click', () => {
+        state.overviewFilter = 'problems';
         renderOverview();
     });
 

@@ -69,8 +69,16 @@ declare global {
         previewReloadBtn: () => void;
         previewMaximizeBtn: () => void;
         refreshHostConnectionsBtn: () => Promise<void>;
+        showProblemsOverviewBtn: () => void;
     }
 }
+
+// Jump from the sidebar's warning/error count badges to the overview with the
+// "Issues" filter active, so a red badge is one click from the failing rows.
+window.showProblemsOverviewBtn = () => {
+    state.overviewFilter = 'problems';
+    window.selectPipeline(null);
+};
 
 window.openSrsLogsBtn = () => showSrsLogs();
 window.openHostConnectionsBtn = async () => {
