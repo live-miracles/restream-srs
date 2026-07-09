@@ -117,6 +117,20 @@ export interface SrtRelayStatus {
     port: number;
 }
 
+export type SrtBondingLegState = 'pending' | 'idle' | 'running' | 'broken' | 'unknown';
+
+export interface SrtBondingLeg {
+    ip: string;
+    port: number;
+    state: SrtBondingLegState;
+    rttMs: number | null;
+    recvPacketsTotal: number | null;
+    recvUniquePacketsTotal: number | null;
+    recvLossTotal: number | null;
+    recvDropTotal: number | null;
+    retransTotal: number | null;
+}
+
 export interface SrtBondingStatus {
     inputActive: boolean;
     outputConnected: boolean;
@@ -138,7 +152,13 @@ export interface SrtBondingStatus {
     recvLossTotal: number;
     recvDropTotal: number;
     retransTotal: number;
-    rttMs: number | null;
+    inputRttMs: number | null;
+    outputRttMs: number | null;
+    outputSentPacketsTotal: number;
+    outputSendLossTotal: number;
+    outputSendDropTotal: number;
+    outputRetransTotal: number;
+    legs: SrtBondingLeg[];
     lastErrorAt: number | null;
     lastError: string | null;
 }
@@ -153,6 +173,20 @@ export interface SrsLogsData {
     events: SrsLogEvent[];
     logTail: string[];
     logFileExists?: boolean;
+}
+
+export interface Fail2banBan {
+    ip: string;
+    jail: string;
+    bannedAt: number | null;
+    unbanAt: number | null;
+    reason: string | null;
+}
+
+export interface Fail2banBansData {
+    ok: boolean;
+    bans: Fail2banBan[];
+    error?: string;
 }
 
 export interface PipelineLog {

@@ -11,6 +11,20 @@ export interface SrtRelayStats {
     port: number;
 }
 
+export type SrtRelayLegState = 'pending' | 'idle' | 'running' | 'broken' | 'unknown';
+
+export interface SrtRelayLegStatus {
+    ip: string;
+    port: number;
+    state: SrtRelayLegState;
+    rttMs: number | null;
+    recvPacketsTotal: number | null;
+    recvUniquePacketsTotal: number | null;
+    recvLossTotal: number | null;
+    recvDropTotal: number | null;
+    retransTotal: number | null;
+}
+
 export interface SrtRelayStreamStatus {
     inputActive: boolean;
     outputConnected: boolean;
@@ -24,7 +38,13 @@ export interface SrtRelayStreamStatus {
     recvLossTotal: number;
     recvDropTotal: number;
     retransTotal: number;
-    rttMs: number | null;
+    inputRttMs: number | null;
+    outputRttMs: number | null;
+    outputSentPacketsTotal: number;
+    outputSendLossTotal: number;
+    outputSendDropTotal: number;
+    outputRetransTotal: number;
+    legs: SrtRelayLegStatus[];
     lastErrorAt: number | null;
     lastError: string | null;
 }
@@ -36,10 +56,24 @@ export interface SrtRelayService {
     shutdown(): void;
 }
 
+interface RelayStatusResponseLeg {
+    ip?: string;
+    port?: number;
+    state?: string;
+    rttMs?: number | null;
+    recvPacketsTotal?: number | null;
+    recvUniquePacketsTotal?: number | null;
+    recvLossTotal?: number | null;
+    recvDropTotal?: number | null;
+    retransTotal?: number | null;
+}
+
 interface RelayStatusResponse {
     pid?: number;
     startedAtMs?: number;
+    updatedAtMs?: number;
     lastError?: string | null;
+    activeStreamIds?: string[];
     streamStates?: Array<{
         streamId?: string;
         inputActive?: boolean;
@@ -54,10 +88,39 @@ interface RelayStatusResponse {
         recvLossTotal?: number;
         recvDropTotal?: number;
         retransTotal?: number;
-        rttMs?: number | null;
+        inputRttMs?: number | null;
+        outputRttMs?: number | null;
+        outputSentPacketsTotal?: number;
+        outputSendLossTotal?: number;
+        outputSendDropTotal?: number;
+        outputRetransTotal?: number;
+        legs?: RelayStatusResponseLeg[];
         lastErrorAt?: number;
         lastError?: string | null;
     }>;
+}
+
+const VALID_LEG_STATES: readonly SrtRelayLegState[] = ['pending', 'idle', 'running', 'broken'];
+
+function parseLegState(state: string | undefined): SrtRelayLegState {
+    return (VALID_LEG_STATES as readonly string[]).includes(state ?? '')
+        ? (state as SrtRelayLegState)
+        : 'unknown';
+}
+
+function parseLeg(leg: RelayStatusResponseLeg): SrtRelayLegStatus {
+    return {
+        ip: leg.ip ?? '',
+        port: typeof leg.port === 'number' ? leg.port : 0,
+        state: parseLegState(leg.state),
+        rttMs: typeof leg.rttMs === 'number' ? leg.rttMs : null,
+        recvPacketsTotal: typeof leg.recvPacketsTotal === 'number' ? leg.recvPacketsTotal : null,
+        recvUniquePacketsTotal:
+            typeof leg.recvUniquePacketsTotal === 'number' ? leg.recvUniquePacketsTotal : null,
+        recvLossTotal: typeof leg.recvLossTotal === 'number' ? leg.recvLossTotal : null,
+        recvDropTotal: typeof leg.recvDropTotal === 'number' ? leg.recvDropTotal : null,
+        retransTotal: typeof leg.retransTotal === 'number' ? leg.retransTotal : null,
+    };
 }
 
 function extractStreamResource(streamId: string): string | null {
@@ -79,7 +142,13 @@ const EMPTY_STREAM_STATUS: SrtRelayStreamStatus = {
     recvLossTotal: 0,
     recvDropTotal: 0,
     retransTotal: 0,
-    rttMs: null,
+    inputRttMs: null,
+    outputRttMs: null,
+    outputSentPacketsTotal: 0,
+    outputSendLossTotal: 0,
+    outputSendDropTotal: 0,
+    outputRetransTotal: 0,
+    legs: [],
     lastErrorAt: null,
     lastError: null,
 };
@@ -101,7 +170,14 @@ function parseStreamStatus(
         recvLossTotal: typeof s.recvLossTotal === 'number' ? s.recvLossTotal : 0,
         recvDropTotal: typeof s.recvDropTotal === 'number' ? s.recvDropTotal : 0,
         retransTotal: typeof s.retransTotal === 'number' ? s.retransTotal : 0,
-        rttMs: typeof s.rttMs === 'number' ? s.rttMs : null,
+        inputRttMs: typeof s.inputRttMs === 'number' ? s.inputRttMs : null,
+        outputRttMs: typeof s.outputRttMs === 'number' ? s.outputRttMs : null,
+        outputSentPacketsTotal:
+            typeof s.outputSentPacketsTotal === 'number' ? s.outputSentPacketsTotal : 0,
+        outputSendLossTotal: typeof s.outputSendLossTotal === 'number' ? s.outputSendLossTotal : 0,
+        outputSendDropTotal: typeof s.outputSendDropTotal === 'number' ? s.outputSendDropTotal : 0,
+        outputRetransTotal: typeof s.outputRetransTotal === 'number' ? s.outputRetransTotal : 0,
+        legs: Array.isArray(s.legs) ? s.legs.map(parseLeg) : [],
         lastErrorAt: typeof s.lastErrorAt === 'number' ? s.lastErrorAt : null,
         lastError: s.lastError ?? null,
     };

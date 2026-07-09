@@ -200,13 +200,51 @@
           <div class="space-y-2">
             <div class="flex items-center justify-between pt-1">
               <span class="fieldset-legend">fail2ban IP Whitelist</span>
-              <button id="settings-add-whitelist-ip-btn" type="button" class="btn btn-xs btn-ghost" onclick="addWhitelistIpRowBtn()">+ Add IP</button>
+              <button id="settings-add-whitelist-ip-btn" type="button" class="btn btn-xs btn-ghost" onclick="addWhitelistIpRowBtn()">
+                + Add row
+              </button>
             </div>
-            <div id="settings-whitelist-ip-rows" class="flex flex-wrap gap-4"></div>
+            <div class="border-base-content/10 overflow-x-auto rounded-lg border">
+              <table class="table-sm table">
+                <thead>
+                  <tr>
+                    <th class="w-40">Label</th>
+                    <th>IPs / CIDRs</th>
+                    <th class="w-16"></th>
+                  </tr>
+                </thead>
+                <tbody id="settings-whitelist-ip-rows"></tbody>
+              </table>
+            </div>
             <p class="text-xs opacity-70">
-              These are never banned for rejected publish/play attempts, and any current ban on them is lifted immediately on save. E.g.
-              <span class="font-mono">203.0.113.4</span> (IP) or <span class="font-mono">203.0.113.0/24</span> (CIDR).
+              These are never banned for rejected publish/play attempts, and any current ban on them is lifted immediately on save. Comma-separate
+              multiple entries, e.g.
+              <span class="font-mono">203.0.113.4, 203.0.113.0/24</span>. Labels are for your own reference only.
             </p>
+          </div>
+
+          <!-- Currently Banned -->
+          <div class="space-y-2">
+            <div class="flex items-center justify-between pt-1">
+              <span class="fieldset-legend">fail2ban Currently Banned</span>
+              <button id="settings-refresh-bans-btn" type="button" class="btn btn-xs btn-ghost" onclick="refreshFail2banBansBtn(this)">
+                Refresh
+              </button>
+            </div>
+            <div class="border-base-content/10 overflow-x-auto rounded-lg border">
+              <table class="table-sm table">
+                <thead>
+                  <tr>
+                    <th>IP</th>
+                    <th>Reason</th>
+                    <th>Banned At</th>
+                    <th>Unbans At</th>
+                  </tr>
+                </thead>
+                <tbody id="settings-fail2ban-bans-rows"></tbody>
+              </table>
+            </div>
+            <p id="settings-fail2ban-bans-status" class="text-xs opacity-70"></p>
           </div>
 
           <!-- Regenerate Stream Keys -->
@@ -809,6 +847,8 @@
           </div>
           <code class="font-mono text-xs break-all opacity-80" id="srt-bonding-url"></code>
           <div class="mt-1" id="srt-bonding-stats"></div>
+          <div class="mt-1" id="srt-bonding-output-stats"></div>
+          <div class="mt-2" id="srt-bonding-legs"></div>
           <div class="mt-2 hidden" id="srt-bonding-last-error-wrap">
             <div class="flex min-w-0 items-center gap-2">
               <span class="text-error shrink-0 text-xs" id="srt-bonding-last-error-ts"></span>

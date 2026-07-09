@@ -131,8 +131,10 @@ check entirely — SRS and the relay treat empty the same as unset.
 Ingest is further locked down by SRS HTTP hooks handled by the app:
 `on_publish` rejects unknown stream keys, and `on_play` rejects any play not
 from loopback (only the app's own FFmpeg ever pulls streams), so the public
-ports are ingest-only. The installer also sets up a fail2ban jail that bans
-IPs after repeated rejected publishes/plays.
+ports are ingest-only. The installer also sets up two fail2ban jails: one
+that bans IPs after repeated rejected publishes/plays (RTMP/SRT stream-key
+checks), and one that bans IPs after repeated bad SRT passphrases against
+`srt-bonding-relay`'s own listener on `10081`.
 
 ---
 
@@ -231,10 +233,20 @@ Prerequisites: Node.js 22+, FFmpeg.
 **1. Install dependencies and local media binaries:**
 ```bash
 npm install
-npm run dev-install   # downloads SRS into ./objs, no root required
+npm run dev-install   # downloads SRS into ./objs, sets up fail2ban (needs sudo)
 ```
 Rerunning `npm run dev-install` also refreshes the sibling `../srt-bonding-relay`
 repo when it has no local changes and rebuilds `./objs/srt-bonding-relay`.
+
+The SRS/relay install itself needs no root. It also sets up the same
+`restream-srs` / `srt-bonding-relay` fail2ban jails production uses (this
+does need `sudo`), so Settings -> "fail2ban Currently Banned" has something
+to show. Since `npm run dev` isn't a systemd unit, real rejected-publish
+attempts won't auto-ban locally the way they do in production - ban a
+harmless test-only IP by hand to see the table populated:
+```bash
+sudo fail2ban-client set restream-srs banip 203.0.113.5
+```
 
 To use a local SRS binary:
 ```bash
@@ -261,6 +273,16 @@ bonded-input status.
 **4. Start the app** (terminal 3):
 ```bash
 npm run dev           # tsx watch + tsc watch + tailwind watch
+```
+
+**Optional: test the fail2ban ban list locally.** If you have fail2ban
+installed, `scripts/dev-fail2ban-test-setup.sh` sets up the same jails
+production uses and bans a harmless test-only IP, so Settings ->
+"fail2ban Currently Banned" has something to show. Root-only and opt-in
+(reads/writes fail2ban config, sudoers, iptables) - not part of step 1,
+run by hand:
+```bash
+bash scripts/dev-fail2ban-test-setup.sh
 ```
 
 ---

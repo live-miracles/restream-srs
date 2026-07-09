@@ -2,7 +2,7 @@ import * as api from '../core/api.js';
 import { state } from '../core/state.js';
 import { setUrlParam, maskStreamKey, withBusy, copyText } from '../core/utils.js';
 import { refreshAfterMutation } from './dashboard.js';
-import type { StreamKey, AudioTrackInfo, HostProbeTarget } from '../types.js';
+import type { StreamKey, AudioTrackInfo, HostProbeTarget, Fail2banBansData } from '../types.js';
 
 const MAX_HOST_PROBE_TARGETS = 10;
 
@@ -148,25 +148,28 @@ function isValidIpOrCidr(value: string): boolean {
     return false;
 }
 
-function whitelistIpRowHtml(value = ''): string {
-    return `<div class="flex items-center gap-1 w-40" data-whitelist-ip-row>
-        <input type="text" class="input input-sm w-full font-mono text-xs js-whitelist-ip"
-               placeholder="IP or CIDR" value="${escAttr(value)}"
-               oninput="this.classList.remove('input-error')" />
-        <button type="button" class="btn btn-xs btn-error btn-outline shrink-0" onclick="removeWhitelistIpRowBtn(this)" aria-label="Remove IP" title="Remove IP">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                <line x1="10" x2="10" y1="11" y2="17" /><line x1="14" x2="14" y1="11" y2="17" />
-            </svg>
-        </button>
-    </div>`;
+function whitelistIpRowHtml(label = '', ips = ''): string {
+    return `<tr data-whitelist-ip-row>
+        <td><input type="text" class="input input-sm w-full js-whitelist-label" placeholder="Office" value="${escAttr(label)}" /></td>
+        <td><input type="text" class="input input-sm w-full font-mono text-xs js-whitelist-ip"
+               placeholder="203.0.113.4, 203.0.113.0/24" value="${escAttr(ips)}"
+               oninput="this.classList.remove('input-error')" /></td>
+        <td class="text-right">
+            <button type="button" class="btn btn-xs btn-error btn-outline" onclick="removeWhitelistIpRowBtn(this)" aria-label="Remove row" title="Remove row">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                    <line x1="10" x2="10" y1="11" y2="17" /><line x1="14" x2="14" y1="11" y2="17" />
+                </svg>
+            </button>
+        </td>
+    </tr>`;
 }
 
 function renderWhitelistIpRows(ips: string[]): void {
     const container = document.getElementById('settings-whitelist-ip-rows');
     if (!container) return;
-    container.innerHTML = ips.map((ip) => whitelistIpRowHtml(ip)).join('');
+    container.innerHTML = ips.length ? whitelistIpRowHtml('', ips.join(', ')) : '';
 }
 
 export function addWhitelistIpRow(): void {
@@ -178,6 +181,8 @@ export function removeWhitelistIpRow(btn: HTMLElement): void {
     btn.closest('[data-whitelist-ip-row]')?.remove();
 }
 
+// Label is frontend-only organization; only the parsed IP/CIDR values from
+// every row are sent on to fail2ban.
 function readWhitelistIps(): string[] | null {
     const inputs = Array.from(
         document.querySelectorAll<HTMLInputElement>('#settings-whitelist-ip-rows .js-whitelist-ip'),
@@ -186,16 +191,67 @@ function readWhitelistIps(): string[] | null {
     let valid = true;
     for (const input of inputs) {
         input.classList.remove('input-error');
-        const value = input.value.trim();
-        if (!value) continue;
-        if (!isValidIpOrCidr(value)) {
-            input.classList.add('input-error');
-            valid = false;
-            continue;
+        const parts = input.value
+            .split(',')
+            .map((p) => p.trim())
+            .filter(Boolean);
+        for (const value of parts) {
+            if (!isValidIpOrCidr(value)) {
+                input.classList.add('input-error');
+                valid = false;
+                continue;
+            }
+            ips.push(value);
         }
-        ips.push(value);
     }
     return valid ? [...new Set(ips)] : null;
+}
+
+const FAIL2BAN_JAIL_LABELS: Record<string, string> = {
+    'restream-srs': 'Bad stream key (publish/play)',
+    'srt-bonding-relay': 'Bad SRT passphrase',
+};
+
+function fmtBanTs(ts: number | null): string {
+    return ts === null ? '—' : new Date(ts).toLocaleString();
+}
+
+function renderFail2banBans(data: Fail2banBansData | null): void {
+    const tbody = document.getElementById('settings-fail2ban-bans-rows');
+    const status = document.getElementById('settings-fail2ban-bans-status');
+    if (!tbody || !status) return;
+
+    if (!data || !data.ok) {
+        tbody.innerHTML = '';
+        status.textContent = `fail2ban status unavailable${data?.error ? `: ${data.error}` : ''}.`;
+        return;
+    }
+
+    if (data.bans.length === 0) {
+        tbody.innerHTML = '';
+        status.textContent = 'No IPs currently banned.';
+        return;
+    }
+
+    status.textContent = '';
+    tbody.innerHTML = data.bans
+        .map((b) => {
+            const label = FAIL2BAN_JAIL_LABELS[b.jail] ?? b.jail;
+            const title = b.reason ? ` title="${escAttr(b.reason)}"` : '';
+            return `<tr>
+                <td class="font-mono text-xs">${escAttr(b.ip)}</td>
+                <td class="text-xs"${title}>${escAttr(label)}</td>
+                <td class="text-xs">${fmtBanTs(b.bannedAt)}</td>
+                <td class="text-xs">${fmtBanTs(b.unbanAt)}</td>
+            </tr>`;
+        })
+        .join('');
+}
+
+export async function refreshFail2banBans(btn?: HTMLButtonElement): Promise<void> {
+    await withBusy(btn, async () => {
+        renderFail2banBans(await api.getFail2banBans());
+    });
 }
 
 // ── Settings ──────────────────────────────────────────
@@ -218,6 +274,10 @@ export function openSettings(): void {
     const whitelistIps = state.config.whitelistIps ?? [];
     renderWhitelistIpRows(whitelistIps);
     if (whitelistIps.length === 0) addWhitelistIpRow();
+    (document.getElementById('settings-fail2ban-bans-rows') as HTMLElement).innerHTML = '';
+    (document.getElementById('settings-fail2ban-bans-status') as HTMLElement).textContent =
+        'Loading…';
+    void api.getFail2banBans().then(renderFail2banBans);
     const hasPipelines = (state.config.pipelines?.length ?? 0) > 0;
     const regenBtn = document.getElementById('regen-stream-keys-btn') as HTMLButtonElement;
     const regenHint = document.getElementById('regen-stream-keys-hint') as HTMLElement;
@@ -858,6 +918,10 @@ export async function showSrsLogs(): Promise<void> {
 
     const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const fmtTs = (ts: number) => new Date(ts).toLocaleString();
+    const colorizeLevel = (line: string) =>
+        line
+            .replace(/\[ERROR\]/g, '<span class="text-error font-semibold">[ERROR]</span>')
+            .replace(/\[WARNING\]/g, '<span class="text-warning font-semibold">[WARNING]</span>');
 
     let html = '<p class="text-xs font-semibold uppercase opacity-50 mb-2">Connectivity</p>';
     if (data.events.length === 0) {
@@ -885,11 +949,13 @@ export async function showSrsLogs(): Promise<void> {
                 : 'SRS log file is empty — no log output yet.';
         html += `<p class="text-sm opacity-50">${msg}</p>`;
     } else {
-        html += `<pre class="opacity-70 whitespace-pre-wrap break-all">${[...data.logTail].reverse().map(esc).join('\n')}</pre>`;
+        html += `<div class="rounded-xl border border-white/10 bg-black p-3">
+            <pre class="text-gray-300 whitespace-pre-wrap break-all">${data.logTail.map((l) => colorizeLevel(esc(l))).join('\n')}</pre>
+        </div>`;
     }
 
     contentEl.innerHTML = html;
-    contentEl.scrollTop = 0;
+    contentEl.scrollTop = contentEl.scrollHeight;
 }
 
 // ── Output copy / paste ───────────────────────────────

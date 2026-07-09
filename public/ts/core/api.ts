@@ -7,6 +7,7 @@ import type {
     SystemMetrics,
     MetricSample,
     SrsLogsData,
+    Fail2banBansData,
 } from '../types.js';
 
 let loadingCount = 0;
@@ -179,3 +180,5 @@ export const getPipelineLogs = (pipelineId: string) =>
     apiRequest<PipelineLog[]>(`/api/pipelines/${pipelineId}/logs`);
 
 export const getSrsLogs = () => apiRequest<SrsLogsData>('/api/srs-logs');
+
+export const getFail2banBans = () => apiRequest<Fail2banBansData>('/api/settings/fail2ban-bans');

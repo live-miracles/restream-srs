@@ -12,6 +12,7 @@ import {
     removeHostProbeRow,
     addWhitelistIpRow,
     removeWhitelistIpRow,
+    refreshFail2banBans,
     submitSettingsForm,
     logoutUser,
     regenerateStreamKeysBtn,
@@ -41,6 +42,7 @@ declare global {
         removeHostProbeRowBtn: (slot: number) => void;
         addWhitelistIpRowBtn: () => void;
         removeWhitelistIpRowBtn: (btn: HTMLElement) => void;
+        refreshFail2banBansBtn: (btn?: HTMLButtonElement) => Promise<void>;
         settingsFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
         logoutBtn: () => Promise<void>;
         regenerateStreamKeysBtn: (btn?: HTMLButtonElement) => Promise<void>;
@@ -90,6 +92,7 @@ window.addHostProbeRowBtn = () => addHostProbeRow();
 window.removeHostProbeRowBtn = (slot) => removeHostProbeRow(slot);
 window.addWhitelistIpRowBtn = () => addWhitelistIpRow();
 window.removeWhitelistIpRowBtn = (btn) => removeWhitelistIpRow(btn);
+window.refreshFail2banBansBtn = (btn) => refreshFail2banBans(btn);
 window.settingsFormBtn = (btn) => submitSettingsForm(btn);
 window.logoutBtn = () => logoutUser();
 window.regenerateStreamKeysBtn = (btn) => regenerateStreamKeysBtn(btn);

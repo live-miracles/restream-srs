@@ -23,7 +23,7 @@ import {
 import { registerVersionApi } from './api/version.js';
 import { readAppConfig } from './utils/appConfig.js';
 import { createHostProbeService } from './services/hostProbes.js';
-import { applyIpWhitelist } from './services/fail2ban.js';
+import { applyIpWhitelist, getBannedIps } from './services/fail2ban.js';
 
 const app = express();
 const PORT = readAppConfig().port;
@@ -65,7 +65,7 @@ registerConfigApi(app, db);
 registerPipelineApi(app, db, outputService, previewService, srtRelayService);
 registerOutputApi(app, db, outputService);
 registerPreviewApi(app, previewService);
-registerSettingsApi(app, db, applyIpWhitelist);
+registerSettingsApi(app, db, applyIpWhitelist, getBannedIps);
 registerVersionApi(app);
 registerMetricsApi(app);
 healthService.registerRoutes(app);
@@ -131,6 +131,12 @@ async function main(): Promise<void> {
     srtRelayService.start();
     healthService.start();
     hostProbeService.start();
+
+    // Re-syncs the whitelist (which always includes loopback, see
+    // fail2ban.ts) on every boot, not just on the next dashboard save, so a
+    // fresh install or a fail2ban restart can't leave loopback unwhitelisted
+    // in the meantime. Best-effort: fail2ban may not be installed in dev.
+    void applyIpWhitelist(db.listWhitelistIps());
 
     app.listen(PORT, () => {
         console.log(`[server] listening on http://0.0.0.0:${PORT}`);

@@ -1,7 +1,7 @@
 import type { Express } from 'express';
 import type { Db, HostProbeTarget } from '../types.js';
 import { normalizeIpWhitelist } from '../utils/ipValidation.js';
-import type { ApplyWhitelistResult } from '../services/fail2ban.js';
+import type { ApplyWhitelistResult, GetBannedIpsResult } from '../services/fail2ban.js';
 
 const MAX_HOST_PROBE_TARGETS = 10;
 
@@ -33,6 +33,7 @@ export function registerSettingsApi(
     app: Express,
     db: Db,
     applyIpWhitelist: (ips: string[]) => Promise<ApplyWhitelistResult>,
+    getBannedIps: () => Promise<GetBannedIpsResult>,
 ): void {
     app.post('/api/settings', async (req, res) => {
         const name = (req.body?.name as string | undefined)?.trim();
@@ -67,6 +68,11 @@ export function registerSettingsApi(
             whitelistError: applyResult.ok ? null : (applyResult.error ?? 'unknown error'),
             pending: false,
         });
+    });
+
+    app.get('/api/settings/fail2ban-bans', async (_req, res) => {
+        const result = await getBannedIps();
+        return res.json(result);
     });
 
     app.post('/api/settings/regenerate-stream-keys', (req, res) => {

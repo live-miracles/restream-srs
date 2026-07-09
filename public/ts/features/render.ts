@@ -20,6 +20,7 @@ import type {
     MetricSample,
     OutputView,
     PipelineView,
+    SrtBondingLeg,
     VideoInfo,
 } from '../types.js';
 import {
@@ -230,6 +231,16 @@ function deriveOutputMedia(
     return { video, audio: input.audio };
 }
 
+function brokenLegCount(pipeline: PipelineView): number {
+    return pipeline.srtBonding.legs.filter((leg) => leg.state === 'broken').length;
+}
+
+function legsDegradedSuffix(pipeline: PipelineView): string {
+    const broken = brokenLegCount(pipeline);
+    const total = pipeline.srtBonding.legs.length;
+    return broken > 0 ? ` (${broken}/${total} legs down)` : '';
+}
+
 function getBondingIndicator(
     pipeline: PipelineView,
     relayProcessRunning: boolean,
@@ -240,6 +251,7 @@ function getBondingIndicator(
     const hasForwardedData = srtBonding.forwardedPackets > 0;
     const acceptedBySrs = isRelayAcceptedBySrs(pipeline);
     const publishConflict = hasRelayPublishConflict(pipeline);
+    const legsDegraded = brokenLegCount(pipeline) > 0;
 
     if (!relayProcessRunning) {
         return {
@@ -257,9 +269,11 @@ function getBondingIndicator(
         hasRecentOutputFlow
     ) {
         return {
-            leftColor: STATUS_COLOR_GOOD,
+            leftColor: legsDegraded ? STATUS_COLOR_WARN : STATUS_COLOR_GOOD,
             rightColor: STATUS_COLOR_GOOD,
-            title: 'Bonded SRT input active and forwarding to downstream output',
+            title:
+                `Bonded SRT input active and forwarding to downstream output` +
+                (legsDegraded ? legsDegradedSuffix(pipeline) + ' — redundancy reduced' : ''),
         };
     }
 
@@ -287,12 +301,15 @@ function getBondingIndicator(
     }
 
     if (srtBonding.inputActive) {
+        const reason = srtBonding.lastError
+            ? `: ${srtBonding.lastError}`
+            : srtBonding.retryFailures > 0
+              ? ` (${srtBonding.retryFailures} retries)`
+              : '';
         return {
             leftColor: hasRecentInputFlow ? STATUS_COLOR_GOOD : STATUS_COLOR_WARN,
             rightColor: STATUS_COLOR_ERROR,
-            title:
-                `Bonded SRT input active, relay output reconnecting` +
-                (srtBonding.retryFailures > 0 ? ` (${srtBonding.retryFailures} retries)` : ''),
+            title: `Bonded SRT input active, relay output reconnecting${reason}`,
         };
     }
 
@@ -354,7 +371,8 @@ function isLoopbackIp(ip: string): boolean {
 function relayInputStatus(pipeline: PipelineView, relayProcessRunning: boolean): RelayFlowStatus {
     if (!relayProcessRunning) return 'off';
     if (!pipeline.srtBonding.inputActive) return 'off';
-    return relayHasRecentInputFlow(pipeline) ? 'good' : 'warn';
+    if (!relayHasRecentInputFlow(pipeline)) return 'warn';
+    return brokenLegCount(pipeline) > 0 ? 'warn' : 'good';
 }
 
 function relayOutputStatus(pipeline: PipelineView, relayProcessRunning: boolean): RelayFlowStatus {
@@ -364,6 +382,35 @@ function relayOutputStatus(pipeline: PipelineView, relayProcessRunning: boolean)
     if (!pipeline.srtBonding.outputConnected) return 'error';
     if (!isRelayAcceptedBySrs(pipeline)) return 'warn';
     return relayHasRecentOutputFlow(pipeline) ? 'good' : 'warn';
+}
+
+function legStateDotColor(state: SrtBondingLeg['state']): string {
+    switch (state) {
+        case 'running':
+            return STATUS_COLOR_GOOD;
+        case 'idle':
+        case 'pending':
+            return STATUS_COLOR_WARN;
+        case 'broken':
+            return STATUS_COLOR_ERROR;
+        default:
+            return STATUS_COLOR_OFF;
+    }
+}
+
+function renderLegsCompact(legs: SrtBondingLeg[]): string {
+    if (legs.length === 0) return '<span class="opacity-50">—</span>';
+    return `<span class="inline-flex flex-wrap items-center gap-x-2 gap-y-0.5">${legs
+        .map((leg) => {
+            const color = legStateDotColor(leg.state);
+            return (
+                `<span class="inline-flex items-center gap-1" title="${leg.ip}:${leg.port} — ${leg.state}">` +
+                `<span class="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style="background:${color}"></span>` +
+                `<span class="font-mono text-xs">${leg.ip}</span>` +
+                `</span>`
+            );
+        })
+        .join('')}</span>`;
 }
 
 function relayStatusBadge(
@@ -790,7 +837,7 @@ function renderOverview(): void {
     );
     let relayRows = '';
     if (activeRelayPipelines.length === 0) {
-        relayRows = `<tr><td colspan="10" class="py-4 text-center opacity-50">No active SRT bonding relay sessions.</td></tr>`;
+        relayRows = `<tr><td colspan="11" class="py-4 text-center opacity-50">No active SRT bonding relay sessions.</td></tr>`;
     } else {
         for (const p of activeRelayPipelines) {
             const inputSt = relayInputStatus(p, relayProcessRunning);
@@ -798,18 +845,21 @@ function renderOverview(): void {
             const rowWarn = inputSt === 'warn' || outputSt === 'warn';
             const rowError = inputSt === 'error' || outputSt === 'error';
             const rxPackets = p.srtBonding.recvUniquePacketsTotal || p.srtBonding.recvPacketsTotal;
+            const fmtRtt = (ms: number | null): string =>
+                ms != null ? `${ms.toFixed(ms >= 10 ? 0 : 1)} ms` : '—';
 
             relayRows += `<tr class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(rowError, rowWarn)}>
                 <td class="overview-name-col font-semibold">${p.name}</td>
                 <td>${relayStatusBadge(inputSt, { good: 'Active', warn: 'Stalled', error: 'Error', off: 'Idle' })}</td>
                 <td>${relayStatusBadge(outputSt, { good: 'Forwarding', warn: 'Pending', error: 'Not accepted', off: 'Idle' })}</td>
+                <td>${renderLegsCompact(p.srtBonding.legs)}</td>
                 <td class="font-mono text-xs">${formatCompactCount(rxPackets)}</td>
                 <td class="font-mono text-xs">${formatCompactCount(p.srtBonding.forwardedPackets)}</td>
                 <td class="font-mono text-xs">${formatCompactCount(p.srtBonding.retransTotal)}</td>
                 <td class="font-mono text-xs">${formatCompactCount(p.srtBonding.recvLossTotal)}</td>
                 <td class="font-mono text-xs">${formatCompactCount(p.srtBonding.recvDropTotal)}</td>
                 <td class="font-mono text-xs">${formatBytesCompact(p.srtBonding.forwardedBytes)}</td>
-                <td class="font-mono text-xs">${p.srtBonding.rttMs != null ? `${p.srtBonding.rttMs.toFixed(p.srtBonding.rttMs >= 10 ? 0 : 1)} ms` : '—'}</td>
+                <td class="font-mono text-xs">${fmtRtt(p.srtBonding.inputRttMs)} / ${fmtRtt(p.srtBonding.outputRttMs)}</td>
             </tr>`;
         }
     }
@@ -964,7 +1014,7 @@ function renderOverview(): void {
         <h2 class="mb-2 text-lg font-bold">SRT Bonding Relay <span class="badge badge-neutral badge-sm ml-1">${activeRelayPipelines.length}</span></h2>
         <div class="overflow-x-auto mb-6">
             <table class="table table-sm">
-                ${thead(['Pipeline', 'Input', 'Output', 'Rx', 'Fwd', 'Rexmit', 'Loss', 'Drop', 'Bytes', 'RTT'])}
+                ${thead(['Pipeline', 'Input', 'Output', 'Legs', 'Rx', 'Fwd', 'Rexmit', 'Loss', 'Drop', 'Bytes', 'In/Out RTT'])}
                 <tbody>${relayRows}</tbody>
             </table>
         </div>
@@ -1416,6 +1466,8 @@ function renderPipelineInfo(selectedId: string | null): void {
     const bondingDotFill = document.getElementById('srt-bonding-status-fill');
     const bondingUrl = document.getElementById('srt-bonding-url');
     const bondingStats = document.getElementById('srt-bonding-stats');
+    const bondingOutputStats = document.getElementById('srt-bonding-output-stats');
+    const bondingLegs = document.getElementById('srt-bonding-legs');
     const bondingErrWrap = document.getElementById('srt-bonding-last-error-wrap');
     const bondingErrTs = document.getElementById('srt-bonding-last-error-ts');
     const bondingErr = document.getElementById('srt-bonding-last-error');
@@ -1498,14 +1550,14 @@ function renderPipelineInfo(selectedId: string | null): void {
                           label: 'Drop',
                           value: formatCompactCount(pipeline.srtBonding.recvDropTotal),
                       },
-                      ...(pipeline.srtBonding.rttMs != null
+                      ...(pipeline.srtBonding.inputRttMs != null
                           ? [
                                 {
-                                    label: 'RTT',
+                                    label: 'In RTT',
                                     labelTitle:
-                                        'Estimated round-trip time between the upstream bonded SRT sender and this relay.',
-                                    value: `${pipeline.srtBonding.rttMs.toFixed(
-                                        pipeline.srtBonding.rttMs >= 10 ? 0 : 1,
+                                        'Estimated round-trip time between the upstream bonded SRT sender and this relay (combined group).',
+                                    value: `${pipeline.srtBonding.inputRttMs.toFixed(
+                                        pipeline.srtBonding.inputRttMs >= 10 ? 0 : 1,
                                     )}ms`,
                                 },
                             ]
@@ -1514,6 +1566,80 @@ function renderPipelineInfo(selectedId: string | null): void {
                   'input-meta-row-sm',
               )
             : '';
+    }
+    if (bondingOutputStats) {
+        const b = pipeline.srtBonding;
+        const hasOutputStats =
+            relayProcessRunning && (bondingOutputConnected || b.outputSentPacketsTotal > 0);
+        bondingOutputStats.innerHTML = hasOutputStats
+            ? renderCompactMetaRow(
+                  [
+                      {
+                          label: 'Out RTT',
+                          labelTitle:
+                              'Round-trip time on the single downstream SRT connection from the relay to SRS (output is never bonded).',
+                          value:
+                              b.outputRttMs != null
+                                  ? `${b.outputRttMs.toFixed(b.outputRttMs >= 10 ? 0 : 1)}ms`
+                                  : '—',
+                      },
+                      {
+                          label: 'Out Sent',
+                          labelTitle: 'Packets sent on the downstream output connection.',
+                          value: `${formatCompactCount(b.outputSentPacketsTotal)} pkts`,
+                      },
+                      {
+                          label: 'Out Loss',
+                          labelTitle:
+                              'Send-side loss reported by SRT on the downstream output connection.',
+                          value: formatCompactCount(b.outputSendLossTotal),
+                      },
+                      {
+                          label: 'Out Drop',
+                          labelTitle:
+                              'Send-side drops reported by SRT on the downstream output connection.',
+                          value: formatCompactCount(b.outputSendDropTotal),
+                      },
+                      {
+                          label: 'Out Rexmit',
+                          labelTitle: 'Retransmissions on the downstream output connection.',
+                          value: formatCompactCount(b.outputRetransTotal),
+                      },
+                  ],
+                  'input-meta-row-sm',
+              )
+            : '';
+    }
+    if (bondingLegs) {
+        const legs = pipeline.srtBonding.legs;
+        bondingLegs.innerHTML =
+            legs.length === 0
+                ? ''
+                : `<div class="text-xs font-semibold opacity-60 mb-1">Bonded legs (${legs.length})</div>
+                   <div class="overflow-x-auto">
+                   <table class="table table-xs">
+                       <thead><tr>
+                           <th>IP</th><th>Port</th><th>State</th><th>RTT</th>
+                           <th>Rx</th><th>Loss</th><th>Drop</th><th>Rexmit</th>
+                       </tr></thead>
+                       <tbody>${legs
+                           .map((leg) => {
+                               const color = legStateDotColor(leg.state);
+                               const rx = leg.recvUniquePacketsTotal ?? leg.recvPacketsTotal;
+                               return `<tr>
+                                   <td class="font-mono text-xs">${leg.ip}</td>
+                                   <td class="font-mono text-xs">${leg.port}</td>
+                                   <td><span class="inline-flex items-center gap-1"><span class="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style="background:${color}"></span>${leg.state}</span></td>
+                                   <td class="font-mono text-xs">${leg.rttMs != null ? `${leg.rttMs.toFixed(leg.rttMs >= 10 ? 0 : 1)}ms` : '—'}</td>
+                                   <td class="font-mono text-xs">${rx != null ? formatCompactCount(rx) : '—'}</td>
+                                   <td class="font-mono text-xs">${leg.recvLossTotal != null ? formatCompactCount(leg.recvLossTotal) : '—'}</td>
+                                   <td class="font-mono text-xs">${leg.recvDropTotal != null ? formatCompactCount(leg.recvDropTotal) : '—'}</td>
+                                   <td class="font-mono text-xs">${leg.retransTotal != null ? formatCompactCount(leg.retransTotal) : '—'}</td>
+                               </tr>`;
+                           })
+                           .join('')}</tbody>
+                   </table>
+                   </div>`;
     }
     if (bondingErrWrap && bondingErr && bondingErrTs) {
         const msg = pipeline.srtBonding.lastError;

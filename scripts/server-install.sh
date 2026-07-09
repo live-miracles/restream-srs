@@ -35,9 +35,9 @@ SRS_SHA256="1eb20245a76643b2d32a1be85e71015079689a0733a10f79964f9a8189c21609"
 SRS_URL="https://github.com/ossrs/srs/releases/download/${SRS_RELEASE_TAG}/${SRS_FILENAME}"
 
 # Pinned srt-bonding-relay binary — published from the standalone relay repo.
-SRT_RELEASE_TAG="${SRT_RELEASE_TAG:-v1.0.6}"
+SRT_RELEASE_TAG="${SRT_RELEASE_TAG:-v2.0.0}"
 SRT_FILENAME="srt-bonding-relay-linux-x86_64.tar.gz"
-SRT_SHA256="${SRT_SHA256:-e8fa6c3e73dbeae1bb73ab7651ee55c9660dad7225abb23b4c97e87d9a8f5b60}"
+SRT_SHA256="${SRT_SHA256:-927b3881712b8de568b016d0706592395e5edc011f5344b1d84cfece5de861cc}"
 SRT_URL="${SRT_URL:-https://github.com/live-miracles/srt-bonding-relay/releases/download/${SRT_RELEASE_TAG}/${SRT_FILENAME}}"
 
 # FFmpeg is pinned to a specific immutable BtbN build (a month-end autobuild tag,
@@ -291,9 +291,32 @@ maxretry = 5
 findtime = 600
 bantime = 3600
 EOF
+
+# Bans IPs that repeatedly fail the SRT passphrase handshake against the
+# bonding relay's own listener (10081). This is a separate journald unit
+# from restream-srs.service, so it needs its own filter/jail; the log format
+# is emitted by srt-bonding-relay's srt_accept() KMSTATE check.
+cat > /etc/fail2ban/filter.d/srt-bonding-relay.conf <<'EOF'
+[Definition]
+failregex = ^\[srt-relay\] rejected connection \(bad passphrase\) from <HOST>:
+journalmatch = _SYSTEMD_UNIT=srt-bonding-relay.service
+EOF
+cat > /etc/fail2ban/jail.d/srt-bonding-relay.local <<'EOF'
+[srt-bonding-relay]
+enabled = true
+backend = systemd
+filter = srt-bonding-relay
+# Ban on all ports: an IP brute-forcing the SRT passphrase has no legitimate use here.
+banaction = iptables-allports
+maxretry = 5
+findtime = 600
+bantime = 3600
+EOF
+
 systemctl enable fail2ban
 systemctl restart fail2ban
 echo "fail2ban: jail 'restream-srs' active (5 rejected publishes/plays in 10 min => 1 h ban)"
+echo "fail2ban: jail 'srt-bonding-relay' active (5 bad SRT passphrases in 10 min => 1 h ban)"
 
 # Lets the dashboard (Settings -> IP Whitelist) keep trusted IPs out of the
 # jail above and unban them live, without restarting fail2ban or
@@ -305,8 +328,7 @@ cat > /usr/local/sbin/restream-srs-fail2ban-apply <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-JAIL=restream-srs
-CONF=/etc/fail2ban/jail.d/restream-srs-whitelist.local
+JAILS=(restream-srs srt-bonding-relay)
 
 if [[ "${1:-}" != "sync" ]]; then
     echo "usage: $0 sync <ip-or-cidr> [...]" >&2
@@ -342,39 +364,130 @@ for ip in "$@"; do
     }
 done
 
-# Fail2ban reads this file itself on its own next (re)start, so this write
-# alone is enough regardless of whether fail2ban is up right now.
-TMP_CONF="$(mktemp "${CONF}.XXXXXX")"
-{
-    echo "[$JAIL]"
-    if [[ $# -gt 0 ]]; then
-        printf 'ignoreip = %s\n' "$*"
-    fi
-} > "$TMP_CONF"
-chmod 644 "$TMP_CONF"
-mv "$TMP_CONF" "$CONF"
+# Fail2ban reads these files itself on its own next (re)start, so this write
+# alone is enough regardless of whether fail2ban is up right now. Every jail
+# gets the same whitelist so a trusted IP is exempt everywhere, not just on
+# whichever jail happened to ban it first.
+for JAIL in "${JAILS[@]}"; do
+    CONF="/etc/fail2ban/jail.d/${JAIL}-whitelist.local"
+    TMP_CONF="$(mktemp "${CONF}.XXXXXX")"
+    {
+        echo "[$JAIL]"
+        if [[ $# -gt 0 ]]; then
+            printf 'ignoreip = %s\n' "$*"
+        fi
+    } > "$TMP_CONF"
+    chmod 644 "$TMP_CONF"
+    mv "$TMP_CONF" "$CONF"
+done
 
 # Below is the live half, needed only to apply/unban immediately.
 if ! fail2ban-client ping >/dev/null 2>&1; then
-    echo "fail2ban is not running; whitelist file written and will apply once it starts" >&2
+    echo "fail2ban is not running; whitelist files written and will apply once it starts" >&2
     exit 1
 fi
 
-fail2ban-client reload "$JAIL" >/dev/null
+for JAIL in "${JAILS[@]}"; do
+    fail2ban-client reload "$JAIL" >/dev/null
 
-# ignoreip only stops *future* bans; an IP just added to the whitelist that's
-# already sitting in the jail needs an explicit unban. unbanip errors on an
-# IP that isn't currently banned, which is the common case, so ignore that.
-for ip in "$@"; do
-    fail2ban-client set "$JAIL" unbanip "$ip" >/dev/null 2>&1 || true
+    # ignoreip only stops *future* bans; an IP just added to the whitelist that's
+    # already sitting in the jail needs an explicit unban. unbanip errors on an
+    # IP that isn't currently banned, which is the common case, so ignore that.
+    for ip in "$@"; do
+        fail2ban-client set "$JAIL" unbanip "$ip" >/dev/null 2>&1 || true
+    done
 done
 EOF
 chown root:root /usr/local/sbin/restream-srs-fail2ban-apply
 chmod 755 /usr/local/sbin/restream-srs-fail2ban-apply
 
+# Read-only counterpart: lets the dashboard show currently banned IPs (which
+# jail, when banned, when they'll be unbanned, and the log line that triggered
+# it). `fail2ban-client status` gives the live banned-IP list; ban/unban times
+# and the triggering match come from fail2ban's own sqlite ban database, which
+# is root-only for the same reason as the control socket. Both reads are
+# combined into one script so the dashboard needs only a single sudo call.
+cat > /usr/local/sbin/restream-srs-fail2ban-status <<'PYEOF'
+#!/usr/bin/env python3
+import json
+import re
+import sqlite3
+import subprocess
+import sys
+
+JAILS = ["restream-srs", "srt-bonding-relay"]
+DB_PATH = "/var/lib/fail2ban/fail2ban.sqlite3"
+
+
+def banned_ips(jail):
+    try:
+        out = subprocess.run(
+            ["fail2ban-client", "status", jail],
+            capture_output=True, text=True, timeout=10, check=True,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return []
+    m = re.search(r"Banned IP list:\s*(.*)", out.stdout)
+    return m.group(1).split() if m else []
+
+
+def ban_record(conn, jail, ip):
+    if conn is None:
+        return None
+    row = conn.execute(
+        "SELECT timeofban, bantime, data FROM bans WHERE jail = ? AND ip = ? "
+        "ORDER BY timeofban DESC LIMIT 1",
+        (jail, ip),
+    ).fetchone()
+    if not row:
+        return None
+    timeofban, bantime, data = row
+    reason = None
+    if data:
+        try:
+            matches = json.loads(data).get("matches") or []
+            if matches:
+                reason = matches[-1].strip()
+        except (ValueError, AttributeError):
+            reason = None
+    unban_at = None
+    if bantime is not None and int(bantime) >= 0:
+        unban_at = (int(timeofban) + int(bantime)) * 1000
+    return {"bannedAt": int(timeofban) * 1000, "unbanAt": unban_at, "reason": reason}
+
+
+def main():
+    try:
+        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+    except sqlite3.Error:
+        conn = None
+
+    results = []
+    for jail in JAILS:
+        for ip in banned_ips(jail):
+            record = ban_record(conn, jail, ip) or {}
+            results.append({
+                "ip": ip,
+                "jail": jail,
+                "bannedAt": record.get("bannedAt"),
+                "unbanAt": record.get("unbanAt"),
+                "reason": record.get("reason"),
+            })
+
+    if conn is not None:
+        conn.close()
+    json.dump(results, sys.stdout)
+
+
+if __name__ == "__main__":
+    main()
+PYEOF
+chown root:root /usr/local/sbin/restream-srs-fail2ban-status
+chmod 755 /usr/local/sbin/restream-srs-fail2ban-status
+
 SUDOERS_TMP="$WORK/restream-srs-fail2ban.sudoers"
 cat > "$SUDOERS_TMP" <<EOF
-$SERVICE_USER ALL=(root) NOPASSWD: /usr/local/sbin/restream-srs-fail2ban-apply
+$SERVICE_USER ALL=(root) NOPASSWD: /usr/local/sbin/restream-srs-fail2ban-apply, /usr/local/sbin/restream-srs-fail2ban-status
 EOF
 if ! visudo -cf "$SUDOERS_TMP"; then
     echo "ERROR: generated sudoers rule for fail2ban whitelisting failed validation" >&2
@@ -382,6 +495,7 @@ if ! visudo -cf "$SUDOERS_TMP"; then
 fi
 install -m 0440 -o root -g root "$SUDOERS_TMP" /etc/sudoers.d/restream-srs-fail2ban
 echo "fail2ban: dashboard IP whitelist wired up (Settings -> IP Whitelist)"
+echo "fail2ban: dashboard ban list wired up (Settings -> Currently Banned)"
 
 step "11/11 Systemd"
 cat > /etc/systemd/system/srs.service <<EOF
