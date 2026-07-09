@@ -103,6 +103,19 @@ export async function withBusy(
     }
 }
 
+// Briefly reveals a green checkmark next to a Save button as confirmation,
+// then hides it again. Safe to call repeatedly in quick succession.
+export function flashSaveSuccess(id: string): void {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.remove('hidden');
+    const existingTimer = Number(el.dataset.flashTimer);
+    if (existingTimer) window.clearTimeout(existingTimer);
+    el.dataset.flashTimer = String(
+        window.setTimeout(() => el.classList.add('hidden'), 1000),
+    );
+}
+
 export async function copyText(text: string): Promise<void> {
     try {
         if (navigator.clipboard) {

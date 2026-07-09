@@ -1,6 +1,6 @@
 import * as api from '../core/api.js';
 import { state } from '../core/state.js';
-import { setUrlParam, maskStreamKey, withBusy, copyText, escapeHtml } from '../core/utils.js';
+import { setUrlParam, maskStreamKey, withBusy, copyText, escapeHtml, flashSaveSuccess } from '../core/utils.js';
 import { refreshAfterMutation } from './dashboard.js';
 import type { StreamKey, AudioTrackInfo, HostProbeTarget, Fail2banBansData } from '../types.js';
 
@@ -308,6 +308,7 @@ export async function submitGeneralSettingsForm(btn?: HTMLButtonElement): Promis
         if (el) el.textContent = name;
         document.title = name;
         await refreshAfterMutation();
+        flashSaveSuccess('settings-general-save-success');
     });
 }
 
@@ -319,6 +320,7 @@ export async function submitHostProbesForm(btn?: HTMLButtonElement): Promise<voi
         const result = await api.updateHostProbes(hostProbeTargets);
         if (!result) return;
         await refreshAfterMutation();
+        flashSaveSuccess('settings-host-probes-save-success');
     });
 }
 
@@ -330,6 +332,7 @@ export async function submitWhitelistForm(btn?: HTMLButtonElement): Promise<void
         const result = await api.updateWhitelist(whitelistIps);
         if (!result) return;
         await refreshAfterMutation();
+        flashSaveSuccess('settings-whitelist-save-success');
 
         // Settings still saved even if this failed (see src/api/settings.ts) —
         // surface it so a stale/unreachable fail2ban doesn't fail silently.
@@ -358,6 +361,7 @@ export async function submitPasswordForm(btn?: HTMLButtonElement): Promise<void>
         (document.getElementById('current-password-input') as HTMLInputElement).value = '';
         (document.getElementById('new-password-input') as HTMLInputElement).value = '';
         (document.getElementById('confirm-password-input') as HTMLInputElement).value = '';
+        flashSaveSuccess('settings-password-save-success');
     });
 }
 
