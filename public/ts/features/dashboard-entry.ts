@@ -1,11 +1,6 @@
 import { getUrlParam, setUrlParam, copyText } from '../core/utils.js';
 import { state } from '../core/state.js';
-import {
-    invalidateHostProbes,
-    refreshDashboard,
-    refreshAfterMutation,
-    refreshHostProbes,
-} from './dashboard.js';
+import { refreshDashboard, refreshHostProbes } from './dashboard.js';
 import {
     openSettings,
     addHostProbeRow,
@@ -73,15 +68,9 @@ declare global {
         previewMuteBtn: () => void;
         previewReloadBtn: () => void;
         previewMaximizeBtn: () => void;
-        reloadConfigBtn: () => Promise<void>;
         refreshHostConnectionsBtn: () => Promise<void>;
     }
 }
-
-// Refetch config (and re-render) after the config was changed by another client.
-// refreshAfterMutation invalidates the cached config so it is reloaded, which
-// resyncs the loaded configRev and clears the "config changed" banner.
-window.reloadConfigBtn = () => refreshAfterMutation();
 
 window.openSrsLogsBtn = () => showSrsLogs();
 window.openHostConnectionsBtn = async () => {
