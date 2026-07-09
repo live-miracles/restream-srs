@@ -1596,7 +1596,6 @@ function renderPipelineInfo(selectedId: string | null): void {
     const bondingDotFill = document.getElementById('srt-bonding-status-fill');
     const bondingUrl = document.getElementById('srt-bonding-url');
     const bondingStats = document.getElementById('srt-bonding-stats');
-    const bondingOutputStats = document.getElementById('srt-bonding-output-stats');
     const bondingLegs = document.getElementById('srt-bonding-legs');
     const bondingErrWrap = document.getElementById('srt-bonding-last-error-wrap');
     const bondingErrTs = document.getElementById('srt-bonding-last-error-ts');
@@ -1640,62 +1639,55 @@ function renderPipelineInfo(selectedId: string | null): void {
         bondingUrl.dataset.passphrase = state.config.srtPassphrase || '';
     }
     if (bondingStats) {
-        const rxPkts =
-            pipeline.srtBonding.recvUniquePacketsTotal || pipeline.srtBonding.recvPacketsTotal;
+        const b = pipeline.srtBonding;
+        const rxPkts = b.recvUniquePacketsTotal || b.recvPacketsTotal;
         const hasSessionStats =
-            relayProcessRunning &&
-            (bondingInputActive || rxPkts > 0 || pipeline.srtBonding.retransTotal > 0);
-        bondingStats.innerHTML = hasSessionStats
-            ? renderCompactMetaRow(
-                  [
+            relayProcessRunning && (bondingInputActive || rxPkts > 0 || b.retransTotal > 0);
+        const hasOutputStats =
+            relayProcessRunning && (bondingOutputConnected || b.outputSentPacketsTotal > 0);
+        const items = [
+            ...(hasSessionStats
+                ? [
                       {
                           label: 'SRS Pub',
                           labelTitle:
                               'The publisher SRS reports as active for this stream key. "local output" means another pipeline output is occupying the stream locally.',
-                          value: pipeline.srtBonding.localSrtPublisherConflict
+                          value: b.localSrtPublisherConflict
                               ? 'local output'
-                              : pipeline.srtBonding.srsPublisher
-                                ? `${pipeline.srtBonding.srsPublisher.ip ?? 'unknown'} ${pipeline.srtBonding.srsPublisher.type ?? ''}`.trim()
+                              : b.srsPublisher
+                                ? `${b.srsPublisher.ip ?? 'unknown'} ${b.srsPublisher.type ?? ''}`.trim()
                                 : '—',
                       },
                       {
                           label: 'Rx',
                           labelTitle:
                               'Unique data packets received from the upstream bonded SRT input, with a fallback to total received packets when needed.',
-                          value: `${formatCompactCount(rxPkts)} pkts`,
+                          value: formatCompactCount(rxPkts),
                       },
                       {
                           label: 'Loss',
                           labelTitle:
                               'Packets detected as missing on the upstream bonded SRT input receiver.',
-                          value: formatCompactCount(pipeline.srtBonding.recvLossTotal),
+                          value: formatCompactCount(b.recvLossTotal),
                       },
                       {
                           label: 'Rexmit',
                           labelTitle:
                               'Receive-side retransmission metric from the upstream bonded SRT input. Depending on the SRT library build, this may behave like a local/windowed stat rather than a lifetime total.',
-                          value: formatCompactCount(pipeline.srtBonding.retransTotal),
+                          value: formatCompactCount(b.retransTotal),
                       },
                       {
                           label: 'Drop',
-                          value: formatCompactCount(pipeline.srtBonding.recvDropTotal),
+                          value: formatCompactCount(b.recvDropTotal),
                       },
-                  ],
-                  'input-meta-row-sm',
-              )
-            : '';
-    }
-    if (bondingOutputStats) {
-        const b = pipeline.srtBonding;
-        const hasOutputStats =
-            relayProcessRunning && (bondingOutputConnected || b.outputSentPacketsTotal > 0);
-        bondingOutputStats.innerHTML = hasOutputStats
-            ? renderCompactMetaRow(
-                  [
+                  ]
+                : []),
+            ...(hasOutputStats
+                ? [
                       {
                           label: 'Out Sent',
                           labelTitle: 'Packets sent on the downstream output connection.',
-                          value: `${formatCompactCount(b.outputSentPacketsTotal)} pkts`,
+                          value: formatCompactCount(b.outputSentPacketsTotal),
                       },
                       {
                           label: 'Out Loss',
@@ -1704,20 +1696,21 @@ function renderPipelineInfo(selectedId: string | null): void {
                           value: formatCompactCount(b.outputSendLossTotal),
                       },
                       {
+                          label: 'Out Rexmit',
+                          labelTitle: 'Retransmissions on the downstream output connection.',
+                          value: formatCompactCount(b.outputRetransTotal),
+                      },
+                      {
                           label: 'Out Drop',
                           labelTitle:
                               'Send-side drops reported by SRT on the downstream output connection.',
                           value: formatCompactCount(b.outputSendDropTotal),
                       },
-                      {
-                          label: 'Out Rexmit',
-                          labelTitle: 'Retransmissions on the downstream output connection.',
-                          value: formatCompactCount(b.outputRetransTotal),
-                      },
-                  ],
-                  'input-meta-row-sm',
-              )
-            : '';
+                  ]
+                : []),
+        ];
+        bondingStats.innerHTML =
+            items.length > 0 ? renderCompactMetaRow(items, 'input-meta-row-sm') : '';
     }
     if (bondingLegs) {
         const legs = pipeline.srtBonding.legs;
