@@ -35,7 +35,7 @@ declare global {
     interface Window {
         openSrsLogsBtn: () => Promise<void>;
         openHostConnectionsBtn: () => Promise<void>;
-        openSettingsBtn: () => void;
+        openSettingsBtn: () => Promise<void>;
         addHostProbeRowBtn: () => void;
         removeHostProbeRowBtn: (slot: number) => void;
         addWhitelistIpRowBtn: () => void;
@@ -80,7 +80,13 @@ window.showProblemsOverviewBtn = () => {
     window.selectPipeline(null);
 };
 
-window.openSrsLogsBtn = () => showSrsLogs();
+window.openSrsLogsBtn = async () => {
+    void import('./preview.js').then(({ stopCurrentPreview }) => stopCurrentPreview());
+    setUrlParam('p', null);
+    setUrlParam('view', 'logs');
+    await refreshDashboard();
+    await showSrsLogs();
+};
 window.openHostConnectionsBtn = async () => {
     void import('./preview.js').then(({ stopCurrentPreview }) => stopCurrentPreview());
     setUrlParam('p', null);
@@ -90,7 +96,13 @@ window.openHostConnectionsBtn = async () => {
 window.refreshHostConnectionsBtn = async () => {
     await refreshHostProbes();
 };
-window.openSettingsBtn = () => openSettings();
+window.openSettingsBtn = async () => {
+    void import('./preview.js').then(({ stopCurrentPreview }) => stopCurrentPreview());
+    setUrlParam('p', null);
+    setUrlParam('view', 'settings');
+    await refreshDashboard();
+    openSettings();
+};
 window.addHostProbeRowBtn = () => addHostProbeRow();
 window.removeHostProbeRowBtn = (slot) => removeHostProbeRow(slot);
 window.addWhitelistIpRowBtn = () => addWhitelistIpRow();
@@ -206,3 +218,15 @@ window.previewReloadBtn = () => {
 window.previewMaximizeBtn = () => {
     void import('./preview.js').then(({ togglePreviewMaximize }) => togglePreviewMaximize());
 };
+
+// A page load can start directly on ?view=settings or ?view=logs (bookmark,
+// reload). Those views are otherwise only populated when the user clicks the
+// corresponding navbar button, so without this they'd render as an empty
+// column until that click happens.
+void (async () => {
+    const initialView = getUrlParam('view');
+    if (initialView !== 'settings' && initialView !== 'logs') return;
+    await refreshDashboard();
+    if (initialView === 'settings') openSettings();
+    else await showSrsLogs();
+})();
