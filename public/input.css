@@ -3,7 +3,7 @@
     themes: dim;
 }
 
-#overview-col .table th:first-child,
+#overview-col .table:not(.table-relay) th:first-child,
 #overview-col .overview-name-col {
     min-width: 11rem;
 }
