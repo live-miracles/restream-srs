@@ -45,7 +45,6 @@ app.use(
 app.use(express.json());
 
 const db = createDb();
-initializePassword(db);
 
 const inputState = createInputState();
 const outputService = createOutputService(db, inputState);
@@ -128,6 +127,10 @@ app.use(
 );
 
 async function main(): Promise<void> {
+    // Must finish before listen(): seeds the default password hash and loads
+    // persisted sessions, which the auth middleware consults on every request.
+    await initializePassword(db);
+
     srtRelayService.start();
     healthService.start();
     hostProbeService.start();
