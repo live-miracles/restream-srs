@@ -296,6 +296,7 @@ The app reads runtime settings from `restream.json` in the app root.
 | `output_watchdog.interval_ms` | `5000` | Output watchdog polling interval |
 | `output_watchdog.socket_warmup_ms` | `15000` | Socket watchdog warmup before socket-state checks |
 | `output_watchdog.socket_grace_ms` | `30000` | Socket warning grace window before restarting FFmpeg |
+| `output_watchdog.memory_limit_mb` | `500` | FFmpeg RSS limit (MB) before an output is killed and restarted |
 
 Relative file paths are resolved from the app root. Command names like `ffmpeg`
 and `ffprobe` are left as command names.
@@ -369,12 +370,13 @@ The app runs these recovery loops:
 | Health poll / input recovery | SRS reachability, live pipeline inputs, desired running outputs | When SRS and the pipeline input become ready, outputs whose desired state is `running` are started or restarted with staggered timing | Computed once every 5s and shared by dashboard clients. RTMP inputs become live from SRS stream metadata (codec, dimensions, positive FPS). SRT inputs are probe-gated by ffprobe. |
 | Output progress watchdog | Every running FFmpeg output process | After warmup, if the input is ready but FFmpeg `total_size` / `out_time_ms` stop advancing for the configured stall window | Protocol-agnostic backstop; covers SRT outputs and local RTMP relays |
 | Remote RTMP socket watchdog | Running outputs with remote RTMP/RTMPS sinks | After socket warmup and grace, if the destination socket is missing or remains in a closing state such as `CLOSE-WAIT` | Uses one `ss -H -tanp` snapshot per watchdog interval; local RTMP/RTMPS sinks are ignored because local input/output sockets are ambiguous |
+| Output memory watchdog | Every running FFmpeg output process | After warmup, if process RSS crosses `memory_limit_mb` | Reads `/proc/<pid>/status`; unconditional — a leaking process can still show advancing `total_size`/healthy sockets, so this doesn't wait on the other two |
 
-Both output watchdogs use the same restart path: they write a detailed
+All three output watchdogs use the same restart path: they write a detailed
 `last_error`, kill the stuck FFmpeg process, and let the normal retry loop start a
 fresh process while the output's desired state remains `running`. The socket
 watchdog is advisory: if `ss` fails or times out, it does not restart anything,
-and a socket warning does not prevent the output-progress watchdog from acting.
+and a socket warning does not prevent the other watchdogs from acting.
 
 Input media validation is separate from the output watchdogs. The health service
 stays on the regular 5s poll, but it validates media on its own cadence:
@@ -432,3 +434,33 @@ covered by the output-progress watchdog. For an output that fans out to multiple
 sinks, a partial failure may not be identified down to an individual sink if
 another sink keeps `total_size` / `out_time_ms` advancing and the socket state is
 ambiguous. The common remote one-output-to-one-destination case is fully covered.
+
+### A corrupt input can make an FFmpeg output leak memory (capped by a watchdog)
+
+On a glitchy SRT input (real packet loss/corruption upstream, not a passphrase or
+config issue — see the incident write-up below), FFmpeg's AAC decoder can
+misparse a corrupted frame as a bogus multichannel layout (logged as `[SWR]
+Full-on remixing from 22.2 has not yet been implemented!`). Reinitializing the
+resampler for that bogus layout leaks memory instead of failing cleanly, and RSS
+can grow unbounded — observed reaching 1.5-1.6GB before the kernel OOM-killer
+stepped in.
+
+That kernel-level kill is the actual danger, not the leak itself: FFmpeg output
+processes share a cgroup with the `restream-srs` control-plane service, so
+systemd treats any OOM kill inside that cgroup as the whole service failing and
+restarts it — which cascades (via `Requires=`) into restarting SRS and the SRT
+bonding relay too, forcing every stream on the box to reconnect simultaneously.
+That mass reconnect can reintroduce the same corrupt-resync conditions on another
+output, repeating the cycle. Full timeline and log evidence from the 2026-07-10
+incident: [`fail-reports/2026-07-10-pipeline1-output-oom-cascade.md`](fail-reports/2026-07-10-pipeline1-output-oom-cascade.md).
+
+**How it is handled:** two layers. `buildFfmpegArgs` passes `-fflags
++discardcorrupt -err_detect crccheck+bitstream` so packets already flagged
+broken by the demuxer are dropped before reaching the decoder, reducing (but not
+eliminating) the chance of the misparse happening at all. As a hard backstop,
+the output memory watchdog (see the watchdogs table above) kills and restarts an
+output once its RSS crosses `memory_limit_mb` (default 500MB — roughly 6-8x a
+healthy output's normal 65-90MB baseline, and far below the 1.5GB+ range where
+the kernel OOM-killer struck) — well before the kernel ever needs to get
+involved, so the cascading restart doesn't happen.
+
