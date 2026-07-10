@@ -17,6 +17,7 @@ export interface OutputWatchdogConfig {
     socketWarmupMs: number;
     socketGraceMs: number;
     memoryLimitMb: number;
+    memoryLimitMbByEncoding: Record<string, number>;
 }
 
 interface RawAppConfig {
@@ -35,11 +36,22 @@ const DEFAULT_WATCHDOG_CONFIG: OutputWatchdogConfig = {
     intervalMs: 5_000,
     socketWarmupMs: 15_000,
     socketGraceMs: 30_000,
-    // 6-8x the ~65-90MB a healthy output ffmpeg process runs at. Sized off the
-    // 2026-07-10 incident: a corrupt-input-triggered leak took ~40min to cross
-    // this from baseline, well before the ~1.5-1.6GB anon-rss the kernel OOM
-    // killer struck at — see fail-reports/2026-07-10-pipeline1-output-oom-cascade.md.
-    memoryLimitMb: 500,
+    // ~2-3x the ~65-90MB a healthy 'copy' (stream-copy, no transcode) output
+    // runs at. Sized off the 2026-07-10 incident: a corrupt-input-triggered leak
+    // took ~40min to cross the old 500MB limit from baseline, well before the
+    // ~1.5-1.6GB anon-rss the kernel OOM killer struck at — see
+    // fail-reports/2026-07-10-pipeline1-output-oom-cascade.md. Applies to 'copy'
+    // and any videoEncoding not listed in memoryLimitMbByEncoding below.
+    memoryLimitMb: 200,
+    // libx264 transcode profiles run at a much higher legitimate baseline than
+    // 'copy' (scale filter + encoder buffers), so they need their own limits —
+    // measured baselines on 2026-07-10: vertical_rotate ~254MB, 720p ~373MB,
+    // 1080p ~590MB. Each limit here is ~1.7-1.8x its measured baseline.
+    memoryLimitMbByEncoding: {
+        vertical_rotate: 450,
+        '720p': 650,
+        '1080p': 950,
+    },
 };
 const DEFAULT_RAW_CONFIG = {
     port: 8080,
@@ -65,6 +77,16 @@ function asPositiveNumber(value: unknown, fallback: number): number {
     return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+function asMemoryLimitMbByEncoding(value: unknown): Record<string, number> {
+    const raw = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+    const result: Record<string, number> = { ...DEFAULT_WATCHDOG_CONFIG.memoryLimitMbByEncoding };
+    for (const [encoding, limit] of Object.entries(raw)) {
+        const fallback = result[encoding] ?? DEFAULT_WATCHDOG_CONFIG.memoryLimitMb;
+        result[encoding] = asPositiveNumber(limit, fallback);
+    }
+    return result;
+}
+
 function readWatchdogConfig(value: unknown): OutputWatchdogConfig {
     const raw = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
     return {
@@ -77,6 +99,7 @@ function readWatchdogConfig(value: unknown): OutputWatchdogConfig {
         ),
         socketGraceMs: asPositiveNumber(raw.socket_grace_ms, DEFAULT_WATCHDOG_CONFIG.socketGraceMs),
         memoryLimitMb: asPositiveNumber(raw.memory_limit_mb, DEFAULT_WATCHDOG_CONFIG.memoryLimitMb),
+        memoryLimitMbByEncoding: asMemoryLimitMbByEncoding(raw.memory_limit_mb_by_encoding),
     };
 }
 
