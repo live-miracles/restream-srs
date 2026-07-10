@@ -9,6 +9,7 @@
         "stall_ms": 45000,
         "interval_ms": 5000,
         "socket_warmup_ms": 15000,
-        "socket_grace_ms": 30000
+        "socket_grace_ms": 30000,
+        "memory_limit_mb": 500
     }
 }

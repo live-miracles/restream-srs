@@ -16,6 +16,7 @@ export interface OutputWatchdogConfig {
     intervalMs: number;
     socketWarmupMs: number;
     socketGraceMs: number;
+    memoryLimitMb: number;
 }
 
 interface RawAppConfig {
@@ -34,6 +35,11 @@ const DEFAULT_WATCHDOG_CONFIG: OutputWatchdogConfig = {
     intervalMs: 5_000,
     socketWarmupMs: 15_000,
     socketGraceMs: 30_000,
+    // 6-8x the ~65-90MB a healthy output ffmpeg process runs at. Sized off the
+    // 2026-07-10 incident: a corrupt-input-triggered leak took ~40min to cross
+    // this from baseline, well before the ~1.5-1.6GB anon-rss the kernel OOM
+    // killer struck at — see fail-reports/2026-07-10-pipeline1-output-oom-cascade.md.
+    memoryLimitMb: 500,
 };
 const DEFAULT_RAW_CONFIG = {
     port: 8080,
@@ -55,18 +61,22 @@ function asString(value: unknown, fallback: string): string {
     return typeof value === 'string' && value.trim() ? value.trim() : fallback;
 }
 
-function asPositiveMs(value: unknown, fallback: number): number {
+function asPositiveNumber(value: unknown, fallback: number): number {
     return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
 function readWatchdogConfig(value: unknown): OutputWatchdogConfig {
     const raw = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
     return {
-        warmupMs: asPositiveMs(raw.warmup_ms, DEFAULT_WATCHDOG_CONFIG.warmupMs),
-        stallMs: asPositiveMs(raw.stall_ms, DEFAULT_WATCHDOG_CONFIG.stallMs),
-        intervalMs: asPositiveMs(raw.interval_ms, DEFAULT_WATCHDOG_CONFIG.intervalMs),
-        socketWarmupMs: asPositiveMs(raw.socket_warmup_ms, DEFAULT_WATCHDOG_CONFIG.socketWarmupMs),
-        socketGraceMs: asPositiveMs(raw.socket_grace_ms, DEFAULT_WATCHDOG_CONFIG.socketGraceMs),
+        warmupMs: asPositiveNumber(raw.warmup_ms, DEFAULT_WATCHDOG_CONFIG.warmupMs),
+        stallMs: asPositiveNumber(raw.stall_ms, DEFAULT_WATCHDOG_CONFIG.stallMs),
+        intervalMs: asPositiveNumber(raw.interval_ms, DEFAULT_WATCHDOG_CONFIG.intervalMs),
+        socketWarmupMs: asPositiveNumber(
+            raw.socket_warmup_ms,
+            DEFAULT_WATCHDOG_CONFIG.socketWarmupMs,
+        ),
+        socketGraceMs: asPositiveNumber(raw.socket_grace_ms, DEFAULT_WATCHDOG_CONFIG.socketGraceMs),
+        memoryLimitMb: asPositiveNumber(raw.memory_limit_mb, DEFAULT_WATCHDOG_CONFIG.memoryLimitMb),
     };
 }
 
