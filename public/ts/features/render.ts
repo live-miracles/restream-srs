@@ -868,7 +868,7 @@ function renderOverview(): void {
 
             const legs = p.srtBonding.legs;
             const rowspan = legs.length > 1 ? ` rowspan="${legs.length}"` : '';
-            const rowAttr = `class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(rowError, rowWarn)}`;
+            const rowAttr = `class="hover" ${statusBg(rowError, rowWarn)}`;
             const sharedCells = `
                 <td class="font-semibold"${rowspan}>${escapeHtml(p.name)}</td>
                 <td${rowspan}>${relayStatusBadge(inputSt, { good: 'Active', warn: 'Stalled', error: 'Error', off: 'Idle' })}</td>
@@ -925,7 +925,7 @@ function renderOverview(): void {
             const audioTracks = inp.audioTracks.length > 0 ? inp.audioTracks : null;
             const rowspan =
                 audioTracks && audioTracks.length > 1 ? ` rowspan="${audioTracks.length}"` : '';
-            const rowAttr = `class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(isError, isWarn)}`;
+            const rowAttr = `class="hover" ${statusBg(isError, isWarn)}`;
             const sharedCells = `
                 <td class="overview-name-col font-semibold"${rowspan}>${escapeHtml(p.name)}</td>
                 <td${rowspan}>${badge}</td>
@@ -1005,7 +1005,7 @@ function renderOverview(): void {
                 const isOn = o.status === 'running';
                 const media = isOn ? deriveOutputMedia(p.input, o) : null;
                 const outUptimeMs = o.startedAtMs !== null ? Date.now() - o.startedAtMs : null;
-                outputRows += `<tr class="hover cursor-pointer js-overview-select" data-id="${p.id}" ${statusBg(st === 'error', st === 'warn')}>
+                outputRows += `<tr class="hover" ${statusBg(st === 'error', st === 'warn')}>
                     <td class="overview-name-col"><span class="opacity-40 text-xs">${escapeHtml(p.name)} ·</span> ${escapeHtml(o.name)}</td>
                     <td>${badge}</td>
                     <td class="font-mono text-xs">${outUptimeMs !== null ? formatUptime(outUptimeMs) : '—'}</td>
@@ -1146,11 +1146,6 @@ function renderOverview(): void {
         state.overviewFilter = 'problems';
         renderOverview();
     });
-
-    overviewEl.onclick = (e) => {
-        const row = (e.target as Element).closest('.js-overview-select') as HTMLElement | null;
-        if (row?.dataset.id) window.selectPipeline(row.dataset.id);
-    };
 }
 
 function drawProbeChart(
@@ -1282,25 +1277,6 @@ function renderHostConnectionsOverview(): void {
         return;
     }
 
-    if (targets.length === 0) {
-        hostsCol.innerHTML = `
-            <div class="rounded-xl border border-dashed border-base-content/15 p-8 text-center">
-                <h2 class="text-lg font-semibold">Probe History Not Loaded</h2>
-                <p class="mt-2 text-sm opacity-60">Host targets are configured, but probe history is fetched only when you click refresh.</p>
-                <button
-                    type="button"
-                    class="btn btn-sm btn-outline mt-4 gap-2"
-                    onclick="refreshHostConnectionsBtn()"
-                    title="Refresh host connections">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" class="block h-4 w-4 shrink-0 fill-current" aria-hidden="true">
-                        <path d="M10 3a7 7 0 0 1 6.56 4.57.75.75 0 1 1-1.4.53A5.5 5.5 0 1 0 14.5 13H12a.75.75 0 0 1 0-1.5h4.25A.75.75 0 0 1 17 12.25v4.25a.75.75 0 0 1-1.5 0v-1.77A7 7 0 1 1 10 3Z" />
-                    </svg>
-                    Load Probe History
-                </button>
-            </div>`;
-        return;
-    }
-
     const allHistory = targets.flatMap((entry) => entry.history);
     const oldest =
         allHistory.length > 0
@@ -1382,7 +1358,10 @@ function renderHostConnectionsOverview(): void {
         return { row, card };
     });
 
-    const rows = rendered.map((r) => r.row).join('');
+    const rows =
+        rendered.length > 0
+            ? rendered.map((r) => r.row).join('')
+            : `<tr><td colspan="9" class="py-4 text-center opacity-50">No probe history loaded yet — click refresh.</td></tr>`;
     const cards = rendered.map((r) => r.card).join('');
 
     hostsCol.innerHTML = `
