@@ -464,3 +464,22 @@ healthy output's normal 65-90MB baseline, and far below the 1.5GB+ range where
 the kernel OOM-killer struck) — well before the kernel ever needs to get
 involved, so the cascading restart doesn't happen.
 
+### SRT connections with a bad passphrase are not blocked by fail2ban
+
+SRS's SRT server (port `10080`) rejects handshakes that fail its `passphrase`
+check — either the peer declares no encryption at all, or declares it but
+`SRTO_ENFORCEDENCRYPTION` fails the key exchange. Either way, the rejection
+happens *inside* the SRT handshake, before `srt_accept()` returns, so SRS's own
+log (`ERROR:UNSECURE` / "Password required or unexpected") never records the
+peer's IP. The `restream-srs` fail2ban jail only watches app-level
+`[srs-hook] rejected publish/play from <HOST>` lines from `restream-srs.service`
+(a different log source entirely), so there is currently no jail — and no way to
+build one from this log — that can ban repeat offenders hitting port `10080`
+directly with a bad or missing passphrase.
+
+This is not believed to be a practical brute-force risk: the configured
+passphrase is a long random string, and each guess requires a live SRT handshake
+round trip, so online guessing is computationally infeasible regardless of
+banning. The real effect is unbounded log/CPU noise from a misconfigured device
+or scanner retrying indefinitely, with nothing to stop it at the network level.
+Tracked in [issue #10](https://github.com/live-miracles/restream-srs/issues/10).
