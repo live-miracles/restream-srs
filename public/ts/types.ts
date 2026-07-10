@@ -107,6 +107,8 @@ export interface OutputStatus {
     failures: number;
     warningReason: string | null;
     lastError: string | null;
+    memoryUsageBytes: number | null;
+    memoryLimitBytes: number | null;
 }
 
 export interface SrtRelayStatus {
@@ -281,4 +283,6 @@ export interface OutputView extends Output {
     warningReason: string | null;
     lastError: string | null;
     lastErrorAt: number | null;
+    memoryUsageBytes: number | null;
+    memoryLimitBytes: number | null;
 }

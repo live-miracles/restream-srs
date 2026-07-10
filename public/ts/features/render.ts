@@ -81,6 +81,22 @@ const RELAY_FLOW_STALE_MS = 15000;
 const METRIC_WARN_PERCENT = 70;
 const METRIC_ERROR_PERCENT = 90;
 
+function outputMemoryPercent(o: OutputView): number | null {
+    if (o.memoryUsageBytes == null || !o.memoryLimitBytes) return null;
+    return (o.memoryUsageBytes / o.memoryLimitBytes) * 100;
+}
+
+function formatOutputMemory(o: OutputView): string | null {
+    if (o.memoryUsageBytes == null) return null;
+    return formatBytesCompact(o.memoryUsageBytes);
+}
+
+function memorySeverityClass(percent: number | null): string {
+    if (percent !== null && percent >= METRIC_ERROR_PERCENT) return 'text-error font-semibold';
+    if (percent !== null && percent >= METRIC_WARN_PERCENT) return 'text-warning font-semibold';
+    return '';
+}
+
 function formatCompactCount(n: number): string {
     if (!Number.isFinite(n)) return '0';
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
@@ -977,7 +993,7 @@ function renderOverview(): void {
     );
     let outputRows = '';
     if (totalOuts === 0) {
-        outputRows = `<tr><td colspan="12" class="py-4 text-center opacity-50">No outputs yet.</td></tr>`;
+        outputRows = `<tr><td colspan="13" class="py-4 text-center opacity-50">No outputs yet.</td></tr>`;
     } else {
         for (const p of state.pipelines) {
             for (const o of p.outs) {
@@ -1010,6 +1026,7 @@ function renderOverview(): void {
                     <td>${badge}</td>
                     <td class="font-mono text-xs">${outUptimeMs !== null ? formatUptime(outUptimeMs) : '—'}</td>
                     ${td(formatBitrate(o.bitrateKbps))}
+                    <td class="font-mono text-xs ${memorySeverityClass(outputMemoryPercent(o))}">${formatOutputMemory(o) ?? '—'}</td>
                     ${td(isOn ? o.videoEncoding : null)}
                     ${td(media?.video?.codec)}
                     ${td(media?.video?.width && media.video.height ? `${media.video.width}×${media.video.height}` : null)}
@@ -1022,9 +1039,9 @@ function renderOverview(): void {
             }
         }
         if (problemsOnly && outputRows === '') {
-            outputRows = `<tr><td colspan="12" class="py-4 text-center opacity-50">No output issues.</td></tr>`;
+            outputRows = `<tr><td colspan="13" class="py-4 text-center opacity-50">No output issues.</td></tr>`;
         } else if (activeOnly && outputRows === '') {
-            outputRows = `<tr><td colspan="12" class="py-4 text-center opacity-50">No active outputs.</td></tr>`;
+            outputRows = `<tr><td colspan="13" class="py-4 text-center opacity-50">No active outputs.</td></tr>`;
         }
     }
 
@@ -1107,7 +1124,7 @@ function renderOverview(): void {
         <h2 class="mb-2 text-lg font-bold">Outputs <span class="badge badge-neutral badge-sm ml-1">${totalOuts}</span></h2>
         <div class="overflow-x-auto">
             <table class="table table-sm">
-                ${thead(['Pipeline · Output', 'Status', 'Uptime', 'Bitrate', 'Encoding', 'V.Codec', 'Resolution', 'FPS', 'Scan', 'A.Codec', 'Ch', 'Sample Rate'])}
+                ${thead(['Pipeline · Output', 'Status', 'Uptime', 'Bitrate', 'RAM', 'Encoding', 'V.Codec', 'Resolution', 'FPS', 'Scan', 'A.Codec', 'Ch', 'Sample Rate'])}
                 <tbody>${outputRows}</tbody>
             </table>
         </div>`;
@@ -1802,6 +1819,18 @@ function renderOutputCard(
     if (isRunning && o.bitrateKbps !== null) {
         badges.push(
             `<span class="badge badge-sm whitespace-nowrap">${formatBitrate(o.bitrateKbps)}</span>`,
+        );
+    }
+    if (isRunning && o.memoryUsageBytes !== null) {
+        const memPercent = outputMemoryPercent(o);
+        const memCls =
+            memPercent !== null && memPercent >= METRIC_ERROR_PERCENT
+                ? 'badge-error'
+                : memPercent !== null && memPercent >= METRIC_WARN_PERCENT
+                  ? 'badge-warning'
+                  : '';
+        badges.push(
+            `<span class="badge badge-sm whitespace-nowrap ${memCls}" title="ffmpeg RSS vs watchdog memory limit">${formatOutputMemory(o)} RAM</span>`,
         );
     }
     const fmtSink = (s: (typeof o.sinks)[0]) => {

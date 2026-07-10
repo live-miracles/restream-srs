@@ -109,6 +109,9 @@ function loadOutputService(t, fakeProc, options = {}) {
                     interval_ms: 10,
                     socket_warmup_ms: options.socketWarmupMs ?? 15_000,
                     socket_grace_ms: options.socketGraceMs ?? 30_000,
+                    ...(options.memoryLimitMb !== undefined
+                        ? { memory_limit_mb: options.memoryLimitMb }
+                        : {}),
                 },
             },
             null,
@@ -138,10 +141,13 @@ function loadOutputService(t, fakeProc, options = {}) {
     return require('../src/services/outputs').createOutputService;
 }
 
-function makeReadyInputState() {
+function makeReadyInputState(options = {}) {
     return {
         isReady() {
             return true;
+        },
+        isHighRes() {
+            return options.highRes ?? false;
         },
         pullUrl(_pipelineId, streamKey) {
             return `rtmp://127.0.0.1:1935/live/${streamKey}`;
@@ -224,6 +230,91 @@ describe('output watchdog', () => {
         assert.deepEqual(proc.killSignals, ['SIGTERM']);
         assert.equal(service.getStats('out1').status, 'failed');
         assert.equal(service.getStats('out1').failures, 1);
+
+        service.shutdown();
+    });
+
+    test('marks warningReason when RSS crosses 70% of the memory limit', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const createOutputService = loadOutputService(t, proc, {
+            progressStallMs: 500,
+            memoryLimitMb: 200,
+        });
+        const originalReadFileSync = fs.readFileSync;
+        t.mock.method(fs, 'readFileSync', (filePath, ...rest) => {
+            if (String(filePath) === `/proc/${proc.pid}/status`) {
+                return 'VmRSS:  150000 kB\n'; // ~146MB, 73% of the 200MB limit
+            }
+            return originalReadFileSync(filePath, ...rest);
+        });
+        const service = createOutputService(db, makeReadyInputState());
+
+        await service.start('out1');
+        await sleep(60);
+
+        assert.equal(service.getStats('out1').status, 'running');
+        assert.deepEqual(proc.killSignals, []);
+        assert.match(service.getStats('out1').warningReason || '', /High memory usage/);
+        assert.equal(service.getStats('out1').memoryUsageBytes, 150000 * 1024);
+        assert.equal(service.getStats('out1').memoryLimitBytes, 200 * 1024 * 1024);
+
+        service.shutdown();
+    });
+
+    test('clears memory warningReason once RSS drops back below the threshold', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const createOutputService = loadOutputService(t, proc, {
+            progressStallMs: 500,
+            memoryLimitMb: 200,
+        });
+        let rssKb = 150000; // ~73% of the 200MB limit
+        const originalReadFileSync = fs.readFileSync;
+        t.mock.method(fs, 'readFileSync', (filePath, ...rest) => {
+            if (String(filePath) === `/proc/${proc.pid}/status`) {
+                return `VmRSS:  ${rssKb} kB\n`;
+            }
+            return originalReadFileSync(filePath, ...rest);
+        });
+        const service = createOutputService(db, makeReadyInputState());
+
+        await service.start('out1');
+        await sleep(40);
+        assert.match(service.getStats('out1').warningReason || '', /High memory usage/);
+
+        rssKb = 50000; // ~24% of the limit
+        await sleep(40);
+        assert.equal(service.getStats('out1').warningReason, null);
+        assert.equal(service.getStats('out1').memoryUsageBytes, 50000 * 1024);
+        assert.deepEqual(proc.killSignals, []);
+
+        service.shutdown();
+    });
+
+    test('doubles the memory limit for a high-res (4K) input', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const createOutputService = loadOutputService(t, proc, {
+            progressStallMs: 500,
+            memoryLimitMb: 200,
+        });
+        const originalReadFileSync = fs.readFileSync;
+        t.mock.method(fs, 'readFileSync', (filePath, ...rest) => {
+            if (String(filePath) === `/proc/${proc.pid}/status`) {
+                return 'VmRSS:  300000 kB\n'; // ~293MB: over the 200MB base limit, under the doubled 400MB limit
+            }
+            return originalReadFileSync(filePath, ...rest);
+        });
+        const service = createOutputService(db, makeReadyInputState({ highRes: true }));
+
+        await service.start('out1');
+        await sleep(60);
+
+        assert.equal(service.getStats('out1').status, 'running');
+        assert.deepEqual(proc.killSignals, []);
+        assert.equal(service.getStats('out1').memoryLimitBytes, 200 * 1024 * 1024 * 2);
+        assert.match(service.getStats('out1').warningReason || '', /High memory usage/);
 
         service.shutdown();
     });

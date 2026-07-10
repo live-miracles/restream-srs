@@ -63,6 +63,8 @@ interface OutputHealth {
     failures: number;
     warningReason: string | null;
     lastError: string | null;
+    memoryUsageBytes: number | null;
+    memoryLimitBytes: number | null;
 }
 
 interface PipelineHealth {
@@ -597,6 +599,12 @@ export function createHealthService(
             const displayMediaOk = mediaProbe ? mediaProbe.ok : null;
             const displayMediaError = mediaProbe?.error ?? null;
             const probedMedia = mediaProbe?.ok ? mediaProbe.result : null;
+            const displayVideo = probedMedia?.video ?? s?.video ?? null;
+            inputState.setInputResolution(
+                pipeline.id,
+                displayConnected ? (displayVideo?.width ?? null) : null,
+                displayConnected ? (displayVideo?.height ?? null) : null,
+            );
             const bondingStreamId = `#!::r=live/${pipeline.streamKey},m=publish`;
             const rawBondingStatus = srtRelayService.getStreamStatus(bondingStreamId);
             const publisher = s?.publish?.cid ? publisherByCid.get(s.publish.cid) : undefined;
@@ -648,7 +656,7 @@ export function createHealthService(
                         : null,
                     publisherIp: displayConnected ? (publisher?.ip ?? null) : null,
                     publisherType: displayConnected ? (publisher?.type ?? null) : null,
-                    video: probedMedia?.video ?? s?.video ?? null,
+                    video: displayVideo,
                     audio: probedMedia?.audio ?? s?.audio ?? null,
                     audioTracks: probedMedia?.audioTracks ?? [],
                 },

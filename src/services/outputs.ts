@@ -26,16 +26,29 @@ const OUTPUT_WATCHDOG_INTERVAL_MS = appConfig.outputWatchdog.intervalMs;
 const OUTPUT_SOCKET_WARMUP_MS = appConfig.outputWatchdog.socketWarmupMs;
 const OUTPUT_SOCKET_GRACE_MS = appConfig.outputWatchdog.socketGraceMs;
 const SOCKET_SNAPSHOT_TIMEOUT_MS = 2000;
+// Surface a UI warning once RSS crosses this fraction of the memory limit, well
+// before the watchdog actually restarts the process at 100% — gives an early
+// (yellow) signal that a leak may be building without waiting for the kill.
+const MEMORY_WARNING_RATIO = 0.7;
 
 // 'copy' (stream-copy) outputs run far leaner than libx264 transcode profiles
 // (720p/1080p/vertical_rotate), which legitimately sit well above the base
 // limit due to scale-filter + encoder buffers — see memoryLimitMbByEncoding
 // in appConfig.ts for measured baselines.
-function memoryLimitBytesFor(videoEncoding: string): number {
+//
+// A 4K input decodes/copies much larger frames than the baselines above were
+// measured against, so a 4K pipeline's outputs legitimately run higher RSS.
+// HIGH_RES_MEMORY_MULTIPLIER is a placeholder guess (not a measured baseline
+// like the others) — see live-miracles/restream-srs#11 to replace it with a
+// real number once we have measured 4K RSS baselines.
+const HIGH_RES_MEMORY_MULTIPLIER = 2;
+
+function memoryLimitBytesFor(videoEncoding: string, highRes: boolean): number {
     const mb =
         appConfig.outputWatchdog.memoryLimitMbByEncoding[videoEncoding] ??
         appConfig.outputWatchdog.memoryLimitMb;
-    return mb * 1024 * 1024;
+    const scaledMb = highRes ? mb * HIGH_RES_MEMORY_MULTIPLIER : mb;
+    return scaledMb * 1024 * 1024;
 }
 
 const TCP_HEALTHY_STATES = new Set(['ESTAB', 'ESTABLISHED']);
@@ -55,6 +68,8 @@ interface OutputStats {
     startedAtMs: number | null;
     failures: number;
     warningReason: string | null;
+    memoryUsageBytes: number | null;
+    memoryLimitBytes: number | null;
 }
 
 interface OutputProgress {
@@ -96,6 +111,8 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
     const startTimes = new Map<string, number>();
     const progress = new Map<string, OutputProgress>();
     const socketWarnings = new Map<string, SocketWarning>();
+    const memoryWarnings = new Map<string, string>();
+    const memoryUsage = new Map<string, { rssBytes: number; limitBytes: number }>();
     let tcpSocketsByPid = new Map<number, TcpSocket[]>();
     let tcpSocketSnapshotUsable = false;
     let socketSnapshotInProgress = false;
@@ -110,12 +127,16 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
 
     function getStats(outputId: string): OutputStats {
         const s = statuses.get(outputId) ?? { status: 'stopped' as const, pid: null };
+        const usage = memoryUsage.get(outputId);
         return {
             ...s,
             bitrateKbps: progress.get(outputId)?.lastBitrateKbps ?? null,
             startedAtMs: startTimes.get(outputId) ?? null,
             failures: retryState.get(outputId)?.failures ?? 0,
-            warningReason: socketWarnings.get(outputId)?.reason ?? null,
+            warningReason:
+                socketWarnings.get(outputId)?.reason ?? memoryWarnings.get(outputId) ?? null,
+            memoryUsageBytes: usage?.rssBytes ?? null,
+            memoryLimitBytes: usage?.limitBytes ?? null,
         };
     }
 
@@ -131,6 +152,8 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
             startTimes.delete(outputId);
             progress.delete(outputId);
             socketWarnings.delete(outputId);
+            memoryWarnings.delete(outputId);
+            memoryUsage.delete(outputId);
         }
     }
 
@@ -494,6 +517,17 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
             if (!startedAtMs || !p) continue;
             if (!inputState.isReady(output.pipelineId)) continue;
 
+            const rssBytes = proc.pid == null ? null : readProcessRssBytes(proc.pid);
+            const limitBytes = memoryLimitBytesFor(
+                output.videoEncoding,
+                inputState.isHighRes(output.pipelineId),
+            );
+            if (rssBytes != null) {
+                memoryUsage.set(outputId, { rssBytes, limitBytes });
+            } else {
+                memoryUsage.delete(outputId);
+            }
+
             if (now - startedAtMs >= OUTPUT_SOCKET_WARMUP_MS) {
                 const socketWarning = destinationSocketWarning(output, proc);
                 if (socketWarning) {
@@ -504,8 +538,6 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
             }
 
             if (now - startedAtMs >= OUTPUT_WATCHDOG_WARMUP_MS) {
-                const rssBytes = proc.pid == null ? null : readProcessRssBytes(proc.pid);
-                const limitBytes = memoryLimitBytesFor(output.videoEncoding);
                 if (rssBytes != null && rssBytes >= limitBytes) {
                     try {
                         db.setOutputLastError(
@@ -525,6 +557,17 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
                     watchdogKills.add(outputId);
                     void killProcess(outputId, proc, false);
                     continue;
+                }
+                if (rssBytes != null && rssBytes >= limitBytes * MEMORY_WARNING_RATIO) {
+                    const percent = Math.round((rssBytes / limitBytes) * 100);
+                    memoryWarnings.set(
+                        outputId,
+                        `High memory usage: ${Math.round(rssBytes / (1024 * 1024))}MB / ${Math.round(
+                            limitBytes / (1024 * 1024),
+                        )}MB limit (${percent}%)`,
+                    );
+                } else {
+                    memoryWarnings.delete(outputId);
                 }
             }
 
