@@ -298,7 +298,8 @@ The app reads runtime settings from `restream.json` in the app root.
 | `output_watchdog.interval_ms` | `5000` | Output watchdog polling interval |
 | `output_watchdog.socket_warmup_ms` | `15000` | Socket watchdog warmup before socket-state checks |
 | `output_watchdog.socket_grace_ms` | `30000` | Socket warning grace window before restarting FFmpeg |
-| `output_watchdog.memory_limit_mb` | `500` | FFmpeg RSS limit (MB) before an output is killed and restarted |
+| `output_watchdog.memory_limit_mb` | `200` | FFmpeg RSS limit (MB) before an output is killed and restarted; applies to `copy` and any `videoEncoding` not listed below |
+| `output_watchdog.memory_limit_mb_by_encoding` | `{vertical_rotate: 450, "720p": 650, "1080p": 950}` | Per-`videoEncoding` RSS limit override (MB); libx264 transcode profiles run at a much higher legitimate baseline than `copy` |
 
 Relative file paths are resolved from the app root. Command names like `ffmpeg`
 and `ffprobe` are left as command names.
@@ -372,7 +373,7 @@ The app runs these recovery loops:
 | Health poll / input recovery | SRS reachability, live pipeline inputs, desired running outputs | When SRS and the pipeline input become ready, outputs whose desired state is `running` are started or restarted with staggered timing | Computed once every 5s and shared by dashboard clients. RTMP inputs become live from SRS stream metadata (codec, dimensions, positive FPS). SRT inputs are probe-gated by ffprobe. |
 | Output progress watchdog | Every running FFmpeg output process | After warmup, if the input is ready but FFmpeg `total_size` / `out_time_ms` stop advancing for the configured stall window | Protocol-agnostic backstop; covers SRT outputs and local RTMP relays |
 | Remote RTMP socket watchdog | Running outputs with remote RTMP/RTMPS sinks | After socket warmup and grace, if the destination socket is missing or remains in a closing state such as `CLOSE-WAIT` | Uses one `ss -H -tanp` snapshot per watchdog interval; local RTMP/RTMPS sinks are ignored because local input/output sockets are ambiguous |
-| Output memory watchdog | Every running FFmpeg output process | After warmup, if process RSS crosses `memory_limit_mb` | Reads `/proc/<pid>/status`; unconditional — a leaking process can still show advancing `total_size`/healthy sockets, so this doesn't wait on the other two |
+| Output memory watchdog | Every running FFmpeg output process | After warmup, if process RSS crosses `memory_limit_mb` (or its per-encoding override) | Reads `/proc/<pid>/status`; unconditional — a leaking process can still show advancing `total_size`/healthy sockets, so this doesn't wait on the other two. Once RSS crosses 70% of the limit the output surfaces a yellow "High memory usage" warning in the dashboard, before the watchdog actually restarts it at 100%. The limit is doubled for outputs on a 4K (≥3840px on either dimension) input — the 2x multiplier is a placeholder, not a measured baseline; see [#11](https://github.com/live-miracles/restream-srs/issues/11) |
 
 All three output watchdogs use the same restart path: they write a detailed
 `last_error`, kill the stuck FFmpeg process, and let the normal retry loop start a

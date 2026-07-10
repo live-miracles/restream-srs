@@ -92,6 +92,8 @@ export function parsePipelines(
                 warningReason: oh?.warningReason ?? null,
                 lastError: err?.message ?? null,
                 lastErrorAt: err?.ts ?? null,
+                memoryUsageBytes: oh?.memoryUsageBytes ?? null,
+                memoryLimitBytes: oh?.memoryLimitBytes ?? null,
             };
         });
 
