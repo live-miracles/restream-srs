@@ -10,6 +10,11 @@
         "interval_ms": 5000,
         "socket_warmup_ms": 15000,
         "socket_grace_ms": 30000,
-        "memory_limit_mb": 500
+        "memory_limit_mb": 200,
+        "memory_limit_mb_by_encoding": {
+            "vertical_rotate": 450,
+            "720p": 650,
+            "1080p": 950
+        }
     }
 }

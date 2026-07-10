@@ -25,8 +25,18 @@ const OUTPUT_WATCHDOG_STALL_MS = appConfig.outputWatchdog.stallMs;
 const OUTPUT_WATCHDOG_INTERVAL_MS = appConfig.outputWatchdog.intervalMs;
 const OUTPUT_SOCKET_WARMUP_MS = appConfig.outputWatchdog.socketWarmupMs;
 const OUTPUT_SOCKET_GRACE_MS = appConfig.outputWatchdog.socketGraceMs;
-const OUTPUT_MEMORY_LIMIT_BYTES = appConfig.outputWatchdog.memoryLimitMb * 1024 * 1024;
 const SOCKET_SNAPSHOT_TIMEOUT_MS = 2000;
+
+// 'copy' (stream-copy) outputs run far leaner than libx264 transcode profiles
+// (720p/1080p/vertical_rotate), which legitimately sit well above the base
+// limit due to scale-filter + encoder buffers — see memoryLimitMbByEncoding
+// in appConfig.ts for measured baselines.
+function memoryLimitBytesFor(videoEncoding: string): number {
+    const mb =
+        appConfig.outputWatchdog.memoryLimitMbByEncoding[videoEncoding] ??
+        appConfig.outputWatchdog.memoryLimitMb;
+    return mb * 1024 * 1024;
+}
 
 const TCP_HEALTHY_STATES = new Set(['ESTAB', 'ESTABLISHED']);
 const TCP_BAD_STATES = new Set([
@@ -291,6 +301,7 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
         outputId: string,
         proc: ChildProcess,
         rssBytes: number,
+        limitBytes: number,
         now: number,
     ): string {
         const p = progress.get(outputId);
@@ -300,13 +311,13 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
             'watchdog: ffmpeg RSS exceeded memory limit; restarting process',
             `pid=${proc.pid ?? 'unknown'}`,
             `rss_mb=${Math.round(rssBytes / (1024 * 1024))}`,
-            `limit_mb=${Math.round(OUTPUT_MEMORY_LIMIT_BYTES / (1024 * 1024))}`,
+            `limit_mb=${Math.round(limitBytes / (1024 * 1024))}`,
             `uptime_s=${uptimeSec == null ? 'unknown' : uptimeSec}`,
             p?.stderrTail.trim()
                 ? `ffmpeg stderr tail:\n${p.stderrTail.trim()}`
                 : 'ffmpeg stderr tail: <empty>',
             `Restarting output: RSS ${Math.round(rssBytes / (1024 * 1024))}MB exceeded ${Math.round(
-                OUTPUT_MEMORY_LIMIT_BYTES / (1024 * 1024),
+                limitBytes / (1024 * 1024),
             )}MB limit`,
         ].join('\n');
     }
@@ -494,11 +505,12 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
 
             if (now - startedAtMs >= OUTPUT_WATCHDOG_WARMUP_MS) {
                 const rssBytes = proc.pid == null ? null : readProcessRssBytes(proc.pid);
-                if (rssBytes != null && rssBytes >= OUTPUT_MEMORY_LIMIT_BYTES) {
+                const limitBytes = memoryLimitBytesFor(output.videoEncoding);
+                if (rssBytes != null && rssBytes >= limitBytes) {
                     try {
                         db.setOutputLastError(
                             outputId,
-                            buildMemoryWatchdogError(outputId, proc, rssBytes, now),
+                            buildMemoryWatchdogError(outputId, proc, rssBytes, limitBytes, now),
                         );
                     } catch {
                         /* non-critical; still restart the runaway process */
@@ -507,7 +519,7 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
                         `[outputs] ${outputId} memory limit exceeded: rss=${Math.round(
                             rssBytes / (1024 * 1024),
                         )}MB (limit ${Math.round(
-                            OUTPUT_MEMORY_LIMIT_BYTES / (1024 * 1024),
+                            limitBytes / (1024 * 1024),
                         )}MB), killing pid=${proc.pid} for retry`,
                     );
                     watchdogKills.add(outputId);
