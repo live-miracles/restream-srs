@@ -2,8 +2,8 @@
     "port": 8080,
     "database_path": "./db.sqlite",
     "srs_config_path": "./srs.conf",
-    "ffmpeg_path": "ffmpeg",
-    "ffprobe_path": "ffprobe",
+    "ffmpeg_path": "./objs/ffmpeg",
+    "ffprobe_path": "./objs/ffprobe",
     "output_watchdog": {
         "warmup_ms": 90000,
         "stall_ms": 45000,
