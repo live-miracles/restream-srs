@@ -103,6 +103,16 @@ export function buildFfmpegArgs(
         // self-exit when the parent dies; at 3s that detection is still prompt.)
         '-stats_period',
         '3',
+        // Drop packets the demuxer/decoder already knows are broken (bad CRC,
+        // desynced bitstream) before they reach the AAC decoder. Without this, a
+        // glitchy input can hand the decoder a corrupt frame it misparses as a
+        // bogus channel layout (seen as "Full-on remixing from 22.2" in the
+        // 2026-07-10 incident), which is what triggered the swresample memory
+        // blow-up — see fail-reports/2026-07-10-pipeline1-output-oom-cascade.md.
+        '-fflags',
+        '+discardcorrupt',
+        '-err_detect',
+        'crccheck+bitstream',
         '-rw_timeout',
         String(INPUT_TIMEOUT_US),
         '-i',

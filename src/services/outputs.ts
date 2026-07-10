@@ -1,5 +1,6 @@
 import { execFile, spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
+import fs from 'fs';
 import { buildFfmpegArgs, validateOutputUrl } from '../utils/ffmpeg.js';
 import { readAppConfig } from '../utils/appConfig.js';
 import type { Db, Output } from '../types.js';
@@ -24,6 +25,7 @@ const OUTPUT_WATCHDOG_STALL_MS = appConfig.outputWatchdog.stallMs;
 const OUTPUT_WATCHDOG_INTERVAL_MS = appConfig.outputWatchdog.intervalMs;
 const OUTPUT_SOCKET_WARMUP_MS = appConfig.outputWatchdog.socketWarmupMs;
 const OUTPUT_SOCKET_GRACE_MS = appConfig.outputWatchdog.socketGraceMs;
+const OUTPUT_MEMORY_LIMIT_BYTES = appConfig.outputWatchdog.memoryLimitMb * 1024 * 1024;
 const SOCKET_SNAPSHOT_TIMEOUT_MS = 2000;
 
 const TCP_HEALTHY_STATES = new Set(['ESTAB', 'ESTABLISHED']);
@@ -272,6 +274,43 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
         ].join('\n');
     }
 
+    // procfs read of a single small file; cheap enough to do synchronously per
+    // output on every watchdog tick (page-cache hit, no real disk I/O). Returns
+    // null on non-Linux dev machines (no /proc) or if the pid has already exited.
+    function readProcessRssBytes(pid: number): number | null {
+        try {
+            const status = fs.readFileSync(`/proc/${pid}/status`, 'utf8');
+            const match = /^VmRSS:\s+(\d+)\s+kB$/m.exec(status);
+            return match ? parseInt(match[1], 10) * 1024 : null;
+        } catch {
+            return null;
+        }
+    }
+
+    function buildMemoryWatchdogError(
+        outputId: string,
+        proc: ChildProcess,
+        rssBytes: number,
+        now: number,
+    ): string {
+        const p = progress.get(outputId);
+        const startedAtMs = startTimes.get(outputId);
+        const uptimeSec = startedAtMs ? Math.round((now - startedAtMs) / 1000) : null;
+        return [
+            'watchdog: ffmpeg RSS exceeded memory limit; restarting process',
+            `pid=${proc.pid ?? 'unknown'}`,
+            `rss_mb=${Math.round(rssBytes / (1024 * 1024))}`,
+            `limit_mb=${Math.round(OUTPUT_MEMORY_LIMIT_BYTES / (1024 * 1024))}`,
+            `uptime_s=${uptimeSec == null ? 'unknown' : uptimeSec}`,
+            p?.stderrTail.trim()
+                ? `ffmpeg stderr tail:\n${p.stderrTail.trim()}`
+                : 'ffmpeg stderr tail: <empty>',
+            `Restarting output: RSS ${Math.round(rssBytes / (1024 * 1024))}MB exceeded ${Math.round(
+                OUTPUT_MEMORY_LIMIT_BYTES / (1024 * 1024),
+            )}MB limit`,
+        ].join('\n');
+    }
+
     function parseEndpoint(endpoint: string): { address: string; port: number } | null {
         const bracket = endpoint.match(/^\[([^\]]+)\]:(\d+)$/);
         if (bracket) return { address: bracket[1], port: Number(bracket[2]) };
@@ -450,6 +489,30 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
                     if (maybeKillForSocketWarning(outputId, proc, socketWarning, now)) continue;
                 } else {
                     socketWarnings.delete(outputId);
+                }
+            }
+
+            if (now - startedAtMs >= OUTPUT_WATCHDOG_WARMUP_MS) {
+                const rssBytes = proc.pid == null ? null : readProcessRssBytes(proc.pid);
+                if (rssBytes != null && rssBytes >= OUTPUT_MEMORY_LIMIT_BYTES) {
+                    try {
+                        db.setOutputLastError(
+                            outputId,
+                            buildMemoryWatchdogError(outputId, proc, rssBytes, now),
+                        );
+                    } catch {
+                        /* non-critical; still restart the runaway process */
+                    }
+                    console.warn(
+                        `[outputs] ${outputId} memory limit exceeded: rss=${Math.round(
+                            rssBytes / (1024 * 1024),
+                        )}MB (limit ${Math.round(
+                            OUTPUT_MEMORY_LIMIT_BYTES / (1024 * 1024),
+                        )}MB), killing pid=${proc.pid} for retry`,
+                    );
+                    watchdogKills.add(outputId);
+                    void killProcess(outputId, proc, false);
+                    continue;
                 }
             }
 
