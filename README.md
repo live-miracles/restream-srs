@@ -229,12 +229,12 @@ so there is no pull-method setting.
 
 ## Development
 
-Prerequisites: Node.js 22+, FFmpeg.
+Prerequisites: Node.js 22+ plus `curl`, `unzip`, `tar`, and `xz-utils`.
 
 **1. Install dependencies and local media binaries:**
 ```bash
 npm install
-npm run dev-install   # downloads SRS into ./objs, sets up fail2ban (needs sudo)
+npm run dev-install   # downloads SRS and pinned FFmpeg into ./objs, sets up fail2ban (needs sudo)
 ```
 Rerunning `npm run dev-install` also refreshes the sibling `../srt-bonding-relay`
 repo when it has no local changes and rebuilds `./objs/srt-bonding-relay`.
@@ -263,7 +263,9 @@ npm run srs           # runs ./objs/srs -c srs.conf in the foreground
 
 **3. Start the SRT bonding relay** (terminal 2):
 ```bash
-npm run relay         # auto-clones ../srt-bonding-relay if missing, builds it, and runs it (rerun to rebuild after source changes)
+npm run relay         # first run: clones ../srt-bonding-relay, builds it, sets up fail2ban, and runs it
+                       # later runs: just runs the existing ./objs/srt-bonding-relay binary
+npm run relay:update   # pulls the latest ../srt-bonding-relay source and rebuilds ./objs/srt-bonding-relay
 ```
 
 The relay also exposes a local HTTP status endpoint on the default
