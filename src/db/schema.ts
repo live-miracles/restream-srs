@@ -26,8 +26,7 @@ export function setupDatabaseSchema(db: Database.Database): void {
     // how the input is currently published (SRT input -> SRT pull, RTMP input ->
     // RTMP pull).
     // last_error stores up to five recent ffmpeg failures as JSON:
-    // [{ts:<ms>,message:<text>}]. Older single-error rows are still tolerated by
-    // the read path, but new writes use the history format.
+    // [{ts:<ms>,message:<text>}].
     db.prepare(
         `CREATE TABLE IF NOT EXISTS outputs (
             id              TEXT PRIMARY KEY,
