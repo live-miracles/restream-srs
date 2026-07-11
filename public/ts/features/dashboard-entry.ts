@@ -25,6 +25,7 @@ import {
     addSinkRow,
     removeSinkRow,
     onSinkServerChange,
+    onOutputTypeChange,
     copyOutputs,
     pasteOutputs,
     startAllOutputs,
@@ -62,6 +63,7 @@ declare global {
         outAddSink: () => void;
         outRemoveSink: (btn: HTMLElement) => void;
         outSinkServerChange: (select: HTMLSelectElement) => void;
+        outTypeChange: (select: HTMLSelectElement) => void;
         copyText: (text: string) => Promise<void>;
         previewToggleBtn: () => Promise<void>;
         previewTrackChange: () => void;
@@ -174,6 +176,7 @@ window.outFormBtn = (btn) => submitOutputForm(btn);
 window.outAddSink = () => addSinkRow();
 window.outRemoveSink = (btn) => removeSinkRow(btn);
 window.outSinkServerChange = (select) => onSinkServerChange(select);
+window.outTypeChange = (select) => onOutputTypeChange(select);
 
 window.copyText = copyText;
 

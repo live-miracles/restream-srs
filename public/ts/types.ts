@@ -58,6 +58,7 @@ export interface Output {
     desiredState: 'running' | 'stopped';
     videoEncoding: string;
     sinks: OutputSink[];
+    srtLatencyMs: number | null;
     lastError: string | null;
 }
 
@@ -70,6 +71,7 @@ export interface OutputPayload {
     name: string;
     videoEncoding: string;
     sinks: SinkPayload[];
+    srtLatencyMs: number | null;
 }
 
 export interface VideoInfo {
