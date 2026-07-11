@@ -92,7 +92,6 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
             return res.status(404).json({ error: 'Pipeline not found' });
 
         db.setDesiredStateForPipeline(pipelineId, 'running');
-        db.clearLastErrorsForPipeline(pipelineId);
         const scheduled = outputService.restartPipelineOutputs(pipelineId);
         return res.json({ ok: true, scheduled });
     });
@@ -176,6 +175,16 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
         return res.json({ ok: true });
     });
 
+    app.get('/api/pipelines/:pipelineId/outputs/:outId/errors', (req, res) => {
+        const { pipelineId, outId } = req.params;
+        const output = db.getOutput(outId);
+        if (!output || output.pipelineId !== parseInt(pipelineId)) {
+            return res.status(404).json({ error: 'Output not found' });
+        }
+
+        return res.json(db.getOutputErrorHistory(outId));
+    });
+
     app.post('/api/pipelines/:pipelineId/outputs/:outId/start', async (req, res) => {
         const { pipelineId, outId } = req.params;
         const output = db.getOutput(outId);
@@ -185,7 +194,6 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
 
         try {
             db.setOutputDesiredState(outId, 'running');
-            db.clearOutputLastError(outId);
             await outputService.start(outId);
             return res.json({ ok: true, status: outputService.getStats(outId) });
         } catch (err) {

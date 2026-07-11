@@ -10,6 +10,7 @@ import type {
     SinkInput,
     StreamKey,
     HostProbeTarget,
+    OutputErrorRecord,
     Db,
 } from '../types.js';
 
@@ -22,6 +23,40 @@ const PIPELINE_SELECT = `
 const STREAM_KEY_SLOTS = 99;
 const PIPELINE_LOG_CAP = 100;
 const LOG_RETENTION_LIMIT = 100;
+const OUTPUT_ERROR_HISTORY_LIMIT = 5;
+
+function legacyErrorString(error: OutputErrorRecord | null): string | null {
+    return error ? `${error.ts}\n${error.message}` : null;
+}
+
+function parseOutputErrorHistory(raw: string | null | undefined): OutputErrorRecord[] {
+    if (!raw) return [];
+    try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (Array.isArray(parsed)) {
+            return parsed
+                .filter(
+                    (item): item is OutputErrorRecord =>
+                        !!item &&
+                        typeof item === 'object' &&
+                        typeof (item as OutputErrorRecord).ts === 'number' &&
+                        typeof (item as OutputErrorRecord).message === 'string',
+                )
+                .slice(-OUTPUT_ERROR_HISTORY_LIMIT);
+        }
+    } catch {
+        /* legacy single-error format */
+    }
+
+    const nl = raw.indexOf('\n');
+    if (nl === -1) return [{ ts: 0, message: raw }];
+    const ts = parseInt(raw.slice(0, nl), 10);
+    return [{ ts: isNaN(ts) ? 0 : ts, message: raw.slice(nl + 1) }];
+}
+
+function encodeOutputErrorHistory(history: OutputErrorRecord[]): string {
+    return JSON.stringify(history.slice(-OUTPUT_ERROR_HISTORY_LIMIT));
+}
 
 function rowToPipeline(row: Record<string, unknown>): Pipeline {
     return {
@@ -158,13 +193,20 @@ export function createDb(dbPath?: string): Db {
             desiredState: row.desired_state as 'running' | 'stopped',
             videoEncoding: (row.encoding as string) || 'copy',
             sinks: JSON.parse(row.sinks as string) as OutputSink[],
-            lastError: (row.last_error as string | null) ?? null,
+            lastError: legacyErrorString(
+                parseOutputErrorHistory(row.last_error as string | null).at(-1) ?? null,
+            ),
         };
     }
 
     function getOutputById(id: string): Output | null {
         const row = stmtGetOutput.get(id) as Record<string, unknown> | undefined;
         return row ? rowToOutput(row) : null;
+    }
+
+    function loadOutputErrorHistory(id: string): OutputErrorRecord[] {
+        const row = stmtGetOutput.get(id) as Record<string, unknown> | undefined;
+        return row ? parseOutputErrorHistory(row.last_error as string | null) : [];
     }
 
     function sinksToJson(sinks: SinkInput[]): string {
@@ -390,7 +432,9 @@ export function createDb(dbPath?: string): Db {
             return (stmtLoadOutputIds.all() as Record<string, unknown>[]).map((r) => ({
                 id: r.id as string,
                 pipelineId: r.pipeline_id as number,
-                lastError: (r.last_error as string | null) ?? null,
+                lastError: legacyErrorString(
+                    parseOutputErrorHistory(r.last_error as string | null).at(-1) ?? null,
+                ),
             }));
         },
 
@@ -435,11 +479,19 @@ export function createDb(dbPath?: string): Db {
         },
 
         setOutputLastError(id: string, message: string): void {
-            stmtSetLastError.run(`${Date.now()}\n${message}`, id);
+            const existing = loadOutputErrorHistory(id);
+            const next = [...existing, { ts: Date.now(), message }].slice(
+                -OUTPUT_ERROR_HISTORY_LIMIT,
+            );
+            stmtSetLastError.run(encodeOutputErrorHistory(next), id);
         },
 
         clearOutputLastError(id: string): void {
             stmtClearLastError.run(id);
+        },
+
+        getOutputErrorHistory(id: string): OutputErrorRecord[] {
+            return loadOutputErrorHistory(id);
         },
 
         appendPipelineLog(pipelineId: number, event: string, message: string): void {

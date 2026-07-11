@@ -25,8 +25,9 @@ export function setupDatabaseSchema(db: Database.Database): void {
     // own table. The pull protocol isn't stored — it's derived at runtime from
     // how the input is currently published (SRT input -> SRT pull, RTMP input ->
     // RTMP pull).
-    // last_error stores the most recent ffmpeg failure as "<ts_ms>\n<message>".
-    // Cleared when the user explicitly starts the output.
+    // last_error stores up to five recent ffmpeg failures as JSON:
+    // [{ts:<ms>,message:<text>}]. Older single-error rows are still tolerated by
+    // the read path, but new writes use the history format.
     db.prepare(
         `CREATE TABLE IF NOT EXISTS outputs (
             id              TEXT PRIMARY KEY,

@@ -117,18 +117,31 @@ function setMetricSeverity(id: string, percent: number | null): void {
     el.classList.toggle('font-semibold', isError || isWarning);
 }
 
-function outStatus(o: OutputView, inputLive: boolean): OutStatus {
+// True if the most recent error is still relevant to what's on screen right
+// now. A watchdog/exit path always records the error before the process dies,
+// so once a fresh restart happens (o.startedAtMs moves past lastErrorAt) the
+// error belongs to a prior, already-resolved incarnation. When there's no
+// current process at all (startedAtMs null — between retries, or never
+// started) any recorded error is still the reason for that state, so treat it
+// as current.
+function hasCurrentOutputError(o: OutputView): boolean {
+    if (o.lastError === null || o.lastErrorAt === null) return false;
+    if (o.startedAtMs === null) return true;
+    return o.lastErrorAt >= o.startedAtMs;
+}
+
+function outStatus(o: OutputView, input: InputHealth): OutStatus {
     if (o.desiredState === 'stopped') return 'off';
     if (o.status === 'failed') return 'error';
     if (o.status === 'running') {
-        if (!inputLive) return 'error';
+        if (!input.live) return 'error';
         if (o.warningReason !== null) return 'warn';
         if (o.bitrateKbps !== null && o.bitrateKbps >= LOW_BITRATE_KBPS) return 'good';
-        if (o.bitrateKbps === null && o.lastError !== null) return 'error';
+        if (o.bitrateKbps === null && hasCurrentOutputError(o)) return 'error';
         return 'warn';
     }
     // status === 'stopped' but desiredState === 'running': between retries
-    return o.lastError !== null ? 'error' : 'warn';
+    return hasCurrentOutputError(o) ? 'error' : 'warn';
 }
 
 function inputStatus(input: InputHealth): InputStatus {
@@ -453,15 +466,15 @@ function renderPipelineList(): void {
     const inputsFailed = state.pipelines.filter((p) => inputStatus(p.input) === 'error').length;
     const totalOutputs = state.pipelines.reduce((s, p) => s + p.outs.length, 0);
     const outputsOn = state.pipelines.reduce(
-        (s, p) => s + p.outs.filter((o) => outStatus(o, p.input.live) === 'good').length,
+        (s, p) => s + p.outs.filter((o) => outStatus(o, p.input) === 'good').length,
         0,
     );
     const outputsWarn = state.pipelines.reduce(
-        (s, p) => s + p.outs.filter((o) => outStatus(o, p.input.live) === 'warn').length,
+        (s, p) => s + p.outs.filter((o) => outStatus(o, p.input) === 'warn').length,
         0,
     );
     const outputsFailed = state.pipelines.reduce(
-        (s, p) => s + p.outs.filter((o) => outStatus(o, p.input.live) === 'error').length,
+        (s, p) => s + p.outs.filter((o) => outStatus(o, p.input) === 'error').length,
         0,
     );
     const outputsOff = state.pipelines.reduce(
@@ -484,10 +497,10 @@ function renderPipelineList(): void {
 
     listEl.innerHTML = state.pipelines
         .map((p) => {
-            const outGood = p.outs.filter((o) => outStatus(o, p.input.live) === 'good').length;
-            const outWarn = p.outs.filter((o) => outStatus(o, p.input.live) === 'warn').length;
-            const outFailed = p.outs.filter((o) => outStatus(o, p.input.live) === 'error').length;
-            const outOff = p.outs.filter((o) => outStatus(o, p.input.live) === 'off').length;
+            const outGood = p.outs.filter((o) => outStatus(o, p.input) === 'good').length;
+            const outWarn = p.outs.filter((o) => outStatus(o, p.input) === 'warn').length;
+            const outFailed = p.outs.filter((o) => outStatus(o, p.input) === 'error').length;
+            const outOff = p.outs.filter((o) => outStatus(o, p.input) === 'off').length;
 
             const inColor = relayInputSeverityColor(
                 p,
@@ -984,11 +997,11 @@ function renderOverview(): void {
 
     // ── Outputs ───────────────────────────────────────────
     const outputProblemCount = state.pipelines.reduce(
-        (s, p) => s + p.outs.filter((o) => isProblem(outStatus(o, p.input.live))).length,
+        (s, p) => s + p.outs.filter((o) => isProblem(outStatus(o, p.input))).length,
         0,
     );
     const outputActiveCount = state.pipelines.reduce(
-        (s, p) => s + p.outs.filter((o) => !isOffline(outStatus(o, p.input.live))).length,
+        (s, p) => s + p.outs.filter((o) => !isOffline(outStatus(o, p.input))).length,
         0,
     );
     let outputRows = '';
@@ -998,7 +1011,7 @@ function renderOverview(): void {
         for (const p of state.pipelines) {
             for (const o of p.outs) {
                 const isRunning = o.status === 'running';
-                const st = outStatus(o, p.input.live);
+                const st = outStatus(o, p.input);
                 if (problemsOnly && !isProblem(st)) continue;
                 if (activeOnly && isOffline(st)) continue;
                 const retryPrefix =
@@ -1765,6 +1778,7 @@ function renderPipelineInfo(selectedId: string | null): void {
 const ICON_PENCIL = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>`;
 const ICON_TRASH = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>`;
 const ICON_INFO = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>`;
+const ICON_HISTORY = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/><path d="M12 7v5l3 2"/></svg>`;
 const ICON_ITERATION_CW = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 3 3-3 3"/><path d="M15 5a9 9 0 1 1-3 16.9"/></svg>`;
 const ICON_WARN = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>`;
 
@@ -1795,12 +1809,12 @@ function restreamSinkLabel(url: string): string | null {
 
 function renderOutputCard(
     o: OutputView,
-    inputLive: boolean,
+    input: InputHealth,
     dupUrls: Map<string, DupRef[]>,
 ): string {
     const isStopped = o.desiredState === 'stopped';
     const isRunning = o.status === 'running';
-    const st = outStatus(o, inputLive);
+    const st = outStatus(o, input);
     const statusHex =
         st === 'good'
             ? STATUS_COLOR_GOOD
@@ -1872,12 +1886,14 @@ function renderOutputCard(
             .join('')}</div>`;
     }
 
-    const lastErrorLine = o.lastError
-        ? (o.lastError
-              .split('\n')
-              .filter((l) => l.trim())
-              .slice(-1)[0] ?? '')
-        : '';
+    const showCurrentError = hasCurrentOutputError(o);
+    const lastErrorLine =
+        showCurrentError && o.lastError
+            ? (o.lastError
+                  .split('\n')
+                  .filter((l) => l.trim())
+                  .slice(-1)[0] ?? '')
+            : '';
     const lastErrorTs = o.lastErrorAt
         ? new Date(o.lastErrorAt).toLocaleTimeString(undefined, { hour12: false })
         : '';
@@ -1886,14 +1902,19 @@ function renderOutputCard(
         o.failures > 0
             ? `<span class="badge badge-sm badge-error gap-1 shrink-0" title="${o.failures} retr${o.failures === 1 ? 'y' : 'ies'}">${ICON_ITERATION_CW}${o.failures}</span>`
             : '';
-    const lastErrorHtml = lastErrorLine
-        ? `<div class="flex items-center gap-2 pl-2 mt-0.5 min-w-0">
+    const lastErrorHtml =
+        lastErrorLine && !isStopped
+            ? `<div class="flex items-center gap-2 pl-2 mt-0.5 min-w-0">
                 ${retryBadge}
                 <span class="text-xs ${lastErrorColor} shrink-0">${lastErrorTs}</span>
                 <span class="text-xs ${lastErrorColor} truncate">${escapeHtml(lastErrorLine)}</span>
                 <button class="btn btn-xs btn-ghost p-0 leading-none shrink-0 ${lastErrorColor}" data-action="error-info" data-out-id="${o.id}" title="View full error">${ICON_INFO}</button>
            </div>`
-        : '';
+            : '';
+    const historyBtn =
+        o.lastError !== null
+            ? `<button class="btn btn-xs btn-ghost ${lastErrorColor}" data-action="error-info" data-out-id="${o.id}" title="Error history">${ICON_HISTORY}</button>`
+            : '';
     const warningHtml = o.warningReason
         ? `<div class="flex items-center gap-2 pl-2 mt-0.5 min-w-0">
                 <span class="text-warning shrink-0">${ICON_WARN}</span>
@@ -1922,6 +1943,7 @@ function renderOutputCard(
             ${lastErrorHtml}
         </div>
         <div class="flex items-center gap-1 shrink-0">
+            ${historyBtn}
             <button class="btn btn-xs btn-ghost" data-action="edit" data-out-id="${o.id}">${ICON_PENCIL}</button>
             <button class="btn btn-xs btn-ghost text-error ${isStopped ? '' : 'btn-disabled opacity-40'}"
                 data-action="delete" data-out-id="${o.id}">${ICON_TRASH}</button>
@@ -1999,7 +2021,7 @@ function renderOutputsList(pipeline: PipelineView): void {
     }
 
     listEl.innerHTML = pipeline.outs
-        .map((o) => renderOutputCard(o, pipeline.input.live, dupUrls))
+        .map((o) => renderOutputCard(o, pipeline.input, dupUrls))
         .join('');
 
     listEl.onclick = (e) => {

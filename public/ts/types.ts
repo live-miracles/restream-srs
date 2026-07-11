@@ -199,6 +199,11 @@ export interface PipelineLog {
     message: string;
 }
 
+export interface OutputErrorRecord {
+    ts: number;
+    message: string;
+}
+
 export interface InputHealth {
     connected: boolean;
     live: boolean;

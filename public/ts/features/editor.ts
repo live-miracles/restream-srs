@@ -894,7 +894,7 @@ export async function showPipelineLogs(pipelineId: string): Promise<void> {
         .join('');
 }
 
-export function showOutputError(pipelineId: string, outId: string): void {
+export async function showOutputError(pipelineId: string, outId: string): Promise<void> {
     const modal = document.getElementById('logs-modal') as HTMLDialogElement | null;
     const titleEl = document.getElementById('logs-modal-title');
     const contentEl = document.getElementById('logs-modal-content');
@@ -902,25 +902,33 @@ export function showOutputError(pipelineId: string, outId: string): void {
 
     const pipeline = state.pipelines.find((p) => p.id === pipelineId);
     const output = pipeline?.outs.find((o) => o.id === outId);
-    if (titleEl) titleEl.textContent = `Error — ${output?.name ?? outId}`;
+    if (titleEl) titleEl.textContent = `Error History - ${output?.name ?? outId}`;
+    contentEl.textContent = 'Loading…';
+    modal.showModal();
 
-    if (!output?.lastError) {
+    const history = await api.getOutputErrorHistory(pipelineId, outId);
+    if (!history || history.length === 0) {
         contentEl.innerHTML = '<p class="opacity-50 text-sm">No error recorded.</p>';
-        modal.showModal();
         return;
     }
 
-    const ts = output.lastErrorAt
-        ? new Date(output.lastErrorAt).toLocaleString(undefined, { hour12: false })
-        : '';
     const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    contentEl.innerHTML = `
-        <div class="flex items-center gap-2 mb-2">
-            <span class="badge badge-xs badge-error uppercase">error</span>
-            <span class="text-xs opacity-50">${ts}</span>
-        </div>
-        <pre class="text-xs text-error opacity-80 whitespace-pre-wrap break-all overflow-x-auto">${esc(output.lastError)}</pre>`;
-    modal.showModal();
+    contentEl.innerHTML = history
+        .slice()
+        .reverse()
+        .map((entry, idx) => {
+            const ts = entry.ts
+                ? new Date(entry.ts).toLocaleString(undefined, { hour12: false })
+                : '';
+            return `<div class="${idx === 0 ? '' : 'mt-4 pt-4 border-t border-base-200'}">
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="badge badge-xs badge-error uppercase">${idx === 0 ? 'latest' : 'error'}</span>
+                    <span class="text-xs opacity-50">${ts}</span>
+                </div>
+                <pre class="text-xs text-error opacity-80 whitespace-pre-wrap break-all overflow-x-auto">${esc(entry.message)}</pre>
+            </div>`;
+        })
+        .join('');
 }
 
 export async function showSrsLogs(): Promise<void> {
