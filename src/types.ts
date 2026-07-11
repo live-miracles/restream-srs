@@ -52,6 +52,11 @@ export interface PipelineLog {
     message: string;
 }
 
+export interface OutputErrorRecord {
+    ts: number;
+    message: string;
+}
+
 export interface Output {
     id: string;
     pipelineId: number;
@@ -117,6 +122,7 @@ export interface Db {
 
     setOutputLastError(id: string, message: string): void;
     clearOutputLastError(id: string): void;
+    getOutputErrorHistory(id: string): OutputErrorRecord[];
 
     appendPipelineLog(pipelineId: number, event: string, message: string): void;
     getPipelineLogs(pipelineId: number, limit?: number): PipelineLog[];

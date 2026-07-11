@@ -246,6 +246,23 @@ describe('Output CRUD', () => {
         );
     });
 
+    test('setOutputLastError keeps the five most recent errors', () => {
+        const db = makeDb();
+        const p = db.createPipeline();
+        const o = db.createOutput({ pipelineId: p.id, name: 'X', sinks: [{ url: 'rtmp://x' }] });
+
+        for (let i = 1; i <= 6; i++) db.setOutputLastError(o.id, `error ${i}`);
+
+        const history = db.getOutputErrorHistory(o.id);
+        assert.deepEqual(
+            history.map((e) => e.message),
+            ['error 2', 'error 3', 'error 4', 'error 5', 'error 6'],
+        );
+
+        const got = db.getOutput(o.id);
+        assert.match(got?.lastError ?? '', /error 6$/);
+    });
+
     test('deleting a pipeline cascades to its outputs', () => {
         const db = makeDb();
         const p = db.createPipeline();
