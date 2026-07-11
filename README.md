@@ -263,8 +263,7 @@ npm run srs           # runs ./objs/srs -c srs.conf in the foreground
 
 **3. Start the SRT bonding relay** (terminal 2):
 ```bash
-npm run relay         # first run: clones ../srt-bonding-relay, builds it, sets up fail2ban, and runs it
-                       # later runs: just runs the existing ./objs/srt-bonding-relay binary
+npm run relay         # runs the ./objs/srt-bonding-relay binary built by dev-install
 npm run relay:update   # pulls the latest ../srt-bonding-relay source and rebuilds ./objs/srt-bonding-relay
 ```
 
