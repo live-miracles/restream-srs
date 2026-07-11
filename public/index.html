@@ -202,6 +202,17 @@
                 <option value="1080p">1080p</option>
               </select>
             </fieldset>
+            <fieldset class="fieldset">
+              <legend class="fieldset-legend">Output Type</legend>
+              <select class="select w-28" id="out-type-input" onchange="outTypeChange(this)">
+                <option value="rtmp">RTMP</option>
+                <option value="srt">SRT</option>
+              </select>
+            </fieldset>
+            <fieldset class="fieldset w-28">
+              <legend class="fieldset-legend">Latency (ms)</legend>
+              <input type="number" min="1" step="1" id="out-latency-input" class="input w-full" placeholder="240" oninput="this.classList.remove('input-error')" disabled />
+            </fieldset>
           </div>
 
           <div class="flex items-center justify-between pt-1">

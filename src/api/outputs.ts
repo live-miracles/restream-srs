@@ -1,5 +1,10 @@
 import type { Express } from 'express';
-import { validateOutputUrl, validateAudioEncoding, ENCODINGS } from '../utils/ffmpeg.js';
+import {
+    validateOutputUrl,
+    validateAudioEncoding,
+    parseSrtLatencyMs,
+    ENCODINGS,
+} from '../utils/ffmpeg.js';
 import type { Db, SinkInput } from '../types.js';
 import type { OutputService } from '../services/outputs.js';
 
@@ -42,17 +47,20 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
         const name = (req.body?.name as string | undefined)?.trim();
         const videoEncoding = (req.body?.videoEncoding as string | undefined)?.trim() || 'copy';
         const parsed = parseSinks(req.body?.sinks);
+        const srtLatency = parseSrtLatencyMs(req.body?.srtLatencyMs);
 
         if (!name) return res.status(400).json({ error: 'name is required' });
         if (!ENCODINGS[videoEncoding])
             return res.status(400).json({ error: `unknown videoEncoding: ${videoEncoding}` });
         if ('error' in parsed) return res.status(400).json({ error: parsed.error });
+        if ('error' in srtLatency) return res.status(400).json({ error: srtLatency.error });
 
         const output = db.createOutput({
             pipelineId,
             name,
             videoEncoding,
             sinks: parsed.sinks,
+            srtLatencyMs: srtLatency.value,
         });
         return res.status(201).json(output);
     });
@@ -67,18 +75,25 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
         if (!Array.isArray(rawOutputs) || rawOutputs.length === 0)
             return res.status(400).json({ error: 'outputs array is required' });
 
-        const validated: { name: string; videoEncoding: string; sinks: SinkInput[] }[] = [];
+        const validated: {
+            name: string;
+            videoEncoding: string;
+            sinks: SinkInput[];
+            srtLatencyMs: number | null;
+        }[] = [];
         for (const item of rawOutputs) {
             const name = (item?.name as string | undefined)?.trim();
             const videoEncoding = (item?.videoEncoding as string | undefined)?.trim() || 'copy';
             const parsed = parseSinks(item?.sinks);
+            const srtLatency = parseSrtLatencyMs(item?.srtLatencyMs);
 
             if (!name) return res.status(400).json({ error: 'each output must have a name' });
             if (!ENCODINGS[videoEncoding])
                 return res.status(400).json({ error: `unknown videoEncoding: ${videoEncoding}` });
             if ('error' in parsed) return res.status(400).json({ error: parsed.error });
+            if ('error' in srtLatency) return res.status(400).json({ error: srtLatency.error });
 
-            validated.push({ name, videoEncoding, sinks: parsed.sinks });
+            validated.push({ name, videoEncoding, sinks: parsed.sinks, srtLatencyMs: srtLatency.value });
         }
 
         const created = db.createOutputs(validated.map((v) => ({ pipelineId, ...v })));
@@ -129,16 +144,19 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
         const videoEncoding =
             (req.body?.videoEncoding as string | undefined)?.trim() ?? output.videoEncoding;
         const parsed = parseSinks(req.body?.sinks);
+        const srtLatency = parseSrtLatencyMs(req.body?.srtLatencyMs);
 
         if (!name) return res.status(400).json({ error: 'name is required' });
         if (!ENCODINGS[videoEncoding])
             return res.status(400).json({ error: `unknown videoEncoding: ${videoEncoding}` });
         if ('error' in parsed) return res.status(400).json({ error: parsed.error });
+        if ('error' in srtLatency) return res.status(400).json({ error: srtLatency.error });
 
         const updated = db.updateOutput(outId, {
             name,
             videoEncoding,
             sinks: parsed.sinks,
+            srtLatencyMs: srtLatency.value,
         });
         return res.json(updated);
     });

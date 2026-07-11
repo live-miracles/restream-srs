@@ -121,12 +121,15 @@ function setMetricSeverity(id: string, percent: number | null): void {
 // now. A watchdog/exit path always records the error before the process dies,
 // so once a fresh restart happens (o.startedAtMs moves past lastErrorAt) the
 // error belongs to a prior, already-resolved incarnation. When there's no
-// current process at all (startedAtMs null — between retries, or never
-// started) any recorded error is still the reason for that state, so treat it
-// as current.
+// current process at all (startedAtMs null), that's either an actual
+// between-retries gap after a real ffmpeg failure (failures > 0 — keep
+// showing it) or a manual start that hasn't spawned yet / is waiting on the
+// input to come ready (start() resets failures to 0 before attempting to
+// spawn) — in that case any old error is a stale prior incarnation, not the
+// reason ffmpeg isn't running yet, so don't resurrect it.
 function hasCurrentOutputError(o: OutputView): boolean {
     if (o.lastError === null || o.lastErrorAt === null) return false;
-    if (o.startedAtMs === null) return true;
+    if (o.startedAtMs === null) return o.failures > 0;
     return o.lastErrorAt >= o.startedAtMs;
 }
 
@@ -1006,7 +1009,7 @@ function renderOverview(): void {
     );
     let outputRows = '';
     if (totalOuts === 0) {
-        outputRows = `<tr><td colspan="13" class="py-4 text-center opacity-50">No outputs yet.</td></tr>`;
+        outputRows = `<tr><td colspan="14" class="py-4 text-center opacity-50">No outputs yet.</td></tr>`;
     } else {
         for (const p of state.pipelines) {
             for (const o of p.outs) {
@@ -1034,13 +1037,18 @@ function renderOverview(): void {
                 const isOn = o.status === 'running';
                 const media = isOn ? deriveOutputMedia(p.input, o) : null;
                 const outUptimeMs = o.startedAtMs !== null ? Date.now() - o.startedAtMs : null;
+                const errorBadge =
+                    o.failures > 0
+                        ? `<span class="text-error inline-flex items-center align-middle" title="${o.failures} error${o.failures === 1 ? '' : 's'} since this output was last started">${ICON_ERROR}</span>`
+                        : '';
                 outputRows += `<tr class="hover" ${statusBg(st === 'error', st === 'warn')}>
-                    <td class="overview-name-col"><span class="opacity-40 text-xs">${escapeHtml(p.name)} ·</span> ${escapeHtml(o.name)}</td>
+                    <td class="overview-name-col"><span class="opacity-40 text-xs">${escapeHtml(p.name)} ·</span> ${escapeHtml(o.name)} ${errorBadge}</td>
                     <td>${badge}</td>
                     <td class="font-mono text-xs">${outUptimeMs !== null ? formatUptime(outUptimeMs) : '—'}</td>
                     ${td(formatBitrate(o.bitrateKbps))}
                     <td class="font-mono text-xs ${memorySeverityClass(outputMemoryPercent(o))}">${formatOutputMemory(o) ?? '—'}</td>
                     ${td(isOn ? o.videoEncoding : null)}
+                    ${td(o.sinks[0]?.url.startsWith('srt://') ? 'SRT' : o.sinks[0] ? 'RTMP' : null)}
                     ${td(media?.video?.codec)}
                     ${td(media?.video?.width && media.video.height ? `${media.video.width}×${media.video.height}` : null)}
                     ${td(media?.video?.fps)}
@@ -1052,9 +1060,9 @@ function renderOverview(): void {
             }
         }
         if (problemsOnly && outputRows === '') {
-            outputRows = `<tr><td colspan="13" class="py-4 text-center opacity-50">No output issues.</td></tr>`;
+            outputRows = `<tr><td colspan="14" class="py-4 text-center opacity-50">No output issues.</td></tr>`;
         } else if (activeOnly && outputRows === '') {
-            outputRows = `<tr><td colspan="13" class="py-4 text-center opacity-50">No active outputs.</td></tr>`;
+            outputRows = `<tr><td colspan="14" class="py-4 text-center opacity-50">No active outputs.</td></tr>`;
         }
     }
 
@@ -1137,7 +1145,7 @@ function renderOverview(): void {
         <h2 class="mb-2 text-lg font-bold">Outputs <span class="badge badge-neutral badge-sm ml-1">${totalOuts}</span></h2>
         <div class="overflow-x-auto">
             <table class="table table-sm">
-                ${thead(['Pipeline · Output', 'Status', 'Uptime', 'Bitrate', 'RAM', 'Encoding', 'V.Codec', 'Resolution', 'FPS', 'Scan', 'A.Codec', 'Ch', 'Sample Rate'])}
+                ${thead(['Pipeline · Output', 'Status', 'Uptime', 'Bitrate', 'RAM', 'Encoding', 'Proto', 'V.Codec', 'Resolution', 'FPS', 'Scan', 'A.Codec', 'Ch', 'Sample Rate'])}
                 <tbody>${outputRows}</tbody>
             </table>
         </div>`;
@@ -1781,6 +1789,7 @@ const ICON_INFO = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14
 const ICON_HISTORY = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/><path d="M12 7v5l3 2"/></svg>`;
 const ICON_ITERATION_CW = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 3 3-3 3"/><path d="M15 5a9 9 0 1 1-3 16.9"/></svg>`;
 const ICON_WARN = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>`;
+const ICON_ERROR = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>`;
 
 type DupRef = { pipelineName: string; outputName: string };
 

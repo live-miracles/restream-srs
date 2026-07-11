@@ -175,6 +175,7 @@ export function createDb(dbPath?: string): Db {
             desiredState: row.desired_state as 'running' | 'stopped',
             videoEncoding: (row.encoding as string) || 'copy',
             sinks: JSON.parse(row.sinks as string) as OutputSink[],
+            srtLatencyMs: (row.srt_latency_ms as number | null) ?? null,
             lastError: toLastErrorString(
                 parseOutputErrorHistory(row.last_error as string | null).at(-1) ?? null,
             ),
@@ -234,11 +235,13 @@ export function createDb(dbPath?: string): Db {
         name,
         videoEncoding = 'copy',
         sinks,
+        srtLatencyMs = null,
     }: {
         pipelineId: number;
         name: string;
         videoEncoding?: string;
         sinks: SinkInput[];
+        srtLatencyMs?: number | null;
     }): string {
         const seqRow = sqlite
             .prepare(
@@ -249,9 +252,18 @@ export function createDb(dbPath?: string): Db {
         const id = `${pipelineId}-${seq}`;
         sqlite
             .prepare(
-                'INSERT INTO outputs (id, pipeline_id, seq, name, desired_state, encoding, sinks) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                'INSERT INTO outputs (id, pipeline_id, seq, name, desired_state, encoding, sinks, srt_latency_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
             )
-            .run(id, pipelineId, seq, name, 'stopped', videoEncoding, sinksToJson(sinks));
+            .run(
+                id,
+                pipelineId,
+                seq,
+                name,
+                'stopped',
+                videoEncoding,
+                sinksToJson(sinks),
+                srtLatencyMs,
+            );
         return id;
     }
 
@@ -424,10 +436,12 @@ export function createDb(dbPath?: string): Db {
             return getOutputsByPipeline(pipelineId);
         },
 
-        updateOutput(id: string, { name, videoEncoding, sinks }): Output | null {
+        updateOutput(id: string, { name, videoEncoding, sinks, srtLatencyMs = null }): Output | null {
             sqlite
-                .prepare('UPDATE outputs SET name = ?, encoding = ?, sinks = ? WHERE id = ?')
-                .run(name, videoEncoding, sinksToJson(sinks), id);
+                .prepare(
+                    'UPDATE outputs SET name = ?, encoding = ?, sinks = ?, srt_latency_ms = ? WHERE id = ?',
+                )
+                .run(name, videoEncoding, sinksToJson(sinks), srtLatencyMs, id);
             bumpConfigRev();
             return getOutputById(id);
         },

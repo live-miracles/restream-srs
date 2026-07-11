@@ -566,6 +566,24 @@ function outModal(): HTMLDialogElement {
     return document.getElementById('edit-out-modal') as HTMLDialogElement;
 }
 
+// The Output Type select is UI-only (never sent to the backend): it just
+// gates whether the Latency input is editable. Latency is meaningless for
+// RTMP, so switching to RTMP disables and clears it.
+function syncLatencyFieldState(): void {
+    const typeSelect = document.getElementById('out-type-input') as HTMLSelectElement;
+    const latencyInput = document.getElementById('out-latency-input') as HTMLInputElement;
+    const isSrt = typeSelect.value === 'srt';
+    latencyInput.disabled = !isSrt;
+    if (!isSrt) {
+        latencyInput.value = '';
+        latencyInput.classList.remove('input-error');
+    }
+}
+
+export function onOutputTypeChange(_select: HTMLSelectElement): void {
+    syncLatencyFieldState();
+}
+
 function outVideoEncodingOptions(selected: string): string {
     const encodings = state.config.encodings ?? ['copy', '720p', '1080p'];
     return encodings
@@ -721,6 +739,9 @@ export function openAddOutput(pipelineId: string): void {
     currentInputIsSrt = state.pipelines.find((p) => p.id === pipelineId)?.input.isSrt ?? false;
     (document.getElementById('out-video-encoding-input') as HTMLSelectElement).innerHTML =
         outVideoEncodingOptions('copy');
+    (document.getElementById('out-type-input') as HTMLSelectElement).value = 'rtmp';
+    (document.getElementById('out-latency-input') as HTMLInputElement).value = '';
+    syncLatencyFieldState();
     populateSinks(pipelineTracks(pipelineId), []);
     (document.getElementById('out-modal-title') as HTMLElement).textContent = 'Add Output';
     (document.getElementById('out-save-btn') as HTMLButtonElement).disabled = false;
@@ -742,6 +763,13 @@ export function openEditOutput(pipelineId: string, outId: string): void {
     currentInputIsSrt = state.pipelines.find((p) => p.id === pipelineId)?.input.isSrt ?? false;
     (document.getElementById('out-video-encoding-input') as HTMLSelectElement).innerHTML =
         outVideoEncodingOptions(output.videoEncoding);
+    const isSrtOutput = output.srtLatencyMs != null || output.sinks[0]?.url.startsWith('srt://');
+    (document.getElementById('out-type-input') as HTMLSelectElement).value = isSrtOutput
+        ? 'srt'
+        : 'rtmp';
+    (document.getElementById('out-latency-input') as HTMLInputElement).value =
+        output.srtLatencyMs != null ? String(output.srtLatencyMs) : '';
+    syncLatencyFieldState();
     populateSinks(pipelineTracks(pipelineId), output.sinks);
     (document.getElementById('out-modal-title') as HTMLElement).textContent = 'Edit Output';
 
@@ -831,10 +859,26 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
         }
     }
 
-    if (!name || !sinksValid || sinks.length === 0) return;
+    const outputTypeIsSrt =
+        (document.getElementById('out-type-input') as HTMLSelectElement).value === 'srt';
+    const latencyInput = document.getElementById('out-latency-input') as HTMLInputElement;
+    const latencyRaw = latencyInput.value.trim();
+    let srtLatencyMs: number | null = null;
+    let latencyValid = true;
+    if (outputTypeIsSrt && latencyRaw) {
+        const parsedLatency = Number(latencyRaw);
+        if (!Number.isInteger(parsedLatency) || parsedLatency <= 0) {
+            latencyValid = false;
+        } else {
+            srtLatencyMs = parsedLatency;
+        }
+    }
+    latencyInput.classList.toggle('input-error', !latencyValid);
+
+    if (!name || !sinksValid || !latencyValid || sinks.length === 0) return;
 
     await withBusy(btn, async () => {
-        const payload = { name, videoEncoding, sinks };
+        const payload = { name, videoEncoding, sinks, srtLatencyMs };
         const result = outId
             ? await api.updateOutput(pipelineId, outId, payload)
             : await api.createOutput(pipelineId, payload);
@@ -988,7 +1032,12 @@ export async function showSrsLogs(): Promise<void> {
 function parseOutputsPayload(
     text: string,
 ):
-    | { name: string; videoEncoding: string; sinks: { url: string; audioEncoding: string }[] }[]
+    | {
+          name: string;
+          videoEncoding: string;
+          sinks: { url: string; audioEncoding: string }[];
+          srtLatencyMs: number | null;
+      }[]
     | null {
     let parsed: unknown;
     try {
@@ -1005,13 +1054,14 @@ function parseOutputsPayload(
         name: string;
         videoEncoding: string;
         sinks: { url: string; audioEncoding: string }[];
+        srtLatencyMs: number | null;
     }[] = [];
     for (const item of parsed) {
         if (!item || typeof item !== 'object') {
             api.showError('Invalid output format in clipboard.');
             return null;
         }
-        const { name, videoEncoding, sinks } = item as Record<string, unknown>;
+        const { name, videoEncoding, sinks, srtLatencyMs } = item as Record<string, unknown>;
         if (typeof name !== 'string' || !name.trim()) {
             api.showError('Each output must have a non-empty name.');
             return null;
@@ -1022,6 +1072,14 @@ function parseOutputsPayload(
         }
         if (!Array.isArray(sinks) || sinks.length === 0) {
             api.showError('Each output must have at least one sink.');
+            return null;
+        }
+        if (
+            srtLatencyMs !== undefined &&
+            srtLatencyMs !== null &&
+            (typeof srtLatencyMs !== 'number' || !Number.isInteger(srtLatencyMs) || srtLatencyMs <= 0)
+        ) {
+            api.showError('Each output srtLatencyMs must be a positive integer or null.');
             return null;
         }
         const validSinks: { url: string; audioEncoding: string }[] = [];
@@ -1041,7 +1099,12 @@ function parseOutputsPayload(
             }
             validSinks.push({ url, audioEncoding });
         }
-        outputs.push({ name: name.trim(), videoEncoding, sinks: validSinks });
+        outputs.push({
+            name: name.trim(),
+            videoEncoding,
+            sinks: validSinks,
+            srtLatencyMs: (srtLatencyMs as number | null | undefined) ?? null,
+        });
     }
     if (outputs.length === 0) {
         api.showError('No outputs found in clipboard.');
@@ -1076,10 +1139,11 @@ export async function stopAllOutputs(pipelineId: string, btn: HTMLButtonElement)
 export async function copyOutputs(pipelineId: string): Promise<void> {
     const outputs = (state.config.outputs ?? [])
         .filter((o) => String(o.pipelineId) === pipelineId)
-        .map(({ name, videoEncoding, sinks }) => ({
+        .map(({ name, videoEncoding, sinks, srtLatencyMs }) => ({
             name,
             videoEncoding,
             sinks: sinks.map(({ url, audioEncoding }) => ({ url, audioEncoding })),
+            srtLatencyMs,
         }));
     await copyText(JSON.stringify(outputs, null, 2));
 }
