@@ -150,6 +150,49 @@ This resets the password to `admin` and restarts the service.
 
 ---
 
+## Security
+
+**Dashboard/API auth is intentionally simple.** It's a single shared password
+(see [Authentication](#authentication)) behind a session cookie — no
+per-user accounts, no MFA, no CSRF token beyond `SameSite=Strict`, and the
+app itself never terminates TLS (it's plain `app.listen` on 8080; the
+cookie isn't marked `Secure`). That's a deliberate tradeoff, not an
+oversight: this app is designed to be reached through a zero-trust tunnel
+(e.g. Cloudflare Tunnel + Cloudflare Access) rather than exposed to the raw
+internet. The tunnel is expected to provide TLS, identity-based access
+control, and the real perimeter; the built-in password is just a lightweight
+second factor for whoever's already authenticated through that layer, plus a
+login-rate-limit (see `src/api/auth.ts`) against brute force if it's ever
+reached directly. If you expose port 8080 straight to the internet instead
+of through a tunnel, put a real reverse proxy (TLS + rate limiting) in front
+of it rather than relying on the dashboard password alone.
+
+**RTMP/SRT ingest ports (21935, 10080, 10081) are different** — they have
+to stay open to the raw internet so OBS/hardware encoders can reach them, so
+they're hardened at the SRS/relay/fail2ban layer instead:
+- SRT (`10080`, `10081`) requires a passphrase, checked at the handshake
+  before a connection is accepted at all — see
+  [SRS and SRT relay config](#srs-and-srt-relay-config).
+- Every publish attempt (RTMP or SRT) is checked against a per-pipeline
+  stream key via SRS's `on_publish` hook; unknown keys are rejected before
+  any restream starts.
+- `on_play` rejects any playback request not from loopback, so the public
+  ports are ingest-only — nothing can pull a stream back out through SRS
+  directly.
+- Two fail2ban jails (set up by `server-install.sh`) ban IPs after repeated
+  rejected publishes/plays, and after repeated bad SRT passphrases against
+  the relay's own listener (`10081`).
+- RTMP listens on a non-default port (`21935`, not `1935`) to cut down on
+  generic scanner noise.
+- Known gap: bad-passphrase attempts directly against SRS's own SRT listener
+  (`10080`) aren't logged in a way fail2ban can act on — see
+  [Known issues](#srt-connections-with-a-bad-passphrase-are-not-blocked-by-fail2ban).
+
+Never expose `1985` (SRS HTTP API) or `8081` (relay status) — the app only
+talks to those over loopback.
+
+---
+
 ## Publishing to a pipeline
 
 ffmpeg test commands using the default SRT `output_port` (`10080`) from
