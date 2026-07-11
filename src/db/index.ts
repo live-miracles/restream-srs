@@ -25,33 +25,15 @@ const PIPELINE_LOG_CAP = 100;
 const LOG_RETENTION_LIMIT = 100;
 const OUTPUT_ERROR_HISTORY_LIMIT = 5;
 
-function legacyErrorString(error: OutputErrorRecord | null): string | null {
+// Output.lastError's wire format predates the history array and stays
+// "<ts_ms>\n<message>" so existing frontend parsing keeps working.
+function toLastErrorString(error: OutputErrorRecord | null): string | null {
     return error ? `${error.ts}\n${error.message}` : null;
 }
 
-function parseOutputErrorHistory(raw: string | null | undefined): OutputErrorRecord[] {
+function parseOutputErrorHistory(raw: string | null): OutputErrorRecord[] {
     if (!raw) return [];
-    try {
-        const parsed = JSON.parse(raw) as unknown;
-        if (Array.isArray(parsed)) {
-            return parsed
-                .filter(
-                    (item): item is OutputErrorRecord =>
-                        !!item &&
-                        typeof item === 'object' &&
-                        typeof (item as OutputErrorRecord).ts === 'number' &&
-                        typeof (item as OutputErrorRecord).message === 'string',
-                )
-                .slice(-OUTPUT_ERROR_HISTORY_LIMIT);
-        }
-    } catch {
-        /* legacy single-error format */
-    }
-
-    const nl = raw.indexOf('\n');
-    if (nl === -1) return [{ ts: 0, message: raw }];
-    const ts = parseInt(raw.slice(0, nl), 10);
-    return [{ ts: isNaN(ts) ? 0 : ts, message: raw.slice(nl + 1) }];
+    return (JSON.parse(raw) as OutputErrorRecord[]).slice(-OUTPUT_ERROR_HISTORY_LIMIT);
 }
 
 function encodeOutputErrorHistory(history: OutputErrorRecord[]): string {
@@ -193,7 +175,7 @@ export function createDb(dbPath?: string): Db {
             desiredState: row.desired_state as 'running' | 'stopped',
             videoEncoding: (row.encoding as string) || 'copy',
             sinks: JSON.parse(row.sinks as string) as OutputSink[],
-            lastError: legacyErrorString(
+            lastError: toLastErrorString(
                 parseOutputErrorHistory(row.last_error as string | null).at(-1) ?? null,
             ),
         };
@@ -432,7 +414,7 @@ export function createDb(dbPath?: string): Db {
             return (stmtLoadOutputIds.all() as Record<string, unknown>[]).map((r) => ({
                 id: r.id as string,
                 pipelineId: r.pipeline_id as number,
-                lastError: legacyErrorString(
+                lastError: toLastErrorString(
                     parseOutputErrorHistory(r.last_error as string | null).at(-1) ?? null,
                 ),
             }));
