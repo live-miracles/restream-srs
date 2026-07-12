@@ -471,8 +471,8 @@ const SERVERS = [
     {
         label: 'Custom SRT',
         prefix: '',
-        keyLabel: 'SRT URL',
-        placeholder: 'srt://host:port?streamid=...',
+        keyLabel: 'SRT Settings',
+        placeholder: '',
     },
     {
         label: 'YT RTMP',
@@ -512,6 +512,33 @@ function isRestreamIdx(idx: number): boolean {
     return idx === RESTREAM_RTMP_IDX || idx === RESTREAM_SRT_IDX;
 }
 
+function isSrtServerIdx(idx: number): boolean {
+    return idx === CUSTOM_SRT_IDX || idx === RESTREAM_SRT_IDX;
+}
+
+function outputTypeIsSrt(): boolean {
+    const select = document.getElementById('out-type-input') as HTMLSelectElement | null;
+    return select?.value === 'srt';
+}
+
+function defaultServerIdxForOutputType(): number {
+    return outputTypeIsSrt() ? CUSTOM_SRT_IDX : CUSTOM_RTMP_IDX;
+}
+
+function serverOptionsHtml(selectedIdx: number): string {
+    const selectedIsSrt = isSrtServerIdx(selectedIdx);
+    return (
+        '<option value="" disabled>Server</option>' +
+        SERVERS.map((s, i) => ({ s, i }))
+            .filter(({ i }) => isSrtServerIdx(i) === selectedIsSrt)
+            .map(
+                ({ s, i }) =>
+                    `<option value="${i}"${i === selectedIdx ? ' selected' : ''}>${s.label}</option>`,
+            )
+            .join('')
+    );
+}
+
 function buildInstagramUrl(key: string): string {
     const m = key.match(/[?&]s_prp=([^&]+)/);
     const sPrp = m ? m[1] : '';
@@ -537,6 +564,61 @@ function detectServer(url: string): { idx: number; key: string } {
     return { idx: url.startsWith('srt://') ? CUSTOM_SRT_IDX : CUSTOM_RTMP_IDX, key: url };
 }
 
+type SrtFormSettings = {
+    mode: 'caller' | 'listener';
+    host: string;
+    port: number | null;
+    latencyMs: number | null;
+    passphrase: string;
+    pbKeyLen: 16 | 24 | 32 | null;
+    streamId: string;
+};
+
+const DEFAULT_SRT_SETTINGS: SrtFormSettings = {
+    mode: 'caller',
+    host: '',
+    port: null,
+    latencyMs: null,
+    passphrase: '',
+    pbKeyLen: null,
+    streamId: '',
+};
+
+function parseSrtUrl(url: string): SrtFormSettings {
+    if (!url.startsWith('srt://')) return { ...DEFAULT_SRT_SETTINGS };
+    try {
+        const parsed = new URL(url);
+        const latency = Number(parsed.searchParams.get('latency') ?? '');
+        const port = Number(parsed.port || '');
+        const pbKeyLen = Number(parsed.searchParams.get('pbkeylen') ?? '');
+        return {
+            mode: parsed.searchParams.get('mode') === 'listener' ? 'listener' : 'caller',
+            host: parsed.hostname,
+            port: Number.isInteger(port) && port > 0 ? port : null,
+            latencyMs: Number.isInteger(latency) && latency > 0 ? Math.round(latency / 1000) : null,
+            passphrase: parsed.searchParams.get('passphrase') ?? '',
+            pbKeyLen: pbKeyLen === 16 || pbKeyLen === 24 || pbKeyLen === 32 ? pbKeyLen : null,
+            streamId: parsed.searchParams.get('streamid') ?? '',
+        };
+    } catch {
+        return { ...DEFAULT_SRT_SETTINGS };
+    }
+}
+
+function buildSrtUrl(
+    settings: Omit<SrtFormSettings, 'port' | 'latencyMs'> & { port: number; latencyMs: number },
+): string {
+    const params = new URLSearchParams();
+    params.set('mode', settings.mode);
+    params.set('latency', String(settings.latencyMs * 1000));
+    if (settings.passphrase) {
+        params.set('passphrase', settings.passphrase);
+        params.set('pbkeylen', String(settings.pbKeyLen ?? 32));
+    }
+    if (settings.streamId) params.set('streamid', settings.streamId);
+    return `srt://${settings.host}:${settings.port}?${params.toString()}`;
+}
+
 function restreamPipelineOpts(selectedId: string): string {
     const pipelines = state.config.pipelines ?? [];
     if (!pipelines.length) return '<option value="" disabled>No pipelines</option>';
@@ -556,6 +638,18 @@ function sinkKeyFieldHtml(idx: number, key: string): string {
     if (isRestreamIdx(idx)) {
         return `<select class="select select-sm w-full js-sink-key" onchange="this.classList.remove('select-error')">${restreamPipelineOpts(key)}</select>`;
     }
+    if (idx === CUSTOM_SRT_IDX) {
+        const srt = parseSrtUrl(key);
+        return `<input type="number" min="1" step="1" class="input input-sm w-32 font-mono text-xs js-srt-latency" placeholder="Latency (ms)" value="${srt.latencyMs ?? ''}" oninput="this.classList.remove('input-error')" />
+            <input type="text" class="input input-sm w-32 font-mono text-xs js-srt-passphrase" placeholder="Passphrase" value="${escapeHtml(srt.passphrase)}" oninput="this.classList.remove('input-error')" />
+            <select class="select select-sm w-28 js-srt-keylen" title="Key length">
+                <option value="" disabled${srt.pbKeyLen === null ? ' selected' : ''}>Key Length</option>
+                <option value="16"${srt.pbKeyLen === 16 ? ' selected' : ''}>16</option>
+                <option value="24"${srt.pbKeyLen === 24 ? ' selected' : ''}>24</option>
+                <option value="32"${srt.pbKeyLen === 32 ? ' selected' : ''}>32</option>
+            </select>
+            <input type="text" class="input input-sm w-32 font-mono text-xs js-srt-streamid" placeholder="Stream ID" value="${escapeHtml(srt.streamId)}" oninput="this.classList.remove('input-error')" />`;
+    }
     const s = SERVERS[idx];
     return `<input type="text" class="input input-sm w-full font-mono text-xs js-sink-key"
                placeholder="${s.placeholder}" value="${escapeHtml(key)}"
@@ -566,22 +660,12 @@ function outModal(): HTMLDialogElement {
     return document.getElementById('edit-out-modal') as HTMLDialogElement;
 }
 
-// The Output Type select is UI-only (never sent to the backend): it just
-// gates whether the Latency input is editable. Latency is meaningless for
-// RTMP, so switching to RTMP disables and clears it.
-function syncLatencyFieldState(): void {
-    const typeSelect = document.getElementById('out-type-input') as HTMLSelectElement;
-    const latencyInput = document.getElementById('out-latency-input') as HTMLInputElement;
-    const isSrt = typeSelect.value === 'srt';
-    latencyInput.disabled = !isSrt;
-    if (!isSrt) {
-        latencyInput.value = '';
-        latencyInput.classList.remove('input-error');
-    }
-}
-
 export function onOutputTypeChange(_select: HTMLSelectElement): void {
-    syncLatencyFieldState();
+    document.querySelectorAll('#out-sinks-container .js-sink-row').forEach((row) => {
+        const audio = (row.querySelector('.js-sink-audio') as HTMLSelectElement | null)?.value;
+        row.outerHTML = sinkRowHtml(currentSinkTracks, '', audio ?? 'copy');
+    });
+    refreshSinkAudioMode();
 }
 
 function outVideoEncodingOptions(selected: string): string {
@@ -626,12 +710,52 @@ function audioOptionsHtml(tracks: AudioTrackInfo[], selected: string): string {
 }
 
 function sinkRowHtml(tracks: AudioTrackInfo[], url = '', audioEncoding = 'copy'): string {
-    const { idx, key } = url ? detectServer(url) : { idx: CUSTOM_RTMP_IDX, key: '' };
-    const serverOpts =
-        '<option value="" disabled>Server</option>' +
-        SERVERS.map(
-            (s, i) => `<option value="${i}"${i === idx ? ' selected' : ''}>${s.label}</option>`,
-        ).join('');
+    const { idx, key } = url
+        ? detectServer(url)
+        : { idx: defaultServerIdxForOutputType(), key: '' };
+    return sinkRowHtmlForServer(tracks, idx, key, audioEncoding);
+}
+
+function sinkRowHtmlForServer(
+    tracks: AudioTrackInfo[],
+    idx: number,
+    key = '',
+    audioEncoding = 'copy',
+): string {
+    const serverOpts = serverOptionsHtml(idx);
+    if (idx === CUSTOM_SRT_IDX) {
+        const srt = parseSrtUrl(key);
+        return `
+        <div class="js-sink-row rounded-box bg-base-200 px-2 py-2">
+          <div class="grid grid-cols-[1fr_auto] gap-2">
+            <div class="min-w-0 space-y-2">
+              <div class="flex flex-wrap gap-1">
+                <select class="select select-sm w-36 js-sink-server" onchange="outSinkServerChange(this)">${serverOpts}</select>
+                <select class="select select-sm w-32 js-sink-audio">${audioOptionsHtml(tracks, audioEncoding)}</select>
+                <input type="text" class="input input-sm w-40 font-mono text-xs js-srt-host" placeholder="Hostname" value="${escapeHtml(srt.host)}" oninput="this.classList.remove('input-error')" />
+                <input type="number" min="1" max="65535" class="input input-sm w-[4.5rem] font-mono text-xs js-srt-port" placeholder="Port" value="${srt.port ?? ''}" oninput="this.classList.remove('input-error')" />
+              </div>
+              <div class="flex flex-wrap gap-1 js-sink-key-fieldset">
+                <select class="select select-sm w-28 js-srt-mode" title="Type">
+                    <option value="caller"${srt.mode === 'caller' ? ' selected' : ''}>Caller</option>
+                    <option value="listener"${srt.mode === 'listener' ? ' selected' : ''}>Listener</option>
+                </select>
+                ${sinkKeyFieldHtml(idx, key)}
+              </div>
+            </div>
+            <div class="flex items-center">
+              <button type="button" class="btn btn-xs btn-error btn-outline js-sink-remove"
+                      onclick="outRemoveSink(this)" title="Remove destination">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                <line x1="10" x2="10" y1="11" y2="17" /><line x1="14" x2="14" y1="11" y2="17" />
+              </svg>
+              </button>
+            </div>
+          </div>
+        </div>`;
+    }
     return `
     <div class="js-sink-row flex items-center gap-2 rounded-box bg-base-200 px-2 py-1">
       <select class="select select-sm w-36 shrink-0 js-sink-server" onchange="outSinkServerChange(this)">${serverOpts}</select>
@@ -708,18 +832,9 @@ export function onSinkServerChange(select: HTMLSelectElement): void {
     const row = select.closest('.js-sink-row');
     if (!row) return;
     const idx = parseInt(select.value);
-    const fieldset = row.querySelector('.js-sink-key-fieldset') as HTMLElement | null;
-    if (!fieldset) return;
-    const existing = fieldset.querySelector('.js-sink-key') as HTMLElement | null;
-    const wasRestream = existing?.tagName === 'SELECT';
-    const nowRestream = isRestreamIdx(idx);
-    if (wasRestream !== nowRestream) {
-        const el = fieldset.querySelector('.js-sink-key');
-        if (el) el.outerHTML = sinkKeyFieldHtml(idx, '');
-    } else if (!nowRestream) {
-        const input = fieldset.querySelector('.js-sink-key') as HTMLInputElement | null;
-        if (input) input.placeholder = SERVERS[idx].placeholder;
-    }
+    const audio = (row.querySelector('.js-sink-audio') as HTMLSelectElement | null)?.value;
+    row.outerHTML = sinkRowHtmlForServer(currentSinkTracks, idx, '', audio ?? 'copy');
+    refreshSinkAudioMode();
 }
 
 function pipelineTracks(pipelineId: string): AudioTrackInfo[] {
@@ -740,8 +855,6 @@ export function openAddOutput(pipelineId: string): void {
     (document.getElementById('out-video-encoding-input') as HTMLSelectElement).innerHTML =
         outVideoEncodingOptions('copy');
     (document.getElementById('out-type-input') as HTMLSelectElement).value = 'rtmp';
-    (document.getElementById('out-latency-input') as HTMLInputElement).value = '';
-    syncLatencyFieldState();
     populateSinks(pipelineTracks(pipelineId), []);
     (document.getElementById('out-modal-title') as HTMLElement).textContent = 'Add Output';
     (document.getElementById('out-save-btn') as HTMLButtonElement).disabled = false;
@@ -763,13 +876,8 @@ export function openEditOutput(pipelineId: string, outId: string): void {
     currentInputIsSrt = state.pipelines.find((p) => p.id === pipelineId)?.input.isSrt ?? false;
     (document.getElementById('out-video-encoding-input') as HTMLSelectElement).innerHTML =
         outVideoEncodingOptions(output.videoEncoding);
-    const isSrtOutput = output.srtLatencyMs != null || output.sinks[0]?.url.startsWith('srt://');
-    (document.getElementById('out-type-input') as HTMLSelectElement).value = isSrtOutput
-        ? 'srt'
-        : 'rtmp';
-    (document.getElementById('out-latency-input') as HTMLInputElement).value =
-        output.srtLatencyMs != null ? String(output.srtLatencyMs) : '';
-    syncLatencyFieldState();
+    (document.getElementById('out-type-input') as HTMLSelectElement).value =
+        output.sinks[0]?.url.startsWith('srt://') ? 'srt' : 'rtmp';
     populateSinks(pipelineTracks(pipelineId), output.sinks);
     (document.getElementById('out-modal-title') as HTMLElement).textContent = 'Edit Output';
 
@@ -787,6 +895,53 @@ function isValidSinkUrl(serverIdx: number, url: string): boolean {
         return url.startsWith('rtmp://') || url.startsWith('rtmps://');
     if (serverIdx === CUSTOM_SRT_IDX) return url.startsWith('srt://');
     return true;
+}
+
+function readSrtSettings(row: Element): { url: string } | { error: true } {
+    const hostEl = row.querySelector('.js-srt-host') as HTMLInputElement | null;
+    const portEl = row.querySelector('.js-srt-port') as HTMLInputElement | null;
+    const latencyEl = row.querySelector('.js-srt-latency') as HTMLInputElement | null;
+    const passphraseEl = row.querySelector('.js-srt-passphrase') as HTMLInputElement | null;
+    const modeEl = row.querySelector('.js-srt-mode') as HTMLSelectElement | null;
+    const keyLenEl = row.querySelector('.js-srt-keylen') as HTMLSelectElement | null;
+    const streamIdEl = row.querySelector('.js-srt-streamid') as HTMLInputElement | null;
+    if (!hostEl || !portEl || !latencyEl || !passphraseEl || !modeEl || !keyLenEl || !streamIdEl) {
+        return { error: true };
+    }
+
+    const host = hostEl.value.trim();
+    const port = Number(portEl.value.trim());
+    const latencyMs = Number(latencyEl.value.trim());
+    const passphrase = passphraseEl.value.trim();
+    const pbKeyLen = keyLenEl.value ? (Number(keyLenEl.value) as 16 | 24 | 32) : null;
+    const streamId = streamIdEl.value.trim();
+
+    const portValid = Number.isInteger(port) && port >= 1 && port <= 65535;
+    const latencyValid = Number.isInteger(latencyMs) && latencyMs > 0;
+    const passphraseValid = !passphrase || (passphrase.length >= 10 && passphrase.length <= 79);
+    const keyLenValid = !passphrase || pbKeyLen !== null;
+
+    hostEl.classList.toggle('input-error', !host);
+    portEl.classList.toggle('input-error', !portValid);
+    latencyEl.classList.toggle('input-error', !latencyValid);
+    passphraseEl.classList.toggle('input-error', !passphraseValid);
+    keyLenEl.classList.toggle('input-error', !keyLenValid);
+
+    if (!host || !portValid || !latencyValid || !passphraseValid || !keyLenValid) {
+        return { error: true };
+    }
+
+    return {
+        url: buildSrtUrl({
+            mode: modeEl.value === 'listener' ? 'listener' : 'caller',
+            host,
+            port,
+            latencyMs,
+            passphrase,
+            pbKeyLen,
+            streamId,
+        }),
+    };
 }
 
 export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
@@ -808,13 +963,23 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
         const serverIdx = parseInt(
             (row.querySelector('.js-sink-server') as HTMLSelectElement).value,
         );
-        const keyEl = row.querySelector('.js-sink-key') as HTMLInputElement | HTMLSelectElement;
-        const key = keyEl.value.trim();
+        const keyEl = row.querySelector('.js-sink-key') as
+            | HTMLInputElement
+            | HTMLSelectElement
+            | null;
+        const key = keyEl?.value.trim() ?? '';
         const audioEncoding = (row.querySelector('.js-sink-audio') as HTMLSelectElement).value;
         let url: string;
-        if (isRestreamIdx(serverIdx)) {
+        if (serverIdx === CUSTOM_SRT_IDX) {
+            const srt = readSrtSettings(row);
+            if ('error' in srt) {
+                sinksValid = false;
+                continue;
+            }
+            url = srt.url;
+        } else if (isRestreamIdx(serverIdx)) {
             const pipeline = (state.config.pipelines ?? []).find((p) => String(p.id) === key);
-            keyEl.classList.toggle('select-error', !pipeline);
+            keyEl?.classList.toggle('select-error', !pipeline);
             if (!pipeline) {
                 sinksValid = false;
                 continue;
@@ -859,26 +1024,10 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
         }
     }
 
-    const outputTypeIsSrt =
-        (document.getElementById('out-type-input') as HTMLSelectElement).value === 'srt';
-    const latencyInput = document.getElementById('out-latency-input') as HTMLInputElement;
-    const latencyRaw = latencyInput.value.trim();
-    let srtLatencyMs: number | null = null;
-    let latencyValid = true;
-    if (outputTypeIsSrt && latencyRaw) {
-        const parsedLatency = Number(latencyRaw);
-        if (!Number.isInteger(parsedLatency) || parsedLatency <= 0) {
-            latencyValid = false;
-        } else {
-            srtLatencyMs = parsedLatency;
-        }
-    }
-    latencyInput.classList.toggle('input-error', !latencyValid);
-
-    if (!name || !sinksValid || !latencyValid || sinks.length === 0) return;
+    if (!name || !sinksValid || sinks.length === 0) return;
 
     await withBusy(btn, async () => {
-        const payload = { name, videoEncoding, sinks, srtLatencyMs };
+        const payload = { name, videoEncoding, sinks };
         const result = outId
             ? await api.updateOutput(pipelineId, outId, payload)
             : await api.createOutput(pipelineId, payload);
@@ -1045,7 +1194,6 @@ function parseOutputsPayload(text: string):
           name: string;
           videoEncoding: string;
           sinks: { url: string; audioEncoding: string }[];
-          srtLatencyMs: number | null;
       }[]
     | null {
     let parsed: unknown;
@@ -1063,14 +1211,13 @@ function parseOutputsPayload(text: string):
         name: string;
         videoEncoding: string;
         sinks: { url: string; audioEncoding: string }[];
-        srtLatencyMs: number | null;
     }[] = [];
     for (const item of parsed) {
         if (!item || typeof item !== 'object') {
             api.showError('Invalid output format in clipboard.');
             return null;
         }
-        const { name, videoEncoding, sinks, srtLatencyMs } = item as Record<string, unknown>;
+        const { name, videoEncoding, sinks } = item as Record<string, unknown>;
         if (typeof name !== 'string' || !name.trim()) {
             api.showError('Each output must have a non-empty name.');
             return null;
@@ -1081,16 +1228,6 @@ function parseOutputsPayload(text: string):
         }
         if (!Array.isArray(sinks) || sinks.length === 0) {
             api.showError('Each output must have at least one sink.');
-            return null;
-        }
-        if (
-            srtLatencyMs !== undefined &&
-            srtLatencyMs !== null &&
-            (typeof srtLatencyMs !== 'number' ||
-                !Number.isInteger(srtLatencyMs) ||
-                srtLatencyMs <= 0)
-        ) {
-            api.showError('Each output srtLatencyMs must be a positive integer or null.');
             return null;
         }
         const validSinks: { url: string; audioEncoding: string }[] = [];
@@ -1114,7 +1251,6 @@ function parseOutputsPayload(text: string):
             name: name.trim(),
             videoEncoding,
             sinks: validSinks,
-            srtLatencyMs: (srtLatencyMs as number | null | undefined) ?? null,
         });
     }
     if (outputs.length === 0) {
@@ -1150,11 +1286,10 @@ export async function stopAllOutputs(pipelineId: string, btn: HTMLButtonElement)
 export async function copyOutputs(pipelineId: string): Promise<void> {
     const outputs = (state.config.outputs ?? [])
         .filter((o) => String(o.pipelineId) === pipelineId)
-        .map(({ name, videoEncoding, sinks, srtLatencyMs }) => ({
+        .map(({ name, videoEncoding, sinks }) => ({
             name,
             videoEncoding,
             sinks: sinks.map(({ url, audioEncoding }) => ({ url, audioEncoding })),
-            srtLatencyMs,
         }));
     await copyText(JSON.stringify(outputs, null, 2));
 }

@@ -25,10 +25,6 @@ export function setupDatabaseSchema(db: Database.Database): void {
     // own table. The pull protocol isn't stored — it's derived at runtime from
     // how the input is currently published (SRT input -> SRT pull, RTMP input ->
     // RTMP pull).
-    // srt_latency_ms is an output-level setting (shared by all of an output's
-    // sinks, not per-sink) appended as &latency=<us> to SRT sink URLs when the
-    // ffmpeg command is built; NULL means unconfigured, and it has no effect on
-    // RTMP sinks.
     // last_error stores up to five recent ffmpeg failures as JSON:
     // [{ts:<ms>,message:<text>}].
     db.prepare(
@@ -40,7 +36,6 @@ export function setupDatabaseSchema(db: Database.Database): void {
             desired_state   TEXT NOT NULL DEFAULT 'stopped',
             encoding        TEXT NOT NULL DEFAULT 'copy',
             sinks           TEXT NOT NULL DEFAULT '[]',
-            srt_latency_ms  INTEGER,
             last_error      TEXT,
             FOREIGN KEY(pipeline_id) REFERENCES pipelines(id) ON DELETE CASCADE
         )`,

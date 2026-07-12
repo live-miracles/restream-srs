@@ -1931,10 +1931,9 @@ function renderOutputCard(
                 <button class="btn btn-xs btn-ghost p-0 leading-none shrink-0 ${lastErrorColor}" data-action="error-info" data-out-id="${o.id}" title="View full error">${ICON_INFO}</button>
            </div>`
             : '';
-    const historyBtn =
-        o.hasErrorHistory
-            ? `<button class="btn btn-xs btn-ghost ${lastErrorColor}" data-action="error-info" data-out-id="${o.id}" title="Error history">${ICON_HISTORY}</button>`
-            : '';
+    const historyBtn = o.hasErrorHistory
+        ? `<button class="btn btn-xs btn-ghost ${lastErrorColor}" data-action="error-info" data-out-id="${o.id}" title="Error history">${ICON_HISTORY}</button>`
+        : '';
     const warningHtml = o.warningReason
         ? `<div class="flex items-center gap-2 pl-2 mt-0.5 min-w-0">
                 <span class="text-warning shrink-0">${ICON_WARN}</span>

@@ -111,20 +111,6 @@ describe('Output CRUD', () => {
         assert.equal(got?.sinks[0].audioEncoding, 'copy');
         assert.equal(got?.desiredState, 'stopped');
         assert.equal(got?.videoEncoding, 'copy');
-        assert.equal(got?.srtLatencyMs, null);
-    });
-
-    test('createOutput persists an output-level srtLatencyMs', () => {
-        const db = makeDb();
-        const p = db.createPipeline();
-        const o = db.createOutput({
-            pipelineId: p.id,
-            name: 'SRT out',
-            sinks: [{ url: 'srt://host:10080?streamid=x' }],
-            srtLatencyMs: 200,
-        });
-        const got = db.listOutputs().find((out) => out.id === o.id);
-        assert.equal(got?.srtLatencyMs, 200);
     });
 
     test('createOutput persists multiple sinks with per-sink audio encoding', () => {
@@ -231,30 +217,6 @@ describe('Output CRUD', () => {
         assert.equal(got?.sinks.length, 1);
         assert.equal(got?.sinks[0].url, 'rtmp://new');
         assert.equal(got?.sinks[0].audioEncoding, '2');
-        assert.equal(got?.srtLatencyMs, null);
-    });
-
-    test('updateOutput persists and clears srtLatencyMs', () => {
-        const db = makeDb();
-        const p = db.createPipeline();
-        const o = db.createOutput({
-            pipelineId: p.id,
-            name: 'X',
-            sinks: [{ url: 'srt://host:10080?streamid=x' }],
-        });
-        db.updateOutput(o.id, {
-            name: 'X',
-            videoEncoding: 'copy',
-            sinks: [{ url: 'srt://host:10080?streamid=x' }],
-            srtLatencyMs: 300,
-        });
-        assert.equal(db.listOutputs().find((out) => out.id === o.id)?.srtLatencyMs, 300);
-        db.updateOutput(o.id, {
-            name: 'X',
-            videoEncoding: 'copy',
-            sinks: [{ url: 'srt://host:10080?streamid=x' }],
-        });
-        assert.equal(db.listOutputs().find((out) => out.id === o.id)?.srtLatencyMs, null);
     });
 
     test('updateOutput replaces sinks rather than appending', () => {
