@@ -218,7 +218,6 @@ function readWhitelistIps(): string[] | null {
 
 const FAIL2BAN_JAIL_LABELS: Record<string, string> = {
     'restream-srs': 'Bad stream key (publish/play)',
-    'srt-bonding-relay': 'Bad SRT passphrase',
 };
 
 function fmtBanTs(ts: number | null): string {

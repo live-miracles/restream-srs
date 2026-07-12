@@ -131,10 +131,10 @@ check entirely — SRS and the relay treat empty the same as unset.
 Ingest is further locked down by SRS HTTP hooks handled by the app:
 `on_publish` rejects unknown stream keys, and `on_play` rejects any play not
 from loopback (only the app's own FFmpeg ever pulls streams), so the public
-ports are ingest-only. The installer also sets up two fail2ban jails: one
-that bans IPs after repeated rejected publishes/plays (RTMP/SRT stream-key
-checks), and one that bans IPs after repeated bad SRT passphrases against
-`srt-bonding-relay`'s own listener on `10081`.
+ports are ingest-only. The installer also sets up a fail2ban jail that bans
+IPs after repeated rejected publishes/plays (RTMP/SRT stream-key checks) —
+see [Known issues](#srt-connections-with-a-bad-passphrase-are-not-blocked-by-fail2ban)
+for why there's no equivalent jail for bad SRT passphrases.
 
 ---
 
@@ -179,13 +179,13 @@ they're hardened at the SRS/relay/fail2ban layer instead:
 - `on_play` rejects any playback request not from loopback, so the public
   ports are ingest-only — nothing can pull a stream back out through SRS
   directly.
-- Two fail2ban jails (set up by `server-install.sh`) ban IPs after repeated
-  rejected publishes/plays, and after repeated bad SRT passphrases against
-  the relay's own listener (`10081`).
+- A fail2ban jail (set up by `server-install.sh`) bans IPs after repeated
+  rejected publishes/plays.
 - RTMP listens on a non-default port (`21935`, not `1935`) to cut down on
   generic scanner noise.
-- Known gap: bad-passphrase attempts directly against SRS's own SRT listener
-  (`10080`) aren't logged in a way fail2ban can act on — see
+- Known gap: bad-passphrase attempts against either SRT listener (`10080`
+  direct to SRS, `10081` via the relay) aren't logged in a way fail2ban can
+  act on — see
   [Known issues](#srt-connections-with-a-bad-passphrase-are-not-blocked-by-fail2ban).
 
 Never expose `1985` (SRS HTTP API) or `8081` (relay status) — the app only
@@ -283,11 +283,11 @@ Rerunning `npm run dev-install` also refreshes the sibling `../srt-bonding-relay
 repo when it has no local changes and rebuilds `./objs/srt-bonding-relay`.
 
 The SRS/relay install itself needs no root. It also sets up the same
-`restream-srs` / `srt-bonding-relay` fail2ban jails production uses (this
-does need `sudo`), so Settings -> "fail2ban Currently Banned" has something
-to show. Since `npm run dev` isn't a systemd unit, real rejected-publish
-attempts won't auto-ban locally the way they do in production - ban a
-harmless test-only IP by hand to see the table populated:
+`restream-srs` fail2ban jail production uses (this does need `sudo`), so
+Settings -> "fail2ban Currently Banned" has something to show. Since
+`npm run dev` isn't a systemd unit, real rejected-publish attempts won't
+auto-ban locally the way they do in production - ban a harmless test-only IP
+by hand to see the table populated:
 ```bash
 sudo fail2ban-client set restream-srs banip 203.0.113.5
 ```
@@ -550,16 +550,24 @@ involved, so the cascading restart doesn't happen.
 
 ### SRT connections with a bad passphrase are not blocked by fail2ban
 
-SRS's SRT server (port `10080`) rejects handshakes that fail its `passphrase`
-check — either the peer declares no encryption at all, or declares it but
-`SRTO_ENFORCEDENCRYPTION` fails the key exchange. Either way, the rejection
-happens *inside* the SRT handshake, before `srt_accept()` returns, so SRS's own
-log (`ERROR:UNSECURE` / "Password required or unexpected") never records the
-peer's IP. The `restream-srs` fail2ban jail only watches app-level
+Neither SRT listener logs a bad-passphrase rejection in a form fail2ban can
+act on, so there is no jail for either one:
+
+- SRS's own SRT server (port `10080`) rejects handshakes that fail its
+  `passphrase` check — either the peer declares no encryption at all, or
+  declares it but `SRTO_ENFORCEDENCRYPTION` fails the key exchange. Either
+  way, the rejection happens *inside* the SRT handshake, before
+  `srt_accept()` returns, so SRS's own log (`ERROR:UNSECURE` / "Password
+  required or unexpected") never records the peer's IP.
+- `srt-bonding-relay`'s listener (port `10081`) used to log a matchable
+  `[srt-relay] rejected connection (bad passphrase) from <HOST>` line from
+  its own `srt_accept()` KMSTATE check, and a dedicated `srt-bonding-relay`
+  fail2ban jail watched it. As of `srt-bonding-relay` v2.1.0 that line is no
+  longer logged, so the jail had nothing left to match and was removed.
+
+The `restream-srs` fail2ban jail only watches app-level
 `[srs-hook] rejected publish/play from <HOST>` lines from `restream-srs.service`
-(a different log source entirely), so there is currently no jail — and no way to
-build one from this log — that can ban repeat offenders hitting port `10080`
-directly with a bad or missing passphrase.
+(a different log source entirely), so it can't cover either SRT listener.
 
 This is not believed to be a practical brute-force risk: the configured
 passphrase is a long random string, and each guess requires a live SRT handshake

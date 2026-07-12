@@ -65,13 +65,13 @@ verify_sha256() {
     echo "Checksum OK: $(basename "$file")"
 }
 
-# Sets up the same `restream-srs` / `srt-bonding-relay` jails
-# scripts/server-install.sh sets up in production, plus the helper scripts the
-# dashboard calls via sudo for Settings -> IP Whitelist and "fail2ban Currently
-# Banned". Unlike production, `npm run dev` runs as you rather than a
-# dedicated service user, and isn't a systemd unit - so the jails'
-# `backend = systemd` won't see real rejected-publish attempts from a dev
-# run. To see the table populated, ban a harmless test-only IP by hand:
+# Sets up the same `restream-srs` jail scripts/server-install.sh sets up in
+# production, plus the helper scripts the dashboard calls via sudo for
+# Settings -> IP Whitelist and "fail2ban Currently Banned". Unlike production,
+# `npm run dev` runs as you rather than a dedicated service user, and isn't a
+# systemd unit - so the jail's `backend = systemd` won't see real
+# rejected-publish attempts from a dev run. To see the table populated, ban a
+# harmless test-only IP by hand:
 #   sudo fail2ban-client set restream-srs banip 203.0.113.5
 setup_fail2ban_dev() {
     if ! command -v apt-get &>/dev/null; then
@@ -85,6 +85,12 @@ setup_fail2ban_dev() {
 
     echo "Setting up fail2ban..."
     sudo apt-get install -y -q fail2ban
+
+    # Clean up the dead srt-bonding-relay jail from any previous run of this
+    # script - it can never trigger anymore (see server-install.sh).
+    sudo rm -f /etc/fail2ban/filter.d/srt-bonding-relay.conf \
+        /etc/fail2ban/jail.d/srt-bonding-relay.local \
+        /etc/fail2ban/jail.d/srt-bonding-relay-whitelist.local
 
     sudo tee /etc/fail2ban/filter.d/restream-srs.conf >/dev/null <<'EOF'
 [Definition]
@@ -104,31 +110,13 @@ findtime = 600
 bantime = 3600
 EOF
 
-    sudo tee /etc/fail2ban/filter.d/srt-bonding-relay.conf >/dev/null <<'EOF'
-[Definition]
-failregex = ^\[srt-relay\] rejected connection \(bad passphrase\) from <HOST>:
-journalmatch = _SYSTEMD_UNIT=srt-bonding-relay.service
-EOF
-
-    sudo tee /etc/fail2ban/jail.d/srt-bonding-relay.local >/dev/null <<'EOF'
-[srt-bonding-relay]
-enabled = true
-backend = systemd
-filter = srt-bonding-relay
-# Ban on all ports: an IP brute-forcing the SRT passphrase has no legitimate use here.
-banaction = iptables-allports
-maxretry = 5
-findtime = 600
-bantime = 3600
-EOF
-
     sudo systemctl restart fail2ban
 
     sudo tee /usr/local/sbin/restream-srs-fail2ban-apply >/dev/null <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-JAILS=(restream-srs srt-bonding-relay)
+JAIL=restream-srs
 
 if [[ "${1:-}" != "sync" ]]; then
     echo "usage: $0 sync <ip-or-cidr> [...]" >&2
@@ -164,29 +152,25 @@ for ip in "$@"; do
     }
 done
 
-for JAIL in "${JAILS[@]}"; do
-    CONF="/etc/fail2ban/jail.d/${JAIL}-whitelist.local"
-    TMP_CONF="$(mktemp "${CONF}.XXXXXX")"
-    {
-        echo "[$JAIL]"
-        if [[ $# -gt 0 ]]; then
-            printf 'ignoreip = %s\n' "$*"
-        fi
-    } > "$TMP_CONF"
-    chmod 644 "$TMP_CONF"
-    mv "$TMP_CONF" "$CONF"
-done
+CONF="/etc/fail2ban/jail.d/${JAIL}-whitelist.local"
+TMP_CONF="$(mktemp "${CONF}.XXXXXX")"
+{
+    echo "[$JAIL]"
+    if [[ $# -gt 0 ]]; then
+        printf 'ignoreip = %s\n' "$*"
+    fi
+} > "$TMP_CONF"
+chmod 644 "$TMP_CONF"
+mv "$TMP_CONF" "$CONF"
 
 if ! fail2ban-client ping >/dev/null 2>&1; then
-    echo "fail2ban is not running; whitelist files written and will apply once it starts" >&2
+    echo "fail2ban is not running; whitelist file written and will apply once it starts" >&2
     exit 1
 fi
 
-for JAIL in "${JAILS[@]}"; do
-    fail2ban-client reload "$JAIL" >/dev/null
-    for ip in "$@"; do
-        fail2ban-client set "$JAIL" unbanip "$ip" >/dev/null 2>&1 || true
-    done
+fail2ban-client reload "$JAIL" >/dev/null
+for ip in "$@"; do
+    fail2ban-client set "$JAIL" unbanip "$ip" >/dev/null 2>&1 || true
 done
 EOF
     sudo chmod 755 /usr/local/sbin/restream-srs-fail2ban-apply
@@ -199,7 +183,7 @@ import sqlite3
 import subprocess
 import sys
 
-JAILS = ["restream-srs", "srt-bonding-relay"]
+JAIL = "restream-srs"
 DB_PATH = "/var/lib/fail2ban/fail2ban.sqlite3"
 
 
@@ -247,16 +231,15 @@ def main():
         conn = None
 
     results = []
-    for jail in JAILS:
-        for ip in banned_ips(jail):
-            record = ban_record(conn, jail, ip) or {}
-            results.append({
-                "ip": ip,
-                "jail": jail,
-                "bannedAt": record.get("bannedAt"),
-                "unbanAt": record.get("unbanAt"),
-                "reason": record.get("reason"),
-            })
+    for ip in banned_ips(JAIL):
+        record = ban_record(conn, JAIL, ip) or {}
+        results.append({
+            "ip": ip,
+            "jail": JAIL,
+            "bannedAt": record.get("bannedAt"),
+            "unbanAt": record.get("unbanAt"),
+            "reason": record.get("reason"),
+        })
 
     if conn is not None:
         conn.close()
@@ -272,7 +255,7 @@ PYEOF
         | sudo tee /etc/sudoers.d/restream-srs-fail2ban-dev >/dev/null
     sudo visudo -cf /etc/sudoers.d/restream-srs-fail2ban-dev
 
-    echo "fail2ban: jails 'restream-srs'/'srt-bonding-relay' configured; dashboard fail2ban controls wired up for $USER"
+    echo "fail2ban: jail 'restream-srs' configured; dashboard fail2ban controls wired up for $USER"
 }
 
 mkdir -p "$REPO_DIR/objs"

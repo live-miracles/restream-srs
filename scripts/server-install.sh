@@ -256,7 +256,20 @@ step "9/10 fail2ban"
 # Bans IPs that repeatedly hit the on_publish/on_play hooks with bad stream
 # keys (i.e. brute-forcing RTMP, which has no passphrase). Reads the app's
 # journald output; the log format is emitted by src/api/srs.ts.
+#
+# There used to be a second jail here for bad SRT passphrases against
+# srt-bonding-relay's listener (10081), but srt-bonding-relay v2.1.0 stopped
+# logging that rejection, and SRS's own SRT listener (10080) never logged it
+# either (the handshake fails before srt_accept() returns) — see README's
+# "SRT connections with a bad passphrase are not blocked by fail2ban". With
+# neither SRT path logging anything to match on, this is the only jail left.
 apt-get install -y -q fail2ban
+# Clean up that dead jail from any previous install of this script - it can
+# never trigger anymore, and an orphaned jail.d/filter.d pair would otherwise
+# sit around forever since fail2ban only reads what's currently on disk.
+rm -f /etc/fail2ban/filter.d/srt-bonding-relay.conf \
+    /etc/fail2ban/jail.d/srt-bonding-relay.local \
+    /etc/fail2ban/jail.d/srt-bonding-relay-whitelist.local
 cat > /etc/fail2ban/filter.d/restream-srs.conf <<'EOF'
 [Definition]
 failregex = ^\[srs-hook\] rejected (?:publish|play) from <HOST>:
@@ -274,31 +287,9 @@ findtime = 600
 bantime = 3600
 EOF
 
-# Bans IPs that repeatedly fail the SRT passphrase handshake against the
-# bonding relay's own listener (10081). This is a separate journald unit
-# from restream-srs.service, so it needs its own filter/jail; the log format
-# is emitted by srt-bonding-relay's srt_accept() KMSTATE check.
-cat > /etc/fail2ban/filter.d/srt-bonding-relay.conf <<'EOF'
-[Definition]
-failregex = ^\[srt-relay\] rejected connection \(bad passphrase\) from <HOST>:
-journalmatch = _SYSTEMD_UNIT=srt-bonding-relay.service
-EOF
-cat > /etc/fail2ban/jail.d/srt-bonding-relay.local <<'EOF'
-[srt-bonding-relay]
-enabled = true
-backend = systemd
-filter = srt-bonding-relay
-# Ban on all ports: an IP brute-forcing the SRT passphrase has no legitimate use here.
-banaction = iptables-allports
-maxretry = 5
-findtime = 600
-bantime = 3600
-EOF
-
 systemctl enable fail2ban
 systemctl restart fail2ban
 echo "fail2ban: jail 'restream-srs' active (5 rejected publishes/plays in 10 min => 1 h ban)"
-echo "fail2ban: jail 'srt-bonding-relay' active (5 bad SRT passphrases in 10 min => 1 h ban)"
 
 # Lets the dashboard (Settings -> IP Whitelist) keep trusted IPs out of the
 # jail above and unban them live, without restarting fail2ban or
@@ -310,7 +301,7 @@ cat > /usr/local/sbin/restream-srs-fail2ban-apply <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-JAILS=(restream-srs srt-bonding-relay)
+JAIL=restream-srs
 
 if [[ "${1:-}" != "sync" ]]; then
     echo "usage: $0 sync <ip-or-cidr> [...]" >&2
@@ -346,38 +337,32 @@ for ip in "$@"; do
     }
 done
 
-# Fail2ban reads these files itself on its own next (re)start, so this write
-# alone is enough regardless of whether fail2ban is up right now. Every jail
-# gets the same whitelist so a trusted IP is exempt everywhere, not just on
-# whichever jail happened to ban it first.
-for JAIL in "${JAILS[@]}"; do
-    CONF="/etc/fail2ban/jail.d/${JAIL}-whitelist.local"
-    TMP_CONF="$(mktemp "${CONF}.XXXXXX")"
-    {
-        echo "[$JAIL]"
-        if [[ $# -gt 0 ]]; then
-            printf 'ignoreip = %s\n' "$*"
-        fi
-    } > "$TMP_CONF"
-    chmod 644 "$TMP_CONF"
-    mv "$TMP_CONF" "$CONF"
-done
+# Fail2ban reads this file itself on its own next (re)start, so this write
+# alone is enough regardless of whether fail2ban is up right now.
+CONF="/etc/fail2ban/jail.d/${JAIL}-whitelist.local"
+TMP_CONF="$(mktemp "${CONF}.XXXXXX")"
+{
+    echo "[$JAIL]"
+    if [[ $# -gt 0 ]]; then
+        printf 'ignoreip = %s\n' "$*"
+    fi
+} > "$TMP_CONF"
+chmod 644 "$TMP_CONF"
+mv "$TMP_CONF" "$CONF"
 
 # Below is the live half, needed only to apply/unban immediately.
 if ! fail2ban-client ping >/dev/null 2>&1; then
-    echo "fail2ban is not running; whitelist files written and will apply once it starts" >&2
+    echo "fail2ban is not running; whitelist file written and will apply once it starts" >&2
     exit 1
 fi
 
-for JAIL in "${JAILS[@]}"; do
-    fail2ban-client reload "$JAIL" >/dev/null
+fail2ban-client reload "$JAIL" >/dev/null
 
-    # ignoreip only stops *future* bans; an IP just added to the whitelist that's
-    # already sitting in the jail needs an explicit unban. unbanip errors on an
-    # IP that isn't currently banned, which is the common case, so ignore that.
-    for ip in "$@"; do
-        fail2ban-client set "$JAIL" unbanip "$ip" >/dev/null 2>&1 || true
-    done
+# ignoreip only stops *future* bans; an IP just added to the whitelist that's
+# already sitting in the jail needs an explicit unban. unbanip errors on an
+# IP that isn't currently banned, which is the common case, so ignore that.
+for ip in "$@"; do
+    fail2ban-client set "$JAIL" unbanip "$ip" >/dev/null 2>&1 || true
 done
 EOF
 chown root:root /usr/local/sbin/restream-srs-fail2ban-apply
@@ -397,7 +382,7 @@ import sqlite3
 import subprocess
 import sys
 
-JAILS = ["restream-srs", "srt-bonding-relay"]
+JAIL = "restream-srs"
 DB_PATH = "/var/lib/fail2ban/fail2ban.sqlite3"
 
 
@@ -445,16 +430,15 @@ def main():
         conn = None
 
     results = []
-    for jail in JAILS:
-        for ip in banned_ips(jail):
-            record = ban_record(conn, jail, ip) or {}
-            results.append({
-                "ip": ip,
-                "jail": jail,
-                "bannedAt": record.get("bannedAt"),
-                "unbanAt": record.get("unbanAt"),
-                "reason": record.get("reason"),
-            })
+    for ip in banned_ips(JAIL):
+        record = ban_record(conn, JAIL, ip) or {}
+        results.append({
+            "ip": ip,
+            "jail": JAIL,
+            "bannedAt": record.get("bannedAt"),
+            "unbanAt": record.get("unbanAt"),
+            "reason": record.get("reason"),
+        })
 
     if conn is not None:
         conn.close()
