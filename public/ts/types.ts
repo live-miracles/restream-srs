@@ -138,14 +138,14 @@ export interface SrtBondingLeg {
 export interface SrtBondingStatus {
     inputActive: boolean;
     outputConnected: boolean;
-    acceptedBySrs?: boolean;
-    publishConflict?: boolean;
-    srsPublisher?: {
+    acceptedBySrs: boolean;
+    publishConflict: boolean;
+    srsPublisher: {
         id: string;
         ip: string | null;
         type: string | null;
     } | null;
-    localSrtPublisherConflict?: boolean;
+    localSrtPublisherConflict: boolean;
     retryFailures: number;
     forwardedPackets: number;
     forwardedBytes: number;
