@@ -3,7 +3,11 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { isProbeUsable, localSrtOutputTargetsStream } = require('../src/services/health');
+const {
+    hasBondedRelayPublishConflict,
+    isProbeUsable,
+    localSrtOutputTargetsStream,
+} = require('../src/services/health');
 
 describe('health media probe validation', () => {
     test('accepts video with codec and dimensions', () => {
@@ -92,6 +96,46 @@ describe('health local SRT output detection', () => {
                 'srt://127.0.0.1:10080?streamid=#!::r=live/key02,m=publish',
                 'key01',
             ),
+            false,
+        );
+    });
+});
+
+describe('health bonded relay publish conflict detection', () => {
+    test('flags any existing pipeline input when bonded relay input is active but not accepted', () => {
+        assert.equal(
+            hasBondedRelayPublishConflict({
+                inputConnected: true,
+                relayInputActive: true,
+                relayAcceptedBySrs: false,
+            }),
+            true,
+        );
+    });
+
+    test('does not flag idle pipelines or relay publishers accepted by SRS', () => {
+        assert.equal(
+            hasBondedRelayPublishConflict({
+                inputConnected: false,
+                relayInputActive: true,
+                relayAcceptedBySrs: false,
+            }),
+            false,
+        );
+        assert.equal(
+            hasBondedRelayPublishConflict({
+                inputConnected: true,
+                relayInputActive: false,
+                relayAcceptedBySrs: false,
+            }),
+            false,
+        );
+        assert.equal(
+            hasBondedRelayPublishConflict({
+                inputConnected: true,
+                relayInputActive: true,
+                relayAcceptedBySrs: true,
+            }),
             false,
         );
     });

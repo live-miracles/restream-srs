@@ -191,6 +191,14 @@ export function localSrtOutputTargetsStream(url: string, streamKey: string): boo
     return extractStreamResource(url) === `live/${streamKey}`;
 }
 
+export function hasBondedRelayPublishConflict(params: {
+    inputConnected: boolean;
+    relayInputActive: boolean;
+    relayAcceptedBySrs: boolean;
+}): boolean {
+    return params.inputConnected && params.relayInputActive && !params.relayAcceptedBySrs;
+}
+
 function probeError(result: ProbeResult | null): string {
     if (!result) return 'ffprobe did not detect a readable media stream';
     const video = result.video;
@@ -624,11 +632,11 @@ export function createHealthService(
                 !!srtStream &&
                 srsClientLooksLikeRelayPublisher(publisher) &&
                 !localSrtPublisherConflict;
-            const relayPublishConflict =
-                displayConnected &&
-                !!srtStream &&
-                !relayAcceptedBySrs &&
-                rawBondingStatus.inputActive;
+            const relayPublishConflict = hasBondedRelayPublishConflict({
+                inputConnected: displayConnected,
+                relayInputActive: rawBondingStatus.inputActive,
+                relayAcceptedBySrs,
+            });
             const bondingStatus: PipelineHealth['srtBonding'] = {
                 ...rawBondingStatus,
                 acceptedBySrs: relayAcceptedBySrs,
