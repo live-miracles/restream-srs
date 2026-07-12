@@ -242,7 +242,7 @@ so there is no pull-method setting.
 | GET | `/api/health` | Live input/output status snapshot (refreshed every 5s) |
 | GET | `/api/version` | App version / build info |
 | GET | `/api/metrics/system` | Host CPU, RAM, disk and network stats |
-| GET | `/api/srs-logs` | Recent SRS up/down events and a tail of the SRS log |
+| GET | `/api/srs-logs` | Recent SRS up/down events and log tails for SRS, the dashboard, and the relay |
 | GET | `/api/ready` | Unauthenticated readiness check used by systemd before starting SRS |
 | POST | `/api/pipelines` | Create pipeline (auto-names and assigns stream key) |
 | GET | `/api/pipelines/:id` | Pipeline details including relay health and bonded-input activity |
@@ -350,7 +350,15 @@ SRS values are inferred from `srs.conf`:
 - RTMP pull/publish port from top-level `listen`
 - SRT pull/publish port from `srt_server { listen ... }`
 - SRS HTTP API port from `http_api { listen ... }`
-- dashboard log tail path from `srs_log_file`
+- SRS log tail path from `srs_log_file`, if present — otherwise the dashboard
+  falls back to `journalctl -u srs.service` (production's `srs.conf` logs to
+  console/journald instead of a file; only local dev's still sets `srs_log_file`)
+
+The dashboard's own log and the relay's log are always read via
+`journalctl -u restream-srs.service` / `-u srt-bonding-relay.service` — both only
+ever log to the journal. All three require `restream-srs.service`'s
+`SupplementaryGroups=systemd-journal` (set by `server-install.sh`); without it,
+the Server Logs view shows no output for whichever service's journal it can't read.
 
 Relay ports and status polling are read from `srt-bonding-relay.json`, located beside `srs_config_path`.
 
@@ -408,7 +416,7 @@ unaffected — they never went through `srt_to_rtmp` — and are pulled over RTM
 
 ### SRS logs `SRTS_BROKEN` errors for every SRT play disconnect, including clean ones
 
-`srs.log` fills with `srt serve error code=6001(SrtIo)(SRT read or write failed) :
+The SRS log fills with `srt serve error code=6001(SrtIo)(SRT read or write failed) :
 srt play recv thread : ... socket status=SRTS_BROKEN` at a steady background rate.
 This is expected noise, not an incident: it fires on **every** teardown of an SRT
 play (pull) connection — including the periodic ffprobe health checks this app

@@ -173,10 +173,16 @@ export interface SrsLogEvent {
     message: string;
 }
 
+export interface ServerLogTail {
+    lines: string[];
+    source: 'journal' | 'none';
+}
+
 export interface SrsLogsData {
     events: SrsLogEvent[];
-    logTail: string[];
-    logFileExists?: boolean;
+    srs: ServerLogTail;
+    dashboard: ServerLogTail;
+    relay: ServerLogTail;
 }
 
 export interface Fail2banBan {
