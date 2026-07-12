@@ -848,6 +848,88 @@ function renderOverview(): void {
     const td = (val: string | number | null | undefined): string =>
         `<td class="font-mono text-xs">${val ?? '—'}</td>`;
 
+    // Compact scan+fps shorthand, e.g. "p30", "i60tff" (top-field-first), "i25bff" (bottom-field-first).
+    const fmtScanFps = (
+        fieldOrder: string | null | undefined,
+        fps: number | null | undefined,
+    ): string => {
+        const fpsNum = fps != null ? Math.round(fps) : null;
+        if (fieldOrder === 'progressive') return fpsNum != null ? `p${fpsNum}` : 'p';
+        if (
+            fieldOrder === 'tt' ||
+            fieldOrder === 'tb' ||
+            fieldOrder === 'bb' ||
+            fieldOrder === 'bt'
+        ) {
+            const field = fieldOrder === 'tt' || fieldOrder === 'tb' ? 'tff' : 'bff';
+            return fpsNum != null ? `i${fpsNum}${field}` : `i${field}`;
+        }
+        return fpsNum != null ? `${fpsNum}fps` : '';
+    };
+
+    const videoSpec = (
+        video: Pick<VideoInfo, 'codec' | 'width' | 'height' | 'fps' | 'fieldOrder'> | null,
+    ): string | null => {
+        if (!video?.width || !video.height) return null;
+        const scanFps = fmtScanFps(video.fieldOrder, video.fps);
+        const res = scanFps
+            ? /^\d/.test(scanFps)
+                ? `${video.width}x${video.height} ${scanFps}`
+                : `${video.width}x${video.height}${scanFps}`
+            : `${video.width}x${video.height}`;
+        return `${video.codec || '—'} ${res}`;
+    };
+
+    const audioSpec = (
+        codec: string | null | undefined,
+        channels: number | null | undefined,
+        sampleRate: number | null | undefined,
+        label?: string,
+    ): string => {
+        const sr = sampleRate ? fmtHz(sampleRate) : null;
+        return `${codec || '—'} ${channels ? `${channels}ch` : '—'}${sr ? ` @${sr}` : ''}${label ? ` <span class="opacity-40">${label}</span>` : ''}`;
+    };
+
+    // One "Stream specification" cell replaces the separate Proto/V.Codec/Resolution/FPS/Scan/
+    // A.Codec/Ch/Sample Rate columns. Multiple audio tracks stack as extra lines within the same
+    // cell instead of extra table rows.
+    const streamSpec = (
+        protocol: string | null,
+        video: Pick<VideoInfo, 'codec' | 'width' | 'height' | 'fps' | 'fieldOrder'> | null,
+        audioTracks: AudioTrackInfo[] | null,
+        fallbackAudio: Pick<AudioInfo, 'codec' | 'channel' | 'sample_rate'> | null,
+    ): string => {
+        const vSpec = videoSpec(video);
+        const audioLines =
+            audioTracks && audioTracks.length > 0
+                ? audioTracks.map((t, i) => {
+                      const label = escapeHtml([t.language, t.title].filter(Boolean).join(' '));
+                      const numberPrefix = audioTracks.length > 1 ? `${i + 1}. ` : '';
+                      return (
+                          numberPrefix +
+                          audioSpec(t.codec, t.channels, t.sampleRate, label || undefined)
+                      );
+                  })
+                : fallbackAudio
+                  ? [
+                        audioSpec(
+                            fallbackAudio.codec,
+                            fallbackAudio.channel,
+                            fallbackAudio.sample_rate,
+                        ),
+                    ]
+                  : [];
+        if (!vSpec && audioLines.length === 0) return '—';
+        const head = [protocol, vSpec].filter(Boolean).join(' ');
+        if (audioLines.length === 0) return head || '—';
+        const firstLine = head ? `${head} | ${audioLines[0]}` : audioLines[0];
+        // Indent continuation lines with non-breaking spaces so they line up under the
+        // first audio track (monospace font makes character count == column width).
+        const indent = '&nbsp;'.repeat(head ? head.length + 3 : 0);
+        const restLines = audioLines.slice(1).map((line) => indent + line);
+        return [firstLine, ...restLines].join('<br>');
+    };
+
     const statusBg = (error: boolean, warn: boolean): string =>
         error
             ? 'style="background:color-mix(in oklch, var(--color-error) 15%, transparent)"'
@@ -953,7 +1035,7 @@ function renderOverview(): void {
     const inputActiveCount = state.pipelines.filter((p) => !isOffline(inputStatus(p.input))).length;
     let inputRows = '';
     if (state.pipelines.length === 0) {
-        inputRows = `<tr><td colspan="12" class="py-4 text-center opacity-50">No pipelines yet.</td></tr>`;
+        inputRows = `<tr><td colspan="5" class="py-4 text-center opacity-50">No pipelines yet.</td></tr>`;
     } else {
         for (const p of state.pipelines) {
             const inp = p.input;
@@ -970,48 +1052,27 @@ function renderOverview(): void {
                       : st === 'warn'
                         ? `<span class="badge badge-sm badge-warning" title="${escapeHtml(inp.live ? 'Input bitrate is below warning threshold.' : [inputStatusMessage(inp), formatMediaProbeStatus(inp)].filter(Boolean).join(' '))}">${inp.live ? 'Low Bitrate' : 'Probing'}</span>`
                         : `<span class="badge badge-sm badge-success">Live</span>`;
-            const protocolLabel = p.srtBonding.acceptedBySrs ? 'Relay' : inp.isSrt ? 'SRT' : 'RTMP';
+            const protocolLabel = inp.connected
+                ? p.srtBonding.acceptedBySrs
+                    ? 'Relay'
+                    : inp.isSrt
+                      ? 'SRT'
+                      : 'RTMP'
+                : null;
             const audioTracks = inp.audioTracks.length > 0 ? inp.audioTracks : null;
-            const rowspan =
-                audioTracks && audioTracks.length > 1 ? ` rowspan="${audioTracks.length}"` : '';
-            const rowAttr = `class="hover" ${statusBg(isError, isWarn)}`;
-            const sharedCells = `
-                <td class="overview-name-col font-semibold"${rowspan}>${escapeHtml(p.name)}</td>
-                <td${rowspan}>${badge}</td>
-                <td class="font-mono text-xs"${rowspan}>${inp.live ? formatUptime(inp.uptimeMs) : '—'}</td>
-                <td class="font-mono text-xs"${rowspan}>${inp.connected ? formatBitrate(inp.recvBitrateKbps) : '—'}</td>
-                <td class="font-mono text-xs"${rowspan}>${inp.connected ? protocolLabel : '—'}</td>
-                <td class="font-mono text-xs"${rowspan}>${inp.video?.codec ?? '—'}</td>
-                <td class="font-mono text-xs"${rowspan}>${inp.video ? `${inp.video.width}×${inp.video.height}` : '—'}</td>
-                <td class="font-mono text-xs"${rowspan}>${inp.video?.fps ?? '—'}</td>
-                <td class="font-mono text-xs"${rowspan}>${fmtFieldOrder(inp.video?.fieldOrder) ?? '—'}</td>`;
-            if (audioTracks && audioTracks.length > 1) {
-                inputRows += audioTracks
-                    .map((t, i) => {
-                        const label =
-                            t.title || t.language
-                                ? ` <span class="opacity-40 text-xs">${escapeHtml([t.language, t.title].filter(Boolean).join(' '))}</span>`
-                                : '';
-                        return `<tr ${rowAttr}>${i === 0 ? sharedCells : ''}
-                        <td class="font-mono text-xs">${t.codec || '—'}${label}</td>
-                        <td class="font-mono text-xs">${t.channels || '—'}</td>
-                        <td class="font-mono text-xs">${t.sampleRate ? fmtHz(t.sampleRate) : '—'}</td>
-                    </tr>`;
-                    })
-                    .join('');
-            } else {
-                const t = audioTracks?.[0] ?? null;
-                inputRows += `<tr ${rowAttr}>${sharedCells}
-                    ${td(t ? t.codec : inp.audio?.codec)}
-                    ${td(t ? t.channels : inp.audio?.channel)}
-                    ${td(t ? fmtHz(t.sampleRate) : fmtHz(inp.audio?.sample_rate))}
-                </tr>`;
-            }
+            const spec = streamSpec(protocolLabel, inp.video, audioTracks, inp.audio);
+            inputRows += `<tr class="hover" ${statusBg(isError, isWarn)}>
+                <td class="overview-name-col font-semibold">${escapeHtml(p.name)}</td>
+                <td>${badge}</td>
+                <td class="font-mono text-xs">${inp.live ? formatUptime(inp.uptimeMs) : '—'}</td>
+                <td class="font-mono text-xs">${inp.connected ? formatBitrate(inp.recvBitrateKbps) : '—'}</td>
+                <td class="font-mono text-xs">${spec}</td>
+            </tr>`;
         }
         if (problemsOnly && inputRows === '') {
-            inputRows = `<tr><td colspan="12" class="py-4 text-center opacity-50">No input issues.</td></tr>`;
+            inputRows = `<tr><td colspan="5" class="py-4 text-center opacity-50">No input issues.</td></tr>`;
         } else if (activeOnly && inputRows === '') {
-            inputRows = `<tr><td colspan="12" class="py-4 text-center opacity-50">No active inputs.</td></tr>`;
+            inputRows = `<tr><td colspan="5" class="py-4 text-center opacity-50">No active inputs.</td></tr>`;
         }
     }
 
@@ -1026,7 +1087,7 @@ function renderOverview(): void {
     );
     let outputRows = '';
     if (totalOuts === 0) {
-        outputRows = `<tr><td colspan="14" class="py-4 text-center opacity-50">No outputs yet.</td></tr>`;
+        outputRows = `<tr><td colspan="6" class="py-4 text-center opacity-50">No outputs yet.</td></tr>`;
     } else {
         for (const p of state.pipelines) {
             for (const o of p.outs) {
@@ -1058,28 +1119,33 @@ function renderOverview(): void {
                     o.failures > 0
                         ? `<span class="text-error inline-flex items-center align-middle" title="${o.failures} error${o.failures === 1 ? '' : 's'} since this output was last started">${ICON_ERROR}</span>`
                         : '';
+                const protocolLabel = isOn
+                    ? o.sinks[0]?.url.startsWith('srt://')
+                        ? 'SRT'
+                        : o.sinks[0]
+                          ? 'RTMP'
+                          : null
+                    : null;
+                const spec = streamSpec(
+                    protocolLabel,
+                    media?.video ?? null,
+                    null,
+                    media?.audio ?? null,
+                );
                 outputRows += `<tr class="hover" ${statusBg(st === 'error', st === 'warn')}>
                     <td class="overview-name-col"><span class="opacity-40 text-xs">${escapeHtml(p.name)} ·</span> ${escapeHtml(o.name)} ${errorBadge}</td>
                     <td>${badge}</td>
                     <td class="font-mono text-xs">${outUptimeMs !== null ? formatUptime(outUptimeMs) : '—'}</td>
                     ${td(formatBitrate(o.bitrateKbps))}
                     <td class="font-mono text-xs ${memorySeverityClass(outputMemoryPercent(o))}">${formatOutputMemory(o) ?? '—'}</td>
-                    ${td(isOn ? o.videoEncoding : null)}
-                    ${td(o.sinks[0]?.url.startsWith('srt://') ? 'SRT' : o.sinks[0] ? 'RTMP' : null)}
-                    ${td(media?.video?.codec)}
-                    ${td(media?.video?.width && media.video.height ? `${media.video.width}×${media.video.height}` : null)}
-                    ${td(media?.video?.fps)}
-                    ${td(fmtFieldOrder(media?.video?.fieldOrder))}
-                    ${td(media?.audio?.codec)}
-                    ${td(media?.audio?.channel)}
-                    ${td(fmtHz(media?.audio?.sample_rate))}
+                    <td class="font-mono text-xs">${spec}</td>
                 </tr>`;
             }
         }
         if (problemsOnly && outputRows === '') {
-            outputRows = `<tr><td colspan="14" class="py-4 text-center opacity-50">No output issues.</td></tr>`;
+            outputRows = `<tr><td colspan="6" class="py-4 text-center opacity-50">No output issues.</td></tr>`;
         } else if (activeOnly && outputRows === '') {
-            outputRows = `<tr><td colspan="14" class="py-4 text-center opacity-50">No active outputs.</td></tr>`;
+            outputRows = `<tr><td colspan="6" class="py-4 text-center opacity-50">No active outputs.</td></tr>`;
         }
     }
 
@@ -1155,14 +1221,14 @@ function renderOverview(): void {
         <h2 class="mb-2 text-lg font-bold">Inputs <span class="badge badge-neutral badge-sm ml-1">${state.pipelines.length}</span></h2>
         <div class="overflow-x-auto mb-6">
             <table class="table table-sm">
-                ${thead(['Pipeline', 'Status', 'Uptime', 'Bitrate', 'Proto', 'V.Codec', 'Resolution', 'FPS', 'Scan', 'A.Codec', 'Ch', 'Sample Rate'])}
+                ${thead(['Pipeline', 'Status', 'Uptime', 'Bitrate', 'Stream Specification'])}
                 <tbody>${inputRows}</tbody>
             </table>
         </div>
         <h2 class="mb-2 text-lg font-bold">Outputs <span class="badge badge-neutral badge-sm ml-1">${totalOuts}</span></h2>
         <div class="overflow-x-auto">
             <table class="table table-sm">
-                ${thead(['Pipeline · Output', 'Status', 'Uptime', 'Bitrate', 'RAM', 'Encoding', 'Proto', 'V.Codec', 'Resolution', 'FPS', 'Scan', 'A.Codec', 'Ch', 'Sample Rate'])}
+                ${thead(['Pipeline · Output', 'Status', 'Uptime', 'Bitrate', 'RAM', 'Stream Specification'])}
                 <tbody>${outputRows}</tbody>
             </table>
         </div>`;
