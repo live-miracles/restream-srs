@@ -74,7 +74,6 @@ export interface Output {
     desiredState: 'running' | 'stopped';
     videoEncoding: string;
     sinks: OutputSink[];
-    srtLatencyMs: number | null;
     lastError: string | null;
     hasErrorHistory: boolean;
 }
@@ -103,7 +102,6 @@ export interface Db {
         name: string;
         videoEncoding?: string;
         sinks: SinkInput[];
-        srtLatencyMs?: number | null;
     }): Output;
     // All-or-nothing batch create (single transaction, single configRev bump).
     createOutputs(
@@ -112,7 +110,6 @@ export interface Db {
             name: string;
             videoEncoding?: string;
             sinks: SinkInput[];
-            srtLatencyMs?: number | null;
         }[],
     ): Output[];
     getOutput(id: string): Output | null;
@@ -130,7 +127,6 @@ export interface Db {
             name: string;
             videoEncoding: string;
             sinks: SinkInput[];
-            srtLatencyMs?: number | null;
         },
     ): Output | null;
     setOutputDesiredState(id: string, desiredState: 'running' | 'stopped'): Output | null;

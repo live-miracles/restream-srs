@@ -35,7 +35,6 @@ const {
     buildFfmpegArgs,
     validateOutputUrl,
     validateAudioEncoding,
-    parseSrtLatencyMs,
 } = require('../src/utils/ffmpeg');
 const { rtmpPullUrl, srtPullUrl, rtmpPublishUrl, srtPublishUrl } = require('../src/utils/srs');
 
@@ -227,42 +226,28 @@ describe('buildFfmpegArgs', () => {
         assert.ok(args.some((a) => String(a).includes('1920:1080')));
     });
 
-    test('srtLatencyMs appends &latency=<us> to an SRT sink (per-output path)', () => {
+    test('SRT sink URL parameters are passed through unchanged', () => {
+        const url = 'srt://host:10080?mode=caller&latency=240000&streamid=x';
+        const args = buildFfmpegArgs('rtmp://in', [sink(url)]);
+        assert.ok(args.includes(url));
+    });
+
+    test('SRT sink URL parameters are preserved in the tee muxer path', () => {
         const args = buildFfmpegArgs(
             'rtmp://in',
-            [sink('srt://host:10080?streamid=x')],
-            'copy',
-            200,
-        );
-        assert.ok(args.includes('srt://host:10080?streamid=x&latency=200000'));
-    });
-
-    test('srtLatencyMs uses ? when the SRT sink url has no existing query', () => {
-        const args = buildFfmpegArgs('rtmp://in', [sink('srt://host:10080')], 'copy', 200);
-        assert.ok(args.includes('srt://host:10080?latency=200000'));
-    });
-
-    test('srtLatencyMs has no effect on RTMP sinks', () => {
-        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')], 'copy', 200);
-        assert.ok(args.includes('rtmp://out'));
-        assert.ok(!args.some((a) => String(a).includes('latency=')));
-    });
-
-    test('null/unset srtLatencyMs leaves SRT sink url untouched', () => {
-        const args = buildFfmpegArgs('rtmp://in', [sink('srt://host:10080?streamid=x')]);
-        assert.ok(args.includes('srt://host:10080?streamid=x'));
-    });
-
-    test('srtLatencyMs applies to every sink in the tee muxer path', () => {
-        const args = buildFfmpegArgs(
-            'rtmp://in',
-            [sink('srt://out1:10080?streamid=a'), sink('srt://out2:10080?streamid=b')],
+            [
+                sink('srt://out1:10080?mode=caller&latency=240000&streamid=a'),
+                sink('srt://out2:10080?mode=listener&latency=240000&streamid=b'),
+            ],
             '720p',
-            50,
         );
         const teeSpec = args[args.length - 1];
-        assert.ok(teeSpec.includes('[f=mpegts]srt://out1:10080?streamid=a&latency=50000'));
-        assert.ok(teeSpec.includes('[f=mpegts]srt://out2:10080?streamid=b&latency=50000'));
+        assert.ok(
+            teeSpec.includes('[f=mpegts]srt://out1:10080?mode=caller&latency=240000&streamid=a'),
+        );
+        assert.ok(
+            teeSpec.includes('[f=mpegts]srt://out2:10080?mode=listener&latency=240000&streamid=b'),
+        );
     });
 });
 
@@ -281,26 +266,6 @@ describe('validateAudioEncoding', () => {
     test('rejects non-numeric values', () => {
         assert.equal(validateAudioEncoding('a'), null);
         assert.equal(validateAudioEncoding('0,x'), null);
-    });
-});
-
-// ── parseSrtLatencyMs ──────────────────────────────────
-
-describe('parseSrtLatencyMs', () => {
-    test('treats missing/empty as unconfigured (null)', () => {
-        assert.deepEqual(parseSrtLatencyMs(undefined), { value: null });
-        assert.deepEqual(parseSrtLatencyMs(null), { value: null });
-        assert.deepEqual(parseSrtLatencyMs(''), { value: null });
-    });
-    test('accepts a positive integer', () => {
-        assert.deepEqual(parseSrtLatencyMs(200), { value: 200 });
-        assert.deepEqual(parseSrtLatencyMs('200'), { value: 200 });
-    });
-    test('rejects zero, negative, and non-integer values', () => {
-        assert.ok('error' in parseSrtLatencyMs(0));
-        assert.ok('error' in parseSrtLatencyMs(-5));
-        assert.ok('error' in parseSrtLatencyMs(1.5));
-        assert.ok('error' in parseSrtLatencyMs('bogus'));
     });
 });
 

@@ -62,15 +62,6 @@ export interface SinkSpec {
     audioEncoding: string;
 }
 
-// Output-level SRT receiver latency (shared by all of an output's sinks). Has
-// no effect on non-SRT sinks. ms is what the UI collects; SRT's own 'latency'
-// URL option is in microseconds (see srtPullUrl's 200ms -> latency=200000).
-function withSrtLatency(url: string, srtLatencyMs: number | null | undefined): string {
-    if (!srtLatencyMs || !url.startsWith('srt://')) return url;
-    const sep = url.includes('?') ? '&' : '?';
-    return `${url}${sep}latency=${srtLatencyMs * 1000}`;
-}
-
 // Abort the pull if no input data is read for this long (microseconds, ffmpeg's
 // -rw_timeout unit). SRS holds publisher-less pulls open indefinitely, so without
 // this an output whose input never returns (or sits on a stale half-open socket)
@@ -92,7 +83,6 @@ export function buildFfmpegArgs(
     inputUrl: string,
     sinks: SinkSpec[],
     videoEncoding = 'copy',
-    srtLatencyMs: number | null = null,
 ): string[] {
     const encArgs = (ENCODINGS[videoEncoding] ?? ENCODINGS.copy).args;
     const args: string[] = [
@@ -142,9 +132,7 @@ export function buildFfmpegArgs(
         const mapArgs = buildSinkMapArgs(sinks[0].audioEncoding, firstSinkIsSrt);
         const audioArgs = firstSinkIsSrt ? (['-c:a', 'copy'] as const) : flvAudioArgs(inputUrl);
         const fmt = firstSinkIsSrt ? 'mpegts' : 'flv';
-        const teeSpec = sinks
-            .map((s) => `[f=${fmt}]${withSrtLatency(s.url, srtLatencyMs)}`)
-            .join('|');
+        const teeSpec = sinks.map((s) => `[f=${fmt}]${s.url}`).join('|');
         args.push(...mapArgs, ...encArgs, ...audioArgs, '-f', 'tee', teeSpec);
         return args;
     }
@@ -154,13 +142,7 @@ export function buildFfmpegArgs(
         const mapArgs = buildSinkMapArgs(sink.audioEncoding, isSrt);
         const audioArgs = isSrt ? (['-c:a', 'copy'] as const) : flvAudioArgs(inputUrl);
         const fmt = isSrt ? ['-f', 'mpegts'] : ['-f', 'flv'];
-        args.push(
-            ...mapArgs,
-            ...encArgs,
-            ...audioArgs,
-            ...fmt,
-            withSrtLatency(sink.url, srtLatencyMs),
-        );
+        args.push(...mapArgs, ...encArgs, ...audioArgs, ...fmt, sink.url);
     }
     return args;
 }
@@ -175,15 +157,4 @@ export function validateAudioEncoding(value: unknown): string | null {
     const parts = value.split(',').map((s) => s.trim());
     if (!parts.every((p) => /^\d+$/.test(p))) return null;
     return parts.join(',');
-}
-
-// Empty/missing means "unconfigured" (no latency param added); anything else
-// must be a positive integer number of milliseconds.
-export function parseSrtLatencyMs(raw: unknown): { value: number | null } | { error: string } {
-    if (raw === undefined || raw === null || raw === '') return { value: null };
-    const num = Number(raw);
-    if (!Number.isInteger(num) || num <= 0) {
-        return { error: 'srtLatencyMs must be a positive integer (milliseconds)' };
-    }
-    return { value: num };
 }

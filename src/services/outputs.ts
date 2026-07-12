@@ -623,12 +623,7 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
         if (!pipeline) throw new Error('Pipeline not found');
         // Pull the input back the same way it was published. Default to RTMP until known.
         const inputUrl = inputState.pullUrl(output.pipelineId, pipeline.streamKey);
-        const args = buildFfmpegArgs(
-            inputUrl,
-            output.sinks,
-            output.videoEncoding,
-            output.srtLatencyMs,
-        );
+        const args = buildFfmpegArgs(inputUrl, output.sinks, output.videoEncoding);
 
         // stdout and stderr must stay as 'pipe' (not 'ignore' or 'inherit').
         // When Node.js exits for any reason — including SIGKILL or a crash — the OS
