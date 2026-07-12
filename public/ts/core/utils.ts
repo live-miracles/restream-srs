@@ -34,12 +34,6 @@ export const STATUS_COLOR_WARN = '#facc15';
 export const STATUS_COLOR_ERROR = '#ef4444';
 export const STATUS_COLOR_OFF = '#6b7280';
 
-export function statusColor(live: boolean, bitrateKbps?: number | null): string {
-    if (!live) return STATUS_COLOR_OFF;
-    if (bitrateKbps != null && bitrateKbps < LOW_BITRATE_KBPS) return STATUS_COLOR_WARN;
-    return STATUS_COLOR_GOOD;
-}
-
 export function formatBitrate(kbps: number | null): string {
     if (kbps === null) return '—';
     if (kbps >= 1000) return `${(kbps / 1000).toFixed(1)} Mb/s`;
