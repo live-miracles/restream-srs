@@ -39,6 +39,10 @@ declare global {
 
 type OutStatus = 'good' | 'warn' | 'error' | 'off';
 type InputStatus = 'good' | 'warn' | 'error' | 'off';
+type OverviewIssue = {
+    severity: 'warning' | 'error';
+    message: string;
+};
 type BondingIndicator = {
     leftColor: string;
     rightColor: string;
@@ -164,6 +168,150 @@ function inputStatusColor(input: InputHealth): string {
     if (st === 'warn') return STATUS_COLOR_WARN;
     if (st === 'error') return STATUS_COLOR_ERROR;
     return STATUS_COLOR_OFF;
+}
+
+function overviewStatusBadge(st: InputStatus | OutStatus): string {
+    if (st === 'error') return '<span class="badge badge-sm badge-error">ERROR</span>';
+    if (st === 'warn') return '<span class="badge badge-sm badge-warning">WARNING</span>';
+    return '<span class="badge badge-sm badge-success">OK</span>';
+}
+
+function renderOverviewIssues(issues: OverviewIssue[]): string {
+    if (issues.length === 0) return '<span class="opacity-40">—</span>';
+    return issues
+        .map((issue) => {
+            const cls = issue.severity === 'error' ? 'text-error' : 'text-warning';
+            return `<div class="${cls} text-xs leading-snug">${escapeHtml(issue.message)}</div>`;
+        })
+        .join('');
+}
+
+function inputIssues(input: InputHealth): OverviewIssue[] {
+    const st = inputStatus(input);
+    if (st === 'error') {
+        return [
+            {
+                severity: 'error',
+                message: [inputStatusMessage(input), formatMediaProbeStatus(input)]
+                    .filter(Boolean)
+                    .join(' '),
+            },
+        ];
+    }
+    if (st === 'warn') {
+        return [
+            {
+                severity: 'warning',
+                message: input.live
+                    ? `Input bitrate is below ${LOW_BITRATE_KBPS} kb/s.`
+                    : [inputStatusMessage(input), formatMediaProbeStatus(input)]
+                          .filter(Boolean)
+                          .join(' '),
+            },
+        ];
+    }
+    return [];
+}
+
+function summarizeOutputError(error: string | null | undefined, fallback: string): string {
+    if (!error) return fallback;
+
+    const lastLine =
+        error
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .pop() ?? '';
+    if (!lastLine) return fallback;
+
+    const singleLine = lastLine.replace(/\s+/g, ' ');
+    return singleLine.length > 160 ? `${singleLine.slice(0, 157)}...` : singleLine;
+}
+
+function relayIssues(
+    pipeline: PipelineView,
+    relayProcessRunning: boolean,
+    inputSt: RelayFlowStatus,
+    outputSt: RelayFlowStatus,
+): OverviewIssue[] {
+    const issues: OverviewIssue[] = [];
+    const inputSeverity = inputSt === 'error' ? 'error' : 'warning';
+    const outputSeverity = outputSt === 'error' ? 'error' : 'warning';
+
+    if (inputSt === 'warn' || inputSt === 'error') {
+        for (const reason of relayInputReasons(pipeline, relayProcessRunning)) {
+            issues.push({ severity: inputSeverity, message: `Input: ${reason}` });
+        }
+    }
+    if (outputSt === 'warn' || outputSt === 'error') {
+        for (const reason of relayOutputReasons(pipeline, relayProcessRunning)) {
+            issues.push({
+                severity: outputSeverity,
+                message: `Output: ${summarizeOutputError(reason, reason)}`,
+            });
+        }
+    }
+
+    return issues;
+}
+
+function outputIssues(o: OutputView, input: InputHealth): OverviewIssue[] {
+    const st = outStatus(o, input);
+    if (st !== 'warn' && st !== 'error') return [];
+    const withFailures = (message: string): string =>
+        o.failures > 0
+            ? `${o.failures} error${o.failures === 1 ? '' : 's'} since last start. ${message}`
+            : message;
+
+    if (st === 'error') {
+        if (o.status === 'failed') {
+            return [
+                {
+                    severity: 'error',
+                    message: withFailures(
+                        summarizeOutputError(o.lastError, 'Output process failed.'),
+                    ),
+                },
+            ];
+        }
+        if (o.bitrateKbps === null && hasCurrentOutputError(o)) {
+            return [
+                {
+                    severity: 'error',
+                    message: withFailures(
+                        summarizeOutputError(o.lastError, 'Output has no bitrate after an error.'),
+                    ),
+                },
+            ];
+        }
+        if (!input.live && o.status === 'running') {
+            return [{ severity: 'error', message: 'Output is running but input is not live.' }];
+        }
+        if (hasCurrentOutputError(o)) {
+            return [
+                {
+                    severity: 'error',
+                    message: withFailures(
+                        summarizeOutputError(o.lastError, 'Output failed and is waiting to retry.'),
+                    ),
+                },
+            ];
+        }
+        return [{ severity: 'error', message: 'Output is in an error state.' }];
+    }
+
+    if (o.warningReason) return [{ severity: 'warning', message: o.warningReason }];
+    if (o.status === 'running' && o.bitrateKbps === null) {
+        return [
+            { severity: 'warning', message: 'Output is running but no bitrate is reported yet.' },
+        ];
+    }
+    if (o.status === 'running') {
+        return [
+            { severity: 'warning', message: `Output bitrate is below ${LOW_BITRATE_KBPS} kb/s.` },
+        ];
+    }
+    return [{ severity: 'warning', message: 'Output is waiting to start or retry.' }];
 }
 
 function selectedAudioTrack(
@@ -444,21 +592,6 @@ function legStateDotColor(state: SrtBondingLeg['state']): string {
         default:
             return STATUS_COLOR_OFF;
     }
-}
-
-function relayStatusBadge(
-    status: RelayFlowStatus,
-    labels: Record<RelayFlowStatus, string>,
-    reasons: string[] = [],
-): string {
-    const titleAttr = reasons.length > 0 ? ` title="${escapeHtml(reasons.join('; '))}"` : '';
-    if (status === 'good')
-        return `<span class="badge badge-sm badge-success"${titleAttr}>${labels.good}</span>`;
-    if (status === 'warn')
-        return `<span class="badge badge-sm badge-warning"${titleAttr}>${labels.warn}</span>`;
-    if (status === 'error')
-        return `<span class="badge badge-sm badge-error"${titleAttr}>${labels.error}</span>`;
-    return `<span class="badge badge-sm badge-neutral"${titleAttr}>${labels.off}</span>`;
 }
 
 function relayInputSeverityColor(
@@ -970,12 +1103,11 @@ function renderOverview(): void {
         ms != null ? `${ms.toFixed(ms >= 10 ? 0 : 1)} ms` : '—';
     const legCells = (leg: SrtBondingLeg | null): string => {
         if (!leg)
-            return `${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}`;
+            return `${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}`;
         const color = legStateDotColor(leg.state);
         const rx = leg.recvUniquePacketsTotal ?? leg.recvPacketsTotal;
         return `
             <td class="font-mono text-xs">${escapeHtml(leg.ip)}</td>
-            <td class="font-mono text-xs">${leg.port}</td>
             <td><span class="inline-flex items-center gap-1"><span class="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style="background:${color}"></span>${escapeHtml(leg.state)}</span></td>
             <td class="font-mono text-xs">${fmtRtt(leg.rttMs)}</td>
             <td class="font-mono text-xs">${rx != null ? formatCompactCount(rx) : '—'}</td>
@@ -986,7 +1118,7 @@ function renderOverview(): void {
 
     let relayRows = '';
     if (activeRelayPipelines.length === 0) {
-        relayRows = `<tr><td colspan="17" class="py-4 text-center opacity-50">No active SRT bonding relay sessions.</td></tr>`;
+        relayRows = `<tr><td colspan="15" class="py-4 text-center opacity-50">No active SRT bonding relay sessions.</td></tr>`;
     } else {
         for (const p of activeRelayPipelines) {
             const inputSt = relayInputStatus(p, relayProcessRunning);
@@ -1002,15 +1134,14 @@ function renderOverview(): void {
             const rowAttr = `class="hover" ${statusBg(rowError, rowWarn)}`;
             const sharedCells = `
                 <td class="font-semibold"${rowspan}>${escapeHtml(p.name)}</td>
-                <td${rowspan}>${relayStatusBadge(inputSt, { good: 'Active', warn: 'Stalled', error: 'Error', off: 'Idle' }, relayInputReasons(p, relayProcessRunning))}</td>
-                <td${rowspan}>${relayStatusBadge(outputSt, { good: 'Forwarding', warn: 'Pending', error: 'Not accepted', off: 'Idle' }, relayOutputReasons(p, relayProcessRunning))}</td>`;
+                <td${rowspan}>${overviewStatusBadge(inputSt)}</td>
+                <td${rowspan}>${overviewStatusBadge(outputSt)}</td>
+                <td${rowspan}>${renderOverviewIssues(relayIssues(p, relayProcessRunning, inputSt, outputSt))}</td>`;
             const totalsCells = `
-                <td class="font-mono text-xs"${rowspan}>${formatCompactCount(rxPackets)}</td>
-                <td class="font-mono text-xs"${rowspan}>${formatCompactCount(p.srtBonding.forwardedPackets)}</td>
+                <td class="font-mono text-xs"${rowspan}>${formatCompactCount(rxPackets)} / ${formatCompactCount(p.srtBonding.forwardedPackets)}</td>
                 <td class="font-mono text-xs"${rowspan}>${formatCompactCount(p.srtBonding.retransTotal)}</td>
                 <td class="font-mono text-xs"${rowspan}>${formatCompactCount(p.srtBonding.recvLossTotal)}</td>
-                <td class="font-mono text-xs"${rowspan}>${formatCompactCount(p.srtBonding.recvDropTotal)}</td>
-                <td class="font-mono text-xs"${rowspan}>${formatBytesCompact(p.srtBonding.forwardedBytes)}</td>`;
+                <td class="font-mono text-xs"${rowspan}>${formatCompactCount(p.srtBonding.recvDropTotal)}</td>`;
 
             if (legs.length > 1) {
                 relayRows += legs
@@ -1024,9 +1155,9 @@ function renderOverview(): void {
             }
         }
         if (problemsOnly && relayRows === '') {
-            relayRows = `<tr><td colspan="17" class="py-4 text-center opacity-50">No relay issues.</td></tr>`;
+            relayRows = `<tr><td colspan="15" class="py-4 text-center opacity-50">No relay issues.</td></tr>`;
         } else if (activeOnly && relayRows === '') {
-            relayRows = `<tr><td colspan="17" class="py-4 text-center opacity-50">No active relay sessions.</td></tr>`;
+            relayRows = `<tr><td colspan="15" class="py-4 text-center opacity-50">No active relay sessions.</td></tr>`;
         }
     }
 
@@ -1035,7 +1166,7 @@ function renderOverview(): void {
     const inputActiveCount = state.pipelines.filter((p) => !isOffline(inputStatus(p.input))).length;
     let inputRows = '';
     if (state.pipelines.length === 0) {
-        inputRows = `<tr><td colspan="5" class="py-4 text-center opacity-50">No pipelines yet.</td></tr>`;
+        inputRows = `<tr><td colspan="6" class="py-4 text-center opacity-50">No pipelines yet.</td></tr>`;
     } else {
         for (const p of state.pipelines) {
             const inp = p.input;
@@ -1044,14 +1175,6 @@ function renderOverview(): void {
             const isError = st === 'error';
             if (problemsOnly && !isWarn && !isError) continue;
             if (activeOnly && isOffline(st)) continue;
-            const badge =
-                st === 'off'
-                    ? `<span class="badge badge-sm badge-neutral">Offline</span>`
-                    : st === 'error'
-                      ? `<span class="badge badge-sm badge-error" title="${escapeHtml([inputStatusMessage(inp), formatMediaProbeStatus(inp)].filter(Boolean).join(' '))}">Media Error</span>`
-                      : st === 'warn'
-                        ? `<span class="badge badge-sm badge-warning" title="${escapeHtml(inp.live ? 'Input bitrate is below warning threshold.' : [inputStatusMessage(inp), formatMediaProbeStatus(inp)].filter(Boolean).join(' '))}">${inp.live ? 'Low Bitrate' : 'Probing'}</span>`
-                        : `<span class="badge badge-sm badge-success">Live</span>`;
             const protocolLabel = inp.connected
                 ? p.srtBonding.acceptedBySrs
                     ? 'Relay'
@@ -1063,16 +1186,17 @@ function renderOverview(): void {
             const spec = streamSpec(protocolLabel, inp.video, audioTracks, inp.audio);
             inputRows += `<tr class="hover" ${statusBg(isError, isWarn)}>
                 <td class="overview-name-col font-semibold">${escapeHtml(p.name)}</td>
-                <td>${badge}</td>
+                <td>${overviewStatusBadge(st)}</td>
+                <td>${renderOverviewIssues(inputIssues(inp))}</td>
                 <td class="font-mono text-xs">${inp.live ? formatUptime(inp.uptimeMs) : '—'}</td>
                 <td class="font-mono text-xs">${inp.connected ? formatBitrate(inp.recvBitrateKbps) : '—'}</td>
                 <td class="font-mono text-xs">${spec}</td>
             </tr>`;
         }
         if (problemsOnly && inputRows === '') {
-            inputRows = `<tr><td colspan="5" class="py-4 text-center opacity-50">No input issues.</td></tr>`;
+            inputRows = `<tr><td colspan="6" class="py-4 text-center opacity-50">No input issues.</td></tr>`;
         } else if (activeOnly && inputRows === '') {
-            inputRows = `<tr><td colspan="5" class="py-4 text-center opacity-50">No active inputs.</td></tr>`;
+            inputRows = `<tr><td colspan="6" class="py-4 text-center opacity-50">No active inputs.</td></tr>`;
         }
     }
 
@@ -1087,30 +1211,14 @@ function renderOverview(): void {
     );
     let outputRows = '';
     if (totalOuts === 0) {
-        outputRows = `<tr><td colspan="6" class="py-4 text-center opacity-50">No outputs yet.</td></tr>`;
+        outputRows = `<tr><td colspan="7" class="py-4 text-center opacity-50">No outputs yet.</td></tr>`;
     } else {
         for (const p of state.pipelines) {
             for (const o of p.outs) {
-                const isRunning = o.status === 'running';
                 const st = outStatus(o, p.input);
                 if (problemsOnly && !isProblem(st)) continue;
                 if (activeOnly && isOffline(st)) continue;
-                const retryPrefix =
-                    st === 'error' && o.failures > 0 ? `${ICON_ITERATION_CW}${o.failures} ` : '';
-                const badge =
-                    st === 'off'
-                        ? `<span class="badge badge-sm badge-neutral">Stopped</span>`
-                        : st === 'good'
-                          ? `<span class="badge badge-sm badge-success">Running</span>`
-                          : st === 'warn'
-                            ? o.warningReason
-                                ? `<span class="badge badge-sm badge-warning" title="${escapeHtml(o.warningReason)}">Warning</span>`
-                                : o.bitrateKbps === null
-                                  ? `<span class="badge badge-sm badge-warning">No Output</span>`
-                                  : `<span class="badge badge-sm badge-warning">Low Bitrate</span>`
-                            : isRunning
-                              ? `<span class="badge badge-sm badge-error gap-1">${retryPrefix}No Input</span>`
-                              : `<span class="badge badge-sm badge-error gap-1">${retryPrefix}Failed</span>`;
+                const badge = overviewStatusBadge(st);
 
                 const isOn = o.status === 'running';
                 const media = isOn ? deriveOutputMedia(p.input, o) : null;
@@ -1135,6 +1243,7 @@ function renderOverview(): void {
                 outputRows += `<tr class="hover" ${statusBg(st === 'error', st === 'warn')}>
                     <td class="overview-name-col"><span class="opacity-40 text-xs">${escapeHtml(p.name)} ·</span> ${escapeHtml(o.name)} ${errorBadge}</td>
                     <td>${badge}</td>
+                    <td>${renderOverviewIssues(outputIssues(o, p.input))}</td>
                     <td class="font-mono text-xs">${outUptimeMs !== null ? formatUptime(outUptimeMs) : '—'}</td>
                     ${td(formatBitrate(o.bitrateKbps))}
                     <td class="font-mono text-xs ${memorySeverityClass(outputMemoryPercent(o))}">${formatOutputMemory(o) ?? '—'}</td>
@@ -1143,9 +1252,9 @@ function renderOverview(): void {
             }
         }
         if (problemsOnly && outputRows === '') {
-            outputRows = `<tr><td colspan="6" class="py-4 text-center opacity-50">No output issues.</td></tr>`;
+            outputRows = `<tr><td colspan="7" class="py-4 text-center opacity-50">No output issues.</td></tr>`;
         } else if (activeOnly && outputRows === '') {
-            outputRows = `<tr><td colspan="6" class="py-4 text-center opacity-50">No active outputs.</td></tr>`;
+            outputRows = `<tr><td colspan="7" class="py-4 text-center opacity-50">No active outputs.</td></tr>`;
         }
     }
 
@@ -1214,21 +1323,21 @@ function renderOverview(): void {
         <h2 class="mb-2 text-lg font-bold">SRT Bonding Relay <span class="badge badge-neutral badge-sm ml-1">${activeRelayPipelines.length}</span></h2>
         <div class="overflow-x-auto mb-6">
             <table class="table table-sm table-relay">
-                ${thead(['Pipeline', 'Input', 'Output', 'IP', 'Port', 'State', 'RTT', 'Rx', 'Loss', 'Drop', 'Rexmit', 'Rx', 'Fwd', 'Rexmit', 'Loss', 'Drop', 'Bytes'])}
+                ${thead(['Pipeline', 'Input', 'Output', 'Issues', 'Leg IP', 'State', 'RTT', 'Rx', 'Loss', 'Drop', 'Rexmit', 'Rx / Fwd', 'Rexmit', 'Loss', 'Drop'])}
                 <tbody>${relayRows}</tbody>
             </table>
         </div>
         <h2 class="mb-2 text-lg font-bold">Inputs <span class="badge badge-neutral badge-sm ml-1">${state.pipelines.length}</span></h2>
         <div class="overflow-x-auto mb-6">
             <table class="table table-sm">
-                ${thead(['Pipeline', 'Status', 'Uptime', 'Bitrate', 'Stream Specification'])}
+                ${thead(['Pipeline', 'Status', 'Issues', 'Uptime', 'Bitrate', 'Stream Specification'])}
                 <tbody>${inputRows}</tbody>
             </table>
         </div>
         <h2 class="mb-2 text-lg font-bold">Outputs <span class="badge badge-neutral badge-sm ml-1">${totalOuts}</span></h2>
         <div class="overflow-x-auto">
             <table class="table table-sm">
-                ${thead(['Pipeline · Output', 'Status', 'Uptime', 'Bitrate', 'RAM', 'Stream Specification'])}
+                ${thead(['Pipeline · Output', 'Status', 'Issues', 'Uptime', 'Bitrate', 'RAM', 'Stream Specification'])}
                 <tbody>${outputRows}</tbody>
             </table>
         </div>`;
@@ -1821,7 +1930,7 @@ function renderPipelineInfo(selectedId: string | null): void {
                    <div class="overflow-x-auto">
                    <table class="table table-xs">
                        <thead><tr>
-                           <th>IP</th><th>Port</th><th>State</th><th>RTT</th>
+                           <th>Leg IP</th><th>Port</th><th>State</th><th>RTT</th>
                            <th>Rx</th><th>Loss</th><th>Drop</th><th>Rexmit</th>
                        </tr></thead>
                        <tbody>${legs
