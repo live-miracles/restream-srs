@@ -52,9 +52,18 @@ export interface PipelineLog {
     message: string;
 }
 
+// 'crash' covers anything that forced ffmpeg to stop unexpectedly (unhandled
+// exit, or the app's own watchdogs killing a stalled/stuck/OOM process) —
+// these are genuine failures and drive retry/error-status logic. 'stopped' is
+// diagnostic only: whatever ffmpeg had printed to stderr at the moment of a
+// deliberate stop, kept so a stall that never crashed (just sat there doing
+// nothing until someone stopped it) still leaves a trace.
+export type OutputErrorKind = 'crash' | 'stopped';
+
 export interface OutputErrorRecord {
     ts: number;
     message: string;
+    kind: OutputErrorKind;
 }
 
 export interface Output {
@@ -67,6 +76,7 @@ export interface Output {
     sinks: OutputSink[];
     srtLatencyMs: number | null;
     lastError: string | null;
+    hasErrorHistory: boolean;
 }
 
 export interface Db {
@@ -107,7 +117,12 @@ export interface Db {
     ): Output[];
     getOutput(id: string): Output | null;
     listOutputs(): Output[];
-    listOutputIds(): { id: string; pipelineId: number; lastError: string | null }[];
+    listOutputIds(): {
+        id: string;
+        pipelineId: number;
+        lastError: string | null;
+        hasErrorHistory: boolean;
+    }[];
     listOutputsForPipeline(pipelineId: number): Output[];
     updateOutput(
         id: string,
@@ -124,7 +139,7 @@ export interface Db {
     setDesiredStateForPipeline(pipelineId: number, state: 'running' | 'stopped'): void;
     clearLastErrorsForPipeline(pipelineId: number): void;
 
-    setOutputLastError(id: string, message: string): void;
+    setOutputLastError(id: string, message: string, kind: OutputErrorKind): void;
     clearOutputLastError(id: string): void;
     getOutputErrorHistory(id: string): OutputErrorRecord[];
 

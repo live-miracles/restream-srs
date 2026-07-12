@@ -494,7 +494,11 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
         if (now - warning.badSinceMs <= OUTPUT_SOCKET_GRACE_MS) return false;
 
         try {
-            db.setOutputLastError(outputId, buildSocketWatchdogError(outputId, proc, reason));
+            db.setOutputLastError(
+                outputId,
+                buildSocketWatchdogError(outputId, proc, reason),
+                'crash',
+            );
         } catch {
             /* non-critical; still restart the stuck process */
         }
@@ -543,6 +547,7 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
                         db.setOutputLastError(
                             outputId,
                             buildMemoryWatchdogError(outputId, proc, rssBytes, limitBytes, now),
+                            'crash',
                         );
                     } catch {
                         /* non-critical; still restart the runaway process */
@@ -575,7 +580,7 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
             if (now - p.lastOutputProgressAtMs <= OUTPUT_WATCHDOG_STALL_MS) continue;
 
             try {
-                db.setOutputLastError(outputId, buildWatchdogError(outputId, proc, now));
+                db.setOutputLastError(outputId, buildWatchdogError(outputId, proc, now), 'crash');
             } catch {
                 /* non-critical; still restart the stuck process */
             }
@@ -687,10 +692,27 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
                         db.setOutputLastError(
                             output.id,
                             detail ? `${exitStr}\n${detail}` : exitStr,
+                            'crash',
                         );
                     }
                 } catch {
                     /* non-critical */
+                }
+            } else if (!shuttingDown) {
+                // Deliberate stop, not a failure — but if ffmpeg had printed
+                // anything, it's worth keeping as a diagnostic breadcrumb (e.g.
+                // a run that never crashed but also never made progress, and
+                // got stopped by hand before any watchdog would have caught
+                // it). Skip during app shutdown, which stops every running
+                // output at once and would otherwise flood each one's history
+                // with routine stderr chatter on every restart/deploy.
+                const detail = stderrTail.trim();
+                if (detail) {
+                    try {
+                        db.setOutputLastError(output.id, detail, 'stopped');
+                    } catch {
+                        /* non-critical */
+                    }
                 }
             }
 

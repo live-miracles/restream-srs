@@ -35,6 +35,7 @@ import {
 declare global {
     interface Window {
         openSrsLogsBtn: () => Promise<void>;
+        refreshSrsLogsBtn: () => Promise<void>;
         openHostConnectionsBtn: () => Promise<void>;
         openSettingsBtn: () => Promise<void>;
         addHostProbeRowBtn: () => void;
@@ -87,6 +88,9 @@ window.openSrsLogsBtn = async () => {
     setUrlParam('p', null);
     setUrlParam('view', 'logs');
     await refreshDashboard();
+    await showSrsLogs();
+};
+window.refreshSrsLogsBtn = async () => {
     await showSrsLogs();
 };
 window.openHostConnectionsBtn = async () => {

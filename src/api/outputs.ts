@@ -93,7 +93,12 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
             if ('error' in parsed) return res.status(400).json({ error: parsed.error });
             if ('error' in srtLatency) return res.status(400).json({ error: srtLatency.error });
 
-            validated.push({ name, videoEncoding, sinks: parsed.sinks, srtLatencyMs: srtLatency.value });
+            validated.push({
+                name,
+                videoEncoding,
+                sinks: parsed.sinks,
+                srtLatencyMs: srtLatency.value,
+            });
         }
 
         const created = db.createOutputs(validated.map((v) => ({ pipelineId, ...v })));
