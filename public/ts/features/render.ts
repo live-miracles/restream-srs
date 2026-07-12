@@ -356,7 +356,10 @@ function deriveOutputMedia(
     input: InputHealth,
     output: OutputView,
 ): {
-    video: Pick<VideoInfo, 'codec' | 'width' | 'height' | 'fps' | 'fieldOrder'> | null;
+    video: Pick<
+        VideoInfo,
+        'codec' | 'width' | 'height' | 'fps' | 'fieldOrder' | 'profile' | 'level'
+    > | null;
     audio: Pick<AudioInfo, 'codec' | 'channel' | 'sample_rate'> | null;
 } {
     const preset = OUTPUT_VIDEO_PRESETS[output.videoEncoding] ?? OUTPUT_VIDEO_PRESETS.copy;
@@ -373,6 +376,7 @@ function deriveOutputMedia(
         input.video?.fieldOrder ?? null,
         ctx,
     );
+    const copiesInputVideo = output.videoEncoding === 'copy';
     const video = codec
         ? {
               codec,
@@ -380,6 +384,8 @@ function deriveOutputMedia(
               height: resolution?.height ?? 0,
               fps,
               fieldOrder,
+              profile: copiesInputVideo ? (input.video?.profile ?? '') : '',
+              level: copiesInputVideo ? (input.video?.level ?? '') : '',
           }
         : null;
 
@@ -1001,7 +1007,10 @@ function renderOverview(): void {
     };
 
     const videoSpec = (
-        video: Pick<VideoInfo, 'codec' | 'width' | 'height' | 'fps' | 'fieldOrder'> | null,
+        video: Pick<
+            VideoInfo,
+            'codec' | 'width' | 'height' | 'fps' | 'fieldOrder' | 'profile' | 'level'
+        > | null,
     ): string | null => {
         if (!video?.width || !video.height) return null;
         const scanFps = fmtScanFps(video.fieldOrder, video.fps);
@@ -1010,7 +1019,9 @@ function renderOverview(): void {
                 ? `${video.width}x${video.height} ${scanFps}`
                 : `${video.width}x${video.height}${scanFps}`
             : `${video.width}x${video.height}`;
-        return `${video.codec || '—'} ${res}`;
+        return [video.codec || '—', res, video.profile || null, video.level || null]
+            .filter(Boolean)
+            .join(' ');
     };
 
     const audioSpec = (
@@ -1028,7 +1039,10 @@ function renderOverview(): void {
     // cell instead of extra table rows.
     const streamSpec = (
         protocol: string | null,
-        video: Pick<VideoInfo, 'codec' | 'width' | 'height' | 'fps' | 'fieldOrder'> | null,
+        video: Pick<
+            VideoInfo,
+            'codec' | 'width' | 'height' | 'fps' | 'fieldOrder' | 'profile' | 'level'
+        > | null,
         audioTracks: AudioTrackInfo[] | null,
         fallbackAudio: Pick<AudioInfo, 'codec' | 'channel' | 'sample_rate'> | null,
     ): string => {
