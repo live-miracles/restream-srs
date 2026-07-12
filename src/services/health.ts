@@ -335,17 +335,7 @@ export function createHealthService(
         delayMs = 0,
     ) {
         if (ffprobeTimers.has(pipelineId) || ffprobeInFlight.has(pipelineId)) return;
-        let url = inputPullUrl(streamKey, protocol);
-        if (protocol === 'srt') {
-            // transtype=live implies linger=0, so ffprobe's srt_close() tears the
-            // socket down with no shutdown handshake even on a clean exit — SRS's
-            // play thread then logs SRTS_BROKEN for what was actually a normal
-            // probe completion. A short linger lets the close handshake finish
-            // (sub-ms over loopback) so SRS sees a graceful disconnect instead.
-            // Only applied to the probe URL — the relay/preview pulls (outputs.ts,
-            // preview.ts) share srtPullUrl() unchanged.
-            url += '&linger=1';
-        }
+        const url = inputPullUrl(streamKey, protocol);
         const generation = ffprobeGenerations.get(pipelineId) ?? 0;
         const timer = setTimeout(async () => {
             ffprobeTimers.delete(pipelineId);
