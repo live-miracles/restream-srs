@@ -1,6 +1,5 @@
-import fs from 'fs';
+import { execFile } from 'child_process';
 import type { Express } from 'express';
-import { SRS_LOG_PATH } from '../utils/conf.js';
 import type { Db } from '../types.js';
 import { kickSrsClientsByStream } from '../utils/srs.js';
 import type { SrsEvent } from '../services/health.js';
@@ -8,26 +7,35 @@ import type { SrsEvent } from '../services/health.js';
 const MAX_LOG_READ_BYTES = 100 * 1024;
 const MAX_LOG_TAIL_LINES = 200;
 
-function readLogFileTail(maxLines: number): { lines: string[]; fileExists: boolean } {
-    try {
-        const fd = fs.openSync(SRS_LOG_PATH, 'r');
-        const { size } = fs.fstatSync(fd);
-        const readLen = Math.min(size, MAX_LOG_READ_BYTES);
-        const buf = Buffer.alloc(readLen);
-        fs.readSync(fd, buf, 0, readLen, size - readLen);
-        fs.closeSync(fd);
-        return {
-            fileExists: true,
-            lines: buf
-                .toString('utf8')
-                .split('\n')
-                .filter((l) => l.trim())
-                .slice(-maxLines),
-        };
-    } catch (err: unknown) {
-        const isNotFound = (err as NodeJS.ErrnoException).code === 'ENOENT';
-        return { fileExists: !isNotFound, lines: [] };
-    }
+// All three only ever log to the journal (never a file), and only exist as
+// systemd units in production — `npm run dev`/`npm run srs`/`npm run relay`
+// aren't systemd-managed, so these read as empty (source 'none') locally.
+const SRS_SYSTEMD_UNIT = 'srs.service';
+const APP_SYSTEMD_UNIT = 'restream-srs.service';
+const RELAY_SYSTEMD_UNIT = 'srt-bonding-relay.service';
+
+type LogSource = 'journal' | 'none';
+interface LogTail {
+    lines: string[];
+    source: LogSource;
+}
+
+function readJournalTail(unit: string, maxLines: number): Promise<string[]> {
+    return new Promise((resolve) => {
+        execFile(
+            'journalctl',
+            ['-u', unit, '-n', String(maxLines), '--no-pager', '-o', 'cat'],
+            { timeout: 5000, maxBuffer: MAX_LOG_READ_BYTES },
+            (err, stdout) => {
+                resolve(err ? [] : stdout.split('\n').filter((l) => l.trim()));
+            },
+        );
+    });
+}
+
+async function readJournalOnlyTail(unit: string, maxLines: number): Promise<LogTail> {
+    const lines = await readJournalTail(unit, maxLines);
+    return { lines, source: lines.length > 0 ? 'journal' : 'none' };
 }
 
 export function registerSrsHooks(app: Express, db: Db): void {
@@ -74,8 +82,12 @@ export function registerSrsHooks(app: Express, db: Db): void {
 }
 
 export function registerSrsLogsApi(app: Express, getSrsEvents: () => SrsEvent[]): void {
-    app.get('/api/srs-logs', (_req, res) => {
-        const { lines, fileExists } = readLogFileTail(MAX_LOG_TAIL_LINES);
-        res.json({ events: getSrsEvents(), logTail: lines, logFileExists: fileExists });
+    app.get('/api/srs-logs', async (_req, res) => {
+        const [srs, dashboard, relay] = await Promise.all([
+            readJournalOnlyTail(SRS_SYSTEMD_UNIT, MAX_LOG_TAIL_LINES),
+            readJournalOnlyTail(APP_SYSTEMD_UNIT, MAX_LOG_TAIL_LINES),
+            readJournalOnlyTail(RELAY_SYSTEMD_UNIT, MAX_LOG_TAIL_LINES),
+        ]);
+        res.json({ events: getSrsEvents(), srs, dashboard, relay });
     });
 }

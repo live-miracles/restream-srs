@@ -9,7 +9,13 @@ import {
     flashSaveSuccess,
 } from '../core/utils.js';
 import { refreshAfterMutation } from './dashboard.js';
-import type { StreamKey, AudioTrackInfo, HostProbeTarget, Fail2banBansData } from '../types.js';
+import type {
+    StreamKey,
+    AudioTrackInfo,
+    HostProbeTarget,
+    Fail2banBansData,
+    ServerLogTail,
+} from '../types.js';
 
 const MAX_HOST_PROBE_TARGETS = 10;
 
@@ -1135,6 +1141,12 @@ export async function showOutputError(pipelineId: string, outId: string): Promis
         .join('');
 }
 
+const LOG_TERMINALS: { label: string; elId: string; key: 'srs' | 'dashboard' | 'relay' }[] = [
+    { label: 'SRS', elId: 'srs-log-tail', key: 'srs' },
+    { label: 'Dashboard', elId: 'dashboard-log-tail', key: 'dashboard' },
+    { label: 'Relay', elId: 'relay-log-tail', key: 'relay' },
+];
+
 export async function showSrsLogs(): Promise<void> {
     const contentEl = document.getElementById('srs-logs-content');
     if (!contentEl) return;
@@ -1151,40 +1163,54 @@ export async function showSrsLogs(): Promise<void> {
             .replace(/\[ERROR\]/g, '<span class="text-error font-semibold">[ERROR]</span>')
             .replace(/\[WARNING\]/g, '<span class="text-warning font-semibold">[WARNING]</span>');
 
-    let html =
-        '<p class="text-xs font-semibold uppercase opacity-50 mb-2">SRS Output (last 200 lines)</p>';
-    if (data.logTail.length === 0) {
-        const msg =
-            data.logFileExists === false
-                ? 'SRS log file not found. SRS may not have been started yet.'
-                : 'SRS log file is empty — no log output yet.';
-        html += `<p class="text-sm opacity-50 mb-4">${msg}</p>`;
-    } else {
-        html += `<div id="srs-log-tail" class="h-[32rem] overflow-y-auto rounded-xl border border-white/10 bg-black p-3">
-            <pre class="text-gray-300 whitespace-pre-wrap break-all">${data.logTail.map((l) => colorizeLevel(esc(l))).join('\n')}</pre>
-        </div>`;
-    }
+    const renderTerminal = (label: string, elId: string, tail: ServerLogTail): string => {
+        let section = `<p class="text-xs font-semibold uppercase opacity-50 mb-2">${label} (last 200 lines)</p>`;
+        if (tail.lines.length === 0) {
+            const msg =
+                tail.source === 'none'
+                    ? `No ${label} log output found — it may not have started yet.`
+                    : `${label} log output is empty — no log output yet.`;
+            section += `<p class="text-sm opacity-50 mb-4">${msg}</p>`;
+        } else {
+            section += `<div id="${elId}" class="h-72 overflow-y-auto rounded-xl border border-white/10 bg-black p-3">
+                <pre class="text-gray-300 whitespace-pre-wrap break-all">${tail.lines.map((l) => colorizeLevel(esc(l))).join('\n')}</pre>
+            </div>`;
+        }
+        return section;
+    };
+
+    const srsTerminal = LOG_TERMINALS[0];
+    let html = renderTerminal(srsTerminal.label, srsTerminal.elId, data[srsTerminal.key]);
 
     html += '<p class="text-xs font-semibold uppercase opacity-50 mt-4 mb-2">Connectivity</p>';
     if (data.events.length === 0) {
-        html += '<p class="text-sm opacity-50">No events recorded yet.</p>';
+        html += '<p class="text-sm opacity-50 mb-4">No events recorded yet.</p>';
     } else {
-        html += [...data.events]
-            .reverse()
-            .map(
-                (e) =>
-                    `<div class="flex items-center gap-3 border-b border-base-200 py-1.5 last:border-0">
-                        <span class="badge badge-xs leading-none shrink-0 uppercase ${e.type === 'up' ? 'badge-success' : 'badge-error'}">${e.type}</span>
-                        <span class="opacity-70 shrink-0">${fmtTs(e.ts)}</span>
-                        <span class="opacity-80">${esc(e.message)}</span>
-                    </div>`,
-            )
-            .join('');
+        html +=
+            '<div class="mb-4">' +
+            [...data.events]
+                .reverse()
+                .map(
+                    (e) =>
+                        `<div class="flex items-center gap-3 border-b border-base-200 py-1.5 last:border-0">
+                            <span class="badge badge-xs leading-none shrink-0 uppercase ${e.type === 'up' ? 'badge-success' : 'badge-error'}">${e.type}</span>
+                            <span class="opacity-70 shrink-0">${fmtTs(e.ts)}</span>
+                            <span class="opacity-80">${esc(e.message)}</span>
+                        </div>`,
+                )
+                .join('') +
+            '</div>';
+    }
+
+    for (const { label, elId, key } of LOG_TERMINALS.slice(1)) {
+        html += renderTerminal(label, elId, data[key]);
     }
 
     contentEl.innerHTML = html;
-    const tailEl = document.getElementById('srs-log-tail');
-    if (tailEl) tailEl.scrollTop = tailEl.scrollHeight;
+    for (const { elId } of LOG_TERMINALS) {
+        const tailEl = document.getElementById(elId);
+        if (tailEl) tailEl.scrollTop = tailEl.scrollHeight;
+    }
 }
 
 // ── Output copy / paste ───────────────────────────────

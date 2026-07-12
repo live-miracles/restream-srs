@@ -24,7 +24,6 @@ fi
 REPO_URL="${REPO_URL:-https://github.com/live-miracles/restream-srs}"
 APP_DIR=/opt/restream-srs
 DATA_DIR=/var/lib/restream-srs
-LOG_DIR=/var/log/restream-srs
 CONF_DIR=/etc/restream-srs
 SERVICE_USER=restream-srs
 
@@ -74,11 +73,11 @@ verify_sha256() {
     echo "Checksum OK: $(basename "$file")"
 }
 
-step "1/11 System packages"
+step "1/10 System packages"
 apt-get update -q
 apt-get install -y -q curl tar xz-utils unzip git ca-certificates
 
-step "2/11 Node.js 22"
+step "2/10 Node.js 22"
 if node --version 2>/dev/null | grep -q '^v22'; then
     echo "Node.js 22 already installed: $(node --version)"
 else
@@ -87,7 +86,7 @@ else
     echo "Installed: $(node --version)"
 fi
 
-step "3/11 FFmpeg $FFMPEG_VERSION"
+step "3/10 FFmpeg $FFMPEG_VERSION"
 FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_BUILD_TAG}/${FFMPEG_FILENAME}"
 
 if /usr/local/bin/ffmpeg -version 2>/dev/null | grep -q "ffmpeg version n${FFMPEG_VERSION}"; then
@@ -104,7 +103,7 @@ else
 fi
 
 SRS_VERSION_MARKER=/usr/local/bin/.srs-version
-step "4/11 SRS $SRS_VERSION"
+step "4/10 SRS $SRS_VERSION"
 if [[ -x /usr/local/bin/srs && -f "$SRS_VERSION_MARKER" && "$(cat "$SRS_VERSION_MARKER")" == "$SRS_RELEASE_TAG" ]]; then
     echo "SRS $SRS_VERSION ($SRS_RELEASE_TAG) already installed."
 else
@@ -123,7 +122,7 @@ else
 fi
 
 SRT_VERSION_MARKER=/usr/local/bin/.srt-bonding-relay-version
-step "5/11 srt-bonding-relay $SRT_RELEASE_TAG"
+step "5/10 srt-bonding-relay $SRT_RELEASE_TAG"
 if [[ -x /usr/local/bin/srt-bonding-relay && -f "$SRT_VERSION_MARKER" && "$(cat "$SRT_VERSION_MARKER")" == "$SRT_RELEASE_TAG" ]]; then
     echo "srt-bonding-relay $SRT_RELEASE_TAG already installed."
 else
@@ -147,17 +146,17 @@ else
     echo "Installed: /usr/local/bin/srt-bonding-relay"
 fi
 
-step "6/11 Service user and directories"
+step "6/10 Service user and directories"
 if ! id "$SERVICE_USER" &>/dev/null; then
     useradd --system --home "$APP_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
     echo "Created user: $SERVICE_USER"
 else
     echo "User $SERVICE_USER already exists."
 fi
-mkdir -p "$APP_DIR" "$DATA_DIR" "$DATA_DIR/objs" "$LOG_DIR" "$CONF_DIR"
-chown "$SERVICE_USER:$SERVICE_USER" "$APP_DIR" "$DATA_DIR" "$DATA_DIR/objs" "$LOG_DIR" "$CONF_DIR"
+mkdir -p "$APP_DIR" "$DATA_DIR" "$DATA_DIR/objs" "$CONF_DIR"
+chown "$SERVICE_USER:$SERVICE_USER" "$APP_DIR" "$DATA_DIR" "$DATA_DIR/objs" "$CONF_DIR"
 
-step "7/11 Application"
+step "7/10 Application"
 if [[ ! -d "$APP_DIR/.git" ]]; then
     git clone "$REPO_URL" "$APP_DIR"
 else
@@ -172,7 +171,7 @@ npm prune --omit=dev
 chown -R "$SERVICE_USER:$SERVICE_USER" "$APP_DIR"
 echo "Build complete."
 
-step "8/11 Config and data"
+step "8/10 Config and data"
 # SRT passphrase: the repo configs ship a public default, so on first install
 # (when these files don't exist yet at $CONF_DIR) generate a per-server secret
 # and write it to both. On reinstall, each file's currently-deployed
@@ -199,9 +198,6 @@ cp "$APP_DIR/srs.conf" "$CONF_DIR/srs.conf"
 cp "$APP_DIR/srt-bonding-relay.json" "$CONF_DIR/srt-bonding-relay.json"
 echo "Config: refreshed $CONF_DIR/srs.conf from repository"
 echo "Config: refreshed $CONF_DIR/srt-bonding-relay.json from repository"
-# Patch in server-specific log paths (not in the repo's srs.conf).
-sed -i '/^[[:space:]]*srs_log_tank[[:space:]]/d; /^[[:space:]]*srs_log_file[[:space:]]/d' "$CONF_DIR/srs.conf"
-sed -i "/^listen/a srs_log_tank        file;\nsrs_log_file        $LOG_DIR/srs.log;" "$CONF_DIR/srs.conf"
 # Written via node, not sed -i: a hand-typed passphrase containing "&" or "\"
 # would otherwise be reinterpreted as sed replacement syntax and silently
 # corrupted instead of applied verbatim.
@@ -256,21 +252,7 @@ echo "Config: $CONF_DIR/srs.conf"
 echo "App config: $APP_DIR/restream.json"
 echo "Data:   $DB_FILE"
 
-step "9/11 Logrotate"
-cat > /etc/logrotate.d/restream-srs <<EOF
-$LOG_DIR/srs.log {
-    daily
-    rotate 14
-    compress
-    delaycompress
-    missingok
-    notifempty
-    copytruncate
-}
-EOF
-echo "Logrotate: /etc/logrotate.d/restream-srs"
-
-step "10/11 fail2ban"
+step "9/10 fail2ban"
 # Bans IPs that repeatedly hit the on_publish/on_play hooks with bad stream
 # keys (i.e. brute-forcing RTMP, which has no passphrase). Reads the app's
 # journald output; the log format is emitted by src/api/srs.ts.
@@ -497,7 +479,7 @@ install -m 0440 -o root -g root "$SUDOERS_TMP" /etc/sudoers.d/restream-srs-fail2
 echo "fail2ban: dashboard IP whitelist wired up (Settings -> IP Whitelist)"
 echo "fail2ban: dashboard ban list wired up (Settings -> Currently Banned)"
 
-step "11/11 Systemd"
+step "10/10 Systemd"
 cat > /etc/systemd/system/srs.service <<EOF
 [Unit]
 Description=SRS Streaming Server
@@ -518,7 +500,7 @@ LimitNOFILE=1048576
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ReadWritePaths=$DATA_DIR $LOG_DIR $CONF_DIR
+ReadWritePaths=$DATA_DIR $CONF_DIR
 
 [Install]
 WantedBy=multi-user.target
@@ -543,7 +525,7 @@ LimitNOFILE=1048576
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ReadWritePaths=$DATA_DIR $LOG_DIR $CONF_DIR
+ReadWritePaths=$DATA_DIR $CONF_DIR
 
 [Install]
 WantedBy=multi-user.target
@@ -559,6 +541,11 @@ Wants=network-online.target
 Type=simple
 User=$SERVICE_USER
 Group=$SERVICE_USER
+# Journal files are only readable by root and the systemd-journal group -
+# sharing a UID with srs.service/srt-bonding-relay.service does not itself
+# grant read access. Lets the dashboard's /api/srs-logs shell out to
+# `journalctl -u <unit>` for any unit's log, not just srs.service.
+SupplementaryGroups=systemd-journal
 WorkingDirectory=$APP_DIR
 Environment=NODE_ENV=production
 ExecStart=/usr/bin/node $APP_DIR/dist/index.js
