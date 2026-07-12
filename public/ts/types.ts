@@ -60,6 +60,7 @@ export interface Output {
     sinks: OutputSink[];
     srtLatencyMs: number | null;
     lastError: string | null;
+    hasErrorHistory: boolean;
 }
 
 export interface SinkPayload {
@@ -109,6 +110,7 @@ export interface OutputStatus {
     failures: number;
     warningReason: string | null;
     lastError: string | null;
+    hasErrorHistory: boolean;
     memoryUsageBytes: number | null;
     memoryLimitBytes: number | null;
 }
@@ -201,9 +203,12 @@ export interface PipelineLog {
     message: string;
 }
 
+export type OutputErrorKind = 'crash' | 'stopped';
+
 export interface OutputErrorRecord {
     ts: number;
     message: string;
+    kind: OutputErrorKind;
 }
 
 export interface InputHealth {
@@ -289,6 +294,7 @@ export interface OutputView extends Output {
     failures: number;
     warningReason: string | null;
     lastError: string | null;
+    hasErrorHistory: boolean;
     lastErrorAt: number | null;
     memoryUsageBytes: number | null;
     memoryLimitBytes: number | null;

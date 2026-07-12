@@ -228,7 +228,12 @@ describe('buildFfmpegArgs', () => {
     });
 
     test('srtLatencyMs appends &latency=<us> to an SRT sink (per-output path)', () => {
-        const args = buildFfmpegArgs('rtmp://in', [sink('srt://host:10080?streamid=x')], 'copy', 200);
+        const args = buildFfmpegArgs(
+            'rtmp://in',
+            [sink('srt://host:10080?streamid=x')],
+            'copy',
+            200,
+        );
         assert.ok(args.includes('srt://host:10080?streamid=x&latency=200000'));
     });
 

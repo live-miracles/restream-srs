@@ -76,6 +76,7 @@ function makeDb() {
     };
     return {
         lastError: null,
+        lastErrorKind: null,
         getPipeline(id) {
             return id === 1
                 ? { id: 1, name: 'Live', streamKey: 'stream-key', streamKeyId: 1 }
@@ -87,8 +88,9 @@ function makeDb() {
         listOutputsForPipeline() {
             return [output];
         },
-        setOutputLastError(_id, message) {
+        setOutputLastError(_id, message, kind) {
             this.lastError = `${Date.now()}\n${message}`;
+            this.lastErrorKind = kind;
         },
     };
 }
@@ -576,5 +578,63 @@ describe('output stop/start race', () => {
         assert.equal(service.getStats('out1').status, 'stopped');
 
         service.shutdown();
+    });
+
+    test('stopping an output with pending stderr records it as a stopped-kind diagnostic entry', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const output = db.getOutput('out1');
+        const createOutputService = loadOutputService(t, proc, { progressStallMs: 60_000 });
+        const service = createOutputService(db, makeReadyInputState());
+
+        await service.start('out1');
+        proc.stderr.write('Connection stuck, retrying handshake...\n');
+        await sleep(15);
+
+        output.desiredState = 'stopped';
+        service.stop('out1');
+        await sleep(15);
+
+        assert.equal(service.getStats('out1').status, 'stopped');
+        assert.equal(db.lastErrorKind, 'stopped');
+        assert.match(db.lastError, /Connection stuck, retrying handshake/);
+
+        service.shutdown();
+    });
+
+    test('stopping a clean output does not record a diagnostic entry', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const output = db.getOutput('out1');
+        const createOutputService = loadOutputService(t, proc, { progressStallMs: 60_000 });
+        const service = createOutputService(db, makeReadyInputState());
+
+        await service.start('out1');
+        await sleep(15);
+
+        output.desiredState = 'stopped';
+        service.stop('out1');
+        await sleep(15);
+
+        assert.equal(service.getStats('out1').status, 'stopped');
+        assert.equal(db.lastError, null);
+
+        service.shutdown();
+    });
+
+    test('shutdown does not record diagnostic entries even with pending stderr', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const createOutputService = loadOutputService(t, proc, { progressStallMs: 60_000 });
+        const service = createOutputService(db, makeReadyInputState());
+
+        await service.start('out1');
+        proc.stderr.write('some routine warning\n');
+        await sleep(15);
+
+        service.shutdown();
+        await sleep(15);
+
+        assert.equal(db.lastError, null);
     });
 });

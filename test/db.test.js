@@ -248,10 +248,7 @@ describe('Output CRUD', () => {
             sinks: [{ url: 'srt://host:10080?streamid=x' }],
             srtLatencyMs: 300,
         });
-        assert.equal(
-            db.listOutputs().find((out) => out.id === o.id)?.srtLatencyMs,
-            300,
-        );
+        assert.equal(db.listOutputs().find((out) => out.id === o.id)?.srtLatencyMs, 300);
         db.updateOutput(o.id, {
             name: 'X',
             videoEncoding: 'copy',
@@ -292,7 +289,7 @@ describe('Output CRUD', () => {
         const p = db.createPipeline();
         const o = db.createOutput({ pipelineId: p.id, name: 'X', sinks: [{ url: 'rtmp://x' }] });
 
-        for (let i = 1; i <= 6; i++) db.setOutputLastError(o.id, `error ${i}`);
+        for (let i = 1; i <= 6; i++) db.setOutputLastError(o.id, `error ${i}`, 'crash');
 
         const history = db.getOutputErrorHistory(o.id);
         assert.deepEqual(
@@ -302,6 +299,46 @@ describe('Output CRUD', () => {
 
         const got = db.getOutput(o.id);
         assert.match(got?.lastError ?? '', /error 6$/);
+    });
+
+    test('setOutputLastError records kind, and stopped entries do not become the current error', () => {
+        const db = makeDb();
+        const p = db.createPipeline();
+        const o = db.createOutput({ pipelineId: p.id, name: 'X', sinks: [{ url: 'rtmp://x' }] });
+
+        db.setOutputLastError(o.id, 'ffmpeg crashed', 'crash');
+        db.setOutputLastError(o.id, 'leftover stderr from a manual stop', 'stopped');
+
+        const history = db.getOutputErrorHistory(o.id);
+        assert.deepEqual(
+            history.map((e) => ({ message: e.message, kind: e.kind })),
+            [
+                { message: 'ffmpeg crashed', kind: 'crash' },
+                { message: 'leftover stderr from a manual stop', kind: 'stopped' },
+            ],
+        );
+
+        // The single "current error" string still points at the last crash,
+        // not the more recent (but non-failure) stopped entry.
+        const got = db.getOutput(o.id);
+        assert.match(got?.lastError ?? '', /ffmpeg crashed$/);
+        assert.equal(got?.hasErrorHistory, true);
+    });
+
+    test('stopped-only diagnostics surface as history without a current error', () => {
+        const db = makeDb();
+        const p = db.createPipeline();
+        const o = db.createOutput({ pipelineId: p.id, name: 'X', sinks: [{ url: 'rtmp://x' }] });
+
+        db.setOutputLastError(o.id, 'leftover stderr from a manual stop', 'stopped');
+
+        const got = db.getOutput(o.id);
+        assert.equal(got?.lastError, null);
+        assert.equal(got?.hasErrorHistory, true);
+
+        const listed = db.listOutputIds().find((out) => out.id === o.id);
+        assert.equal(listed?.lastError, null);
+        assert.equal(listed?.hasErrorHistory, true);
     });
 
     test('deleting a pipeline cascades to its outputs', () => {
@@ -363,7 +400,7 @@ describe('Config revision', () => {
         const o = db.createOutput({ pipelineId: p.id, name: 'A', sinks: [{ url: 'rtmp://a' }] });
         const rev = db.getConfigRev();
 
-        db.setOutputLastError(o.id, 'boom');
+        db.setOutputLastError(o.id, 'boom', 'crash');
         db.clearOutputLastError(o.id);
         db.appendPipelineLog(p.id, 'online', 'connected');
 

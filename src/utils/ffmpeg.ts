@@ -154,7 +154,13 @@ export function buildFfmpegArgs(
         const mapArgs = buildSinkMapArgs(sink.audioEncoding, isSrt);
         const audioArgs = isSrt ? (['-c:a', 'copy'] as const) : flvAudioArgs(inputUrl);
         const fmt = isSrt ? ['-f', 'mpegts'] : ['-f', 'flv'];
-        args.push(...mapArgs, ...encArgs, ...audioArgs, ...fmt, withSrtLatency(sink.url, srtLatencyMs));
+        args.push(
+            ...mapArgs,
+            ...encArgs,
+            ...audioArgs,
+            ...fmt,
+            withSrtLatency(sink.url, srtLatencyMs),
+        );
     }
     return args;
 }

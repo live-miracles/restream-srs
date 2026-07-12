@@ -353,17 +353,28 @@ function getBondingIndicator(
     };
 }
 
+// Anchored to the health snapshot's own generatedAt (server clock) rather than
+// the browser's Date.now(). Comparing a server-issued timestamp against the
+// client's wall clock makes staleness detection sensitive to client/server
+// clock skew — a client clock running fast enough looks permanently "stalled"
+// even when the relay is flowing normally.
+function healthNowMs(): number {
+    const generatedAt = state.health.generatedAt;
+    const parsed = generatedAt ? new Date(generatedAt).getTime() : NaN;
+    return Number.isFinite(parsed) ? parsed : Date.now();
+}
+
 function relayHasRecentInputFlow(pipeline: PipelineView): boolean {
     return (
         pipeline.srtBonding.lastInputPacketAt != null &&
-        Date.now() - pipeline.srtBonding.lastInputPacketAt <= RELAY_FLOW_STALE_MS
+        healthNowMs() - pipeline.srtBonding.lastInputPacketAt <= RELAY_FLOW_STALE_MS
     );
 }
 
 function relayHasRecentOutputFlow(pipeline: PipelineView): boolean {
     return (
         pipeline.srtBonding.lastPacketAt != null &&
-        Date.now() - pipeline.srtBonding.lastPacketAt <= RELAY_FLOW_STALE_MS
+        healthNowMs() - pipeline.srtBonding.lastPacketAt <= RELAY_FLOW_STALE_MS
     );
 }
 
@@ -1921,7 +1932,7 @@ function renderOutputCard(
            </div>`
             : '';
     const historyBtn =
-        o.lastError !== null
+        o.hasErrorHistory
             ? `<button class="btn btn-xs btn-ghost ${lastErrorColor}" data-action="error-info" data-out-id="${o.id}" title="Error history">${ICON_HISTORY}</button>`
             : '';
     const warningHtml = o.warningReason

@@ -11,6 +11,7 @@ import type {
     StreamKey,
     HostProbeTarget,
     OutputErrorRecord,
+    OutputErrorKind,
     Db,
 } from '../types.js';
 
@@ -26,14 +27,32 @@ const LOG_RETENTION_LIMIT = 100;
 const OUTPUT_ERROR_HISTORY_LIMIT = 5;
 
 // Output.lastError's wire format predates the history array and stays
-// "<ts_ms>\n<message>" so existing frontend parsing keeps working.
+// "<ts_ms>\n<message>" so existing frontend parsing keeps working. It reflects
+// the latest *crash* record specifically (not just the latest history entry)
+// since it feeds "reason this output isn't running" logic (hasCurrentOutputError,
+// retry state) — a diagnostic stderr tail saved from a deliberate stop is not
+// that reason and must not masquerade as one.
 function toLastErrorString(error: OutputErrorRecord | null): string | null {
     return error ? `${error.ts}\n${error.message}` : null;
 }
 
+function latestCrashRecord(history: OutputErrorRecord[]): OutputErrorRecord | null {
+    for (let i = history.length - 1; i >= 0; i--) {
+        if (history[i].kind === 'crash') return history[i];
+    }
+    return null;
+}
+
 function parseOutputErrorHistory(raw: string | null): OutputErrorRecord[] {
     if (!raw) return [];
-    return (JSON.parse(raw) as OutputErrorRecord[]).slice(-OUTPUT_ERROR_HISTORY_LIMIT);
+    const parsed = JSON.parse(raw) as Array<
+        Partial<OutputErrorRecord> & { ts: number; message: string }
+    >;
+    // Records written before 'kind' existed have none — they all predate this
+    // feature and were all crash/watchdog errors, so default them as such.
+    return parsed
+        .slice(-OUTPUT_ERROR_HISTORY_LIMIT)
+        .map((e) => ({ ts: e.ts, message: e.message, kind: e.kind ?? 'crash' }));
 }
 
 function encodeOutputErrorHistory(history: OutputErrorRecord[]): string {
@@ -167,6 +186,7 @@ export function createDb(dbPath?: string): Db {
     }
 
     function rowToOutput(row: Record<string, unknown>): Output {
+        const errorHistory = parseOutputErrorHistory(row.last_error as string | null);
         return {
             id: row.id as string,
             pipelineId: row.pipeline_id as number,
@@ -176,9 +196,8 @@ export function createDb(dbPath?: string): Db {
             videoEncoding: (row.encoding as string) || 'copy',
             sinks: JSON.parse(row.sinks as string) as OutputSink[],
             srtLatencyMs: (row.srt_latency_ms as number | null) ?? null,
-            lastError: toLastErrorString(
-                parseOutputErrorHistory(row.last_error as string | null).at(-1) ?? null,
-            ),
+            lastError: toLastErrorString(latestCrashRecord(errorHistory)),
+            hasErrorHistory: errorHistory.length > 0,
         };
     }
 
@@ -422,21 +441,31 @@ export function createDb(dbPath?: string): Db {
             return loadAllOutputs();
         },
 
-        listOutputIds(): { id: string; pipelineId: number; lastError: string | null }[] {
-            return (stmtLoadOutputIds.all() as Record<string, unknown>[]).map((r) => ({
-                id: r.id as string,
-                pipelineId: r.pipeline_id as number,
-                lastError: toLastErrorString(
-                    parseOutputErrorHistory(r.last_error as string | null).at(-1) ?? null,
-                ),
-            }));
+        listOutputIds(): {
+            id: string;
+            pipelineId: number;
+            lastError: string | null;
+            hasErrorHistory: boolean;
+        }[] {
+            return (stmtLoadOutputIds.all() as Record<string, unknown>[]).map((r) => {
+                const errorHistory = parseOutputErrorHistory(r.last_error as string | null);
+                return {
+                    id: r.id as string,
+                    pipelineId: r.pipeline_id as number,
+                    lastError: toLastErrorString(latestCrashRecord(errorHistory)),
+                    hasErrorHistory: errorHistory.length > 0,
+                };
+            });
         },
 
         listOutputsForPipeline(pipelineId: number): Output[] {
             return getOutputsByPipeline(pipelineId);
         },
 
-        updateOutput(id: string, { name, videoEncoding, sinks, srtLatencyMs = null }): Output | null {
+        updateOutput(
+            id: string,
+            { name, videoEncoding, sinks, srtLatencyMs = null },
+        ): Output | null {
             sqlite
                 .prepare(
                     'UPDATE outputs SET name = ?, encoding = ?, sinks = ?, srt_latency_ms = ? WHERE id = ?',
@@ -474,9 +503,9 @@ export function createDb(dbPath?: string): Db {
             stmtClearLastErrorsForPipeline.run(pipelineId);
         },
 
-        setOutputLastError(id: string, message: string): void {
+        setOutputLastError(id: string, message: string, kind: OutputErrorKind): void {
             const existing = loadOutputErrorHistory(id);
-            const next = [...existing, { ts: Date.now(), message }].slice(
+            const next = [...existing, { ts: Date.now(), message, kind }].slice(
                 -OUTPUT_ERROR_HISTORY_LIMIT,
             );
             stmtSetLastError.run(encodeOutputErrorHistory(next), id);

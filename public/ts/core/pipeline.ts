@@ -82,6 +82,7 @@ export function parsePipelines(
             // config's value only on initial load before the first health response.
             const rawError = oh !== undefined ? oh.lastError : (o.lastError ?? null);
             const err = parseLastError(rawError);
+            const hasErrorHistory = oh?.hasErrorHistory ?? o.hasErrorHistory ?? rawError !== null;
             return {
                 ...o,
                 status: oh?.status ?? 'stopped',
@@ -91,6 +92,7 @@ export function parsePipelines(
                 failures: oh?.failures ?? 0,
                 warningReason: oh?.warningReason ?? null,
                 lastError: err?.message ?? null,
+                hasErrorHistory,
                 lastErrorAt: err?.ts ?? null,
                 memoryUsageBytes: oh?.memoryUsageBytes ?? null,
                 memoryLimitBytes: oh?.memoryLimitBytes ?? null,

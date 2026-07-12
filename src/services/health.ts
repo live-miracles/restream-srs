@@ -63,6 +63,7 @@ interface OutputHealth {
     failures: number;
     warningReason: string | null;
     lastError: string | null;
+    hasErrorHistory: boolean;
     memoryUsageBytes: number | null;
     memoryLimitBytes: number | null;
 }
@@ -334,7 +335,17 @@ export function createHealthService(
         delayMs = 0,
     ) {
         if (ffprobeTimers.has(pipelineId) || ffprobeInFlight.has(pipelineId)) return;
-        const url = inputPullUrl(streamKey, protocol);
+        let url = inputPullUrl(streamKey, protocol);
+        if (protocol === 'srt') {
+            // transtype=live implies linger=0, so ffprobe's srt_close() tears the
+            // socket down with no shutdown handshake even on a clean exit — SRS's
+            // play thread then logs SRTS_BROKEN for what was actually a normal
+            // probe completion. A short linger lets the close handshake finish
+            // (sub-ms over loopback) so SRS sees a graceful disconnect instead.
+            // Only applied to the probe URL — the relay/preview pulls (outputs.ts,
+            // preview.ts) share srtPullUrl() unchanged.
+            url += '&linger=1';
+        }
         const generation = ffprobeGenerations.get(pipelineId) ?? 0;
         const timer = setTimeout(async () => {
             ffprobeTimers.delete(pipelineId);
@@ -421,11 +432,13 @@ export function createHealthService(
         const outputRows = db.listOutputs();
         const outputsByPipeline = new Map<number, string[]>();
         const lastErrorById = new Map<string, string | null>();
+        const hasErrorHistoryById = new Map<string, boolean>();
         for (const o of outputRows) {
             const ids = outputsByPipeline.get(o.pipelineId);
             if (ids) ids.push(o.id);
             else outputsByPipeline.set(o.pipelineId, [o.id]);
             lastErrorById.set(o.id, o.lastError);
+            hasErrorHistoryById.set(o.id, o.hasErrorHistory);
         }
 
         let streams: SrsStream[] = [];
@@ -591,6 +604,7 @@ export function createHealthService(
                     bitrateKbps: displayLive ? stats.bitrateKbps : null,
                     failures: stats.failures,
                     lastError: lastErrorById.get(outId) ?? null,
+                    hasErrorHistory: hasErrorHistoryById.get(outId) ?? false,
                 };
             }
 
