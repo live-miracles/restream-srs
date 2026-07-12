@@ -108,6 +108,14 @@ function formatCompactCount(n: number): string {
     return String(Math.round(n));
 }
 
+function fmtLossDropRexmit(
+    loss: number | null | undefined,
+    drop: number | null | undefined,
+    rexmit: number | null | undefined,
+): string {
+    return `${loss != null ? formatCompactCount(loss) : '—'} / ${drop != null ? formatCompactCount(drop) : '—'} / ${rexmit != null ? formatCompactCount(rexmit) : '—'}`;
+}
+
 function setMetricSeverity(id: string, percent: number | null): void {
     const el = document.getElementById(id);
     if (!el) return;
@@ -1117,22 +1125,20 @@ function renderOverview(): void {
         ms != null ? `${ms.toFixed(ms >= 10 ? 0 : 1)} ms` : '—';
     const legCells = (leg: SrtBondingLeg | null): string => {
         if (!leg)
-            return `${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}`;
+            return `${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}`;
         const color = legStateDotColor(leg.state);
         const rx = leg.recvUniquePacketsTotal ?? leg.recvPacketsTotal;
         return `
-            <td class="font-mono text-xs">${escapeHtml(leg.ip)}</td>
             <td><span class="inline-flex items-center gap-1"><span class="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style="background:${color}"></span>${escapeHtml(leg.state)}</span></td>
+            <td class="font-mono text-xs">${escapeHtml(leg.ip)}</td>
             <td class="font-mono text-xs">${fmtRtt(leg.rttMs)}</td>
             <td class="font-mono text-xs">${rx != null ? formatCompactCount(rx) : '—'}</td>
-            <td class="font-mono text-xs">${leg.recvLossTotal != null ? formatCompactCount(leg.recvLossTotal) : '—'}</td>
-            <td class="font-mono text-xs">${leg.recvDropTotal != null ? formatCompactCount(leg.recvDropTotal) : '—'}</td>
-            <td class="font-mono text-xs">${leg.retransTotal != null ? formatCompactCount(leg.retransTotal) : '—'}</td>`;
+            <td class="font-mono text-xs" title="Loss / Drop / Rexmit">${fmtLossDropRexmit(leg.recvLossTotal, leg.recvDropTotal, leg.retransTotal)}</td>`;
     };
 
     let relayRows = '';
     if (activeRelayPipelines.length === 0) {
-        relayRows = `<tr><td colspan="15" class="py-4 text-center opacity-50">No active SRT bonding relay sessions.</td></tr>`;
+        relayRows = `<tr><td colspan="11" class="py-4 text-center opacity-50">No active SRT bonding relay sessions.</td></tr>`;
     } else {
         for (const p of activeRelayPipelines) {
             const inputSt = relayInputStatus(p, relayProcessRunning);
@@ -1153,9 +1159,7 @@ function renderOverview(): void {
                 <td${rowspan}>${renderOverviewIssues(relayIssues(p, relayProcessRunning, inputSt, outputSt))}</td>`;
             const totalsCells = `
                 <td class="font-mono text-xs"${rowspan}>${formatCompactCount(rxPackets)} / ${formatCompactCount(p.srtBonding.forwardedPackets)}</td>
-                <td class="font-mono text-xs"${rowspan}>${formatCompactCount(p.srtBonding.retransTotal)}</td>
-                <td class="font-mono text-xs"${rowspan}>${formatCompactCount(p.srtBonding.recvLossTotal)}</td>
-                <td class="font-mono text-xs"${rowspan}>${formatCompactCount(p.srtBonding.recvDropTotal)}</td>`;
+                <td class="font-mono text-xs" title="Loss / Drop / Rexmit"${rowspan}>${fmtLossDropRexmit(p.srtBonding.recvLossTotal, p.srtBonding.recvDropTotal, p.srtBonding.retransTotal)}</td>`;
 
             if (legs.length > 1) {
                 relayRows += legs
@@ -1169,9 +1173,9 @@ function renderOverview(): void {
             }
         }
         if (problemsOnly && relayRows === '') {
-            relayRows = `<tr><td colspan="15" class="py-4 text-center opacity-50">No relay issues.</td></tr>`;
+            relayRows = `<tr><td colspan="11" class="py-4 text-center opacity-50">No relay issues.</td></tr>`;
         } else if (activeOnly && relayRows === '') {
-            relayRows = `<tr><td colspan="15" class="py-4 text-center opacity-50">No active relay sessions.</td></tr>`;
+            relayRows = `<tr><td colspan="11" class="py-4 text-center opacity-50">No active relay sessions.</td></tr>`;
         }
     }
 
@@ -1337,7 +1341,7 @@ function renderOverview(): void {
         <h2 class="mb-2 text-lg font-bold">SRT Bonding Relay <span class="badge badge-neutral badge-sm ml-1">${activeRelayPipelines.length}</span></h2>
         <div class="overflow-x-auto mb-6">
             <table class="table table-sm table-relay">
-                ${thead(['Pipeline', 'Input', 'Output', 'Issues', 'Leg IP', 'State', 'RTT', 'Rx', 'Loss', 'Drop', 'Rexmit', 'Rx / Fwd', 'Rexmit', 'Loss', 'Drop'])}
+                ${thead(['Pipeline', 'Input', 'Output', 'Issues', 'State', 'Leg IP', 'RTT', 'Rx', '<span title="Loss / Drop / Rexmit">L / D / R</span>', 'Rx / Fwd', '<span title="Loss / Drop / Rexmit">L / D / R</span>'])}
                 <tbody>${relayRows}</tbody>
             </table>
         </div>
@@ -1944,22 +1948,20 @@ function renderPipelineInfo(selectedId: string | null): void {
                    <div class="overflow-x-auto">
                    <table class="table table-xs">
                        <thead><tr>
-                           <th>Leg IP</th><th>Port</th><th>State</th><th>RTT</th>
-                           <th>Rx</th><th>Loss</th><th>Drop</th><th>Rexmit</th>
+                           <th>State</th><th>Leg IP</th><th>Port</th><th>RTT</th>
+                           <th>Rx</th><th><span title="Loss / Drop / Rexmit">L / D / R</span></th>
                        </tr></thead>
                        <tbody>${legs
                            .map((leg) => {
                                const color = legStateDotColor(leg.state);
                                const rx = leg.recvUniquePacketsTotal ?? leg.recvPacketsTotal;
                                return `<tr>
+                                   <td><span class="inline-flex items-center gap-1"><span class="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style="background:${color}"></span>${leg.state}</span></td>
                                    <td class="font-mono text-xs">${leg.ip}</td>
                                    <td class="font-mono text-xs">${leg.port}</td>
-                                   <td><span class="inline-flex items-center gap-1"><span class="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style="background:${color}"></span>${leg.state}</span></td>
                                    <td class="font-mono text-xs">${leg.rttMs != null ? `${leg.rttMs.toFixed(leg.rttMs >= 10 ? 0 : 1)}ms` : '—'}</td>
                                    <td class="font-mono text-xs">${rx != null ? formatCompactCount(rx) : '—'}</td>
-                                   <td class="font-mono text-xs">${leg.recvLossTotal != null ? formatCompactCount(leg.recvLossTotal) : '—'}</td>
-                                   <td class="font-mono text-xs">${leg.recvDropTotal != null ? formatCompactCount(leg.recvDropTotal) : '—'}</td>
-                                   <td class="font-mono text-xs">${leg.retransTotal != null ? formatCompactCount(leg.retransTotal) : '—'}</td>
+                                   <td class="font-mono text-xs" title="Loss / Drop / Rexmit">${fmtLossDropRexmit(leg.recvLossTotal, leg.recvDropTotal, leg.retransTotal)}</td>
                                </tr>`;
                            })
                            .join('')}</tbody>
