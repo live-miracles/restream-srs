@@ -77,8 +77,20 @@ hooks from racing the dashboard/API process during boot.
 
 **Production install:**
 ```bash
+sudo apt-get update -q && sudo apt-get install -y -q git  # in case git is not installed
 sudo git clone https://github.com/live-miracles/restream-srs /opt/restream-srs
 sudo bash /opt/restream-srs/scripts/server-install.sh
+```
+
+**Set server timezone (optional, for readable log timestamps):**
+
+SRS and journald log timestamps in the system's local timezone, which defaults to UTC on most fresh servers. Set it to your local timezone so log times make sense at a glance, e.g. for IST (Asia/Kolkata):
+```bash
+sudo timedatectl set-timezone Asia/Kolkata
+```
+List available timezone names with `timedatectl list-timezones`. No reboot is needed, but already-running services may have the old timezone cached in memory, so restart them to apply it to new log lines immediately:
+```bash
+sudo systemctl restart srs.service restream-srs.service srt-bonding-relay.service
 ```
 
 **Update an installed server:**
