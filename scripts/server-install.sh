@@ -154,7 +154,7 @@ else
     echo "User $SERVICE_USER already exists."
 fi
 mkdir -p "$APP_DIR" "$DATA_DIR" "$DATA_DIR/objs" "$CONF_DIR"
-chown "$SERVICE_USER:$SERVICE_USER" "$APP_DIR" "$DATA_DIR" "$DATA_DIR/objs" "$CONF_DIR"
+chown -R "$SERVICE_USER:$SERVICE_USER" "$APP_DIR" "$DATA_DIR" "$DATA_DIR/objs" "$CONF_DIR"
 
 step "7/9 Application"
 if [[ ! -d "$APP_DIR/.git" ]]; then

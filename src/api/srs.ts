@@ -20,6 +20,9 @@ interface LogTail {
     source: LogSource;
 }
 
+// SRS colors its own stdout with ANSI SGR codes, which journald stores
+// verbatim. Lines are passed through as-is; the dashboard's log viewer
+// renders those codes as color instead of stripping them.
 function readJournalTail(unit: string, maxLines: number): Promise<string[]> {
     return new Promise((resolve) => {
         execFile(

@@ -1021,6 +1021,52 @@ const LOG_TERMINALS: { label: string; elId: string; key: 'srs' | 'dashboard' | '
     { label: 'Relay', elId: 'relay-log-tail', key: 'relay' },
 ];
 
+// Maps ANSI SGR foreground codes to the same severity colors SRS itself
+// uses (red for its ERROR lines, yellow for WARN), so the web terminal
+// mirrors a real terminal instead of hand-matching level text.
+const ANSI_FG_CLASS: Record<string, string> = {
+    '31': 'text-error',
+    '91': 'text-error',
+    '33': 'text-warning',
+    '93': 'text-warning',
+    '32': 'text-success',
+    '92': 'text-success',
+    '34': 'text-info',
+    '94': 'text-info',
+    '36': 'text-info',
+    '96': 'text-info',
+    '35': 'text-secondary',
+    '95': 'text-secondary',
+};
+const ANSI_SGR_REGEX = /\x1b\[([0-9;]*)m/g;
+
+function ansiLineToHtml(line: string): string {
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    let html = '';
+    let lastIndex = 0;
+    let openSpan = false;
+    ANSI_SGR_REGEX.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = ANSI_SGR_REGEX.exec(line))) {
+        html += esc(line.slice(lastIndex, match.index));
+        lastIndex = ANSI_SGR_REGEX.lastIndex;
+        if (openSpan) {
+            html += '</span>';
+            openSpan = false;
+        }
+        for (const code of match[1].split(';')) {
+            const cls = ANSI_FG_CLASS[code];
+            if (cls) {
+                html += `<span class="${cls}">`;
+                openSpan = true;
+            }
+        }
+    }
+    html += esc(line.slice(lastIndex));
+    if (openSpan) html += '</span>';
+    return html;
+}
+
 export async function showSrsLogs(): Promise<void> {
     const contentEl = document.getElementById('srs-logs-content');
     if (!contentEl) return;
@@ -1032,10 +1078,6 @@ export async function showSrsLogs(): Promise<void> {
 
     const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const fmtTs = (ts: number) => new Date(ts).toLocaleString();
-    const colorizeLevel = (line: string) =>
-        line
-            .replace(/\[ERROR\]/g, '<span class="text-error font-semibold">[ERROR]</span>')
-            .replace(/\[WARNING\]/g, '<span class="text-warning font-semibold">[WARNING]</span>');
 
     const renderTerminal = (label: string, elId: string, tail: ServerLogTail): string => {
         let section = `<p class="text-xs font-semibold uppercase opacity-50 mb-2">${label} (last 200 lines)</p>`;
@@ -1047,7 +1089,7 @@ export async function showSrsLogs(): Promise<void> {
             section += `<p class="text-sm opacity-50 mb-4">${msg}</p>`;
         } else {
             section += `<div id="${elId}" class="h-72 overflow-y-auto rounded-xl border border-white/10 bg-black p-3">
-                <pre class="text-gray-300 whitespace-pre-wrap break-all">${tail.lines.map((l) => colorizeLevel(esc(l))).join('\n')}</pre>
+                <pre class="text-gray-300 whitespace-pre-wrap break-all">${tail.lines.map((l) => ansiLineToHtml(l)).join('\n')}</pre>
             </div>`;
         }
         return section;
