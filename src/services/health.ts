@@ -19,9 +19,6 @@ import { inputPullUrl, type InputProtocol, type InputState } from './inputState.
 
 const FFPROBE_CMD = readAppConfig().ffprobePath;
 const FFPROBE_TIMEOUT_MS = 15000;
-const FFPROBE_INITIAL_DELAY_MS = 5000;
-const FFPROBE_FAILED_REFRESH_MS = 15000;
-const FFPROBE_HEALTHY_REFRESH_MS = 30000;
 // Stagger concurrent ffprobe launches instead of capping concurrency with a
 // semaphore. The real risk is the thundering-herd burst (all N pipelines firing
 // at the same millisecond after a mass reconnect), not the sustained overlap —
@@ -120,11 +117,6 @@ interface SrsPublisherInfo {
 export function isProbeUsable(result: ProbeResult | null): boolean {
     const video = result?.video;
     return !!video?.codec && video.width > 0 && video.height > 0;
-}
-
-function hasUsableSrsVideo(stream: SrsStream | undefined): boolean {
-    const video = stream?.video;
-    return !!video?.codec && video.width > 0 && video.height > 0 && (video.fps ?? 0) > 0;
 }
 
 export function isLoopbackIp(ip: string | null | undefined): boolean {
@@ -373,7 +365,7 @@ export function createHealthService(
         timer.unref?.();
     }
 
-    function schedulePeriodicFfprobe(
+    function scheduleInitialFfprobe(
         pipelineId: number,
         streamKey: string,
         protocol: InputProtocol,
@@ -381,15 +373,12 @@ export function createHealthService(
     ): void {
         if (ffprobeTimers.has(pipelineId) || ffprobeInFlight.has(pipelineId)) return;
         const status = ffprobeResults.get(pipelineId);
-        if (protocol === 'rtmp' && status?.ok) return;
-        const refreshMs = status?.ok ? FFPROBE_HEALTHY_REFRESH_MS : FFPROBE_FAILED_REFRESH_MS;
-        if (status && Date.now() - status.checkedAt < refreshMs) return;
-        const initialDelayMs = status || protocol !== 'rtmp' ? 0 : FFPROBE_INITIAL_DELAY_MS;
+        if (status) return;
         scheduleFfprobe(
             pipelineId,
             streamKey,
             protocol,
-            initialDelayMs + stagger * FFPROBE_STAGGER_MS,
+            stagger * FFPROBE_STAGGER_MS,
         );
     }
 
@@ -499,18 +488,12 @@ export function createHealthService(
                 prevPublisherCid !== null &&
                 publisherCid !== prevPublisherCid;
             if (publisherChanged) clearFfprobeState(pipeline.id);
-            const probe = ffprobeResults.get(pipeline.id) ?? null;
             const nowProtocol: InputProtocol | null = nowConnected
                 ? nowSrtInput
                     ? 'srt'
                     : 'rtmp'
                 : null;
-            const nowLive = srsReachable
-                ? nowConnected &&
-                  (nowSrtInput
-                      ? (probe?.ok ?? false)
-                      : hasUsableSrsVideo(s) || (probe?.ok ?? false))
-                : prevLive;
+            const nowLive = srsReachable ? nowConnected : prevLive;
             // UI should reflect whether the input is currently usable through SRS.
             // Keep nowLive sticky internally for restart/logging behavior during an
             // SRS outage, but don't present a stale green input while SRS is down.
@@ -523,7 +506,7 @@ export function createHealthService(
                     if (publisherCid) inputPublisherCid.set(pipeline.id, publisherCid);
                     inputState.setPipelineState(pipeline.id, nowLive, nowProtocol);
                     if (nowProtocol) {
-                        schedulePeriodicFfprobe(
+                        scheduleInitialFfprobe(
                             pipeline.id,
                             pipeline.streamKey,
                             nowProtocol,
