@@ -292,24 +292,6 @@ export function createDb(dbPath?: string): Db {
             bumpConfigRev();
         },
 
-        listWhitelistIps(): string[] {
-            const row = stmtGetSetting.get('whitelistIps') as { value: string } | undefined;
-            if (!row) return [];
-            try {
-                const parsed = JSON.parse(row.value) as unknown;
-                return Array.isArray(parsed)
-                    ? parsed.filter((v): v is string => typeof v === 'string')
-                    : [];
-            } catch {
-                return [];
-            }
-        },
-
-        replaceWhitelistIps(ips: string[]): void {
-            stmtSetSetting.run('whitelistIps', JSON.stringify(ips));
-            bumpConfigRev();
-        },
-
         listHostProbeTargets(): HostProbeTarget[] {
             return (stmtListHostProbeTargets.all() as Record<string, unknown>[]).map(
                 rowToHostProbeTarget,

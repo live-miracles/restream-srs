@@ -85,8 +85,6 @@ export interface Db {
     setSetting(key: string, value: string): void;
     listHostProbeTargets(): HostProbeTarget[];
     replaceHostProbeTargets(targets: HostProbeTarget[]): void;
-    listWhitelistIps(): string[];
-    replaceWhitelistIps(ips: string[]): void;
 
     listStreamKeys(): StreamKey[];
     regenerateStreamKeys(): StreamKey[];

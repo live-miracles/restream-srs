@@ -73,11 +73,11 @@ verify_sha256() {
     echo "Checksum OK: $(basename "$file")"
 }
 
-step "1/10 System packages"
+step "1/9 System packages"
 apt-get update -q
 apt-get install -y -q curl tar xz-utils unzip git ca-certificates
 
-step "2/10 Node.js 22"
+step "2/9 Node.js 22"
 if node --version 2>/dev/null | grep -q '^v22'; then
     echo "Node.js 22 already installed: $(node --version)"
 else
@@ -86,7 +86,7 @@ else
     echo "Installed: $(node --version)"
 fi
 
-step "3/10 FFmpeg $FFMPEG_VERSION"
+step "3/9 FFmpeg $FFMPEG_VERSION"
 FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_BUILD_TAG}/${FFMPEG_FILENAME}"
 
 if /usr/local/bin/ffmpeg -version 2>/dev/null | grep -q "ffmpeg version n${FFMPEG_VERSION}"; then
@@ -103,7 +103,7 @@ else
 fi
 
 SRS_VERSION_MARKER=/usr/local/bin/.srs-version
-step "4/10 SRS $SRS_VERSION"
+step "4/9 SRS $SRS_VERSION"
 if [[ -x /usr/local/bin/srs && -f "$SRS_VERSION_MARKER" && "$(cat "$SRS_VERSION_MARKER")" == "$SRS_RELEASE_TAG" ]]; then
     echo "SRS $SRS_VERSION ($SRS_RELEASE_TAG) already installed."
 else
@@ -122,7 +122,7 @@ else
 fi
 
 SRT_VERSION_MARKER=/usr/local/bin/.srt-bonding-relay-version
-step "5/10 srt-bonding-relay $SRT_RELEASE_TAG"
+step "5/9 srt-bonding-relay $SRT_RELEASE_TAG"
 if [[ -x /usr/local/bin/srt-bonding-relay && -f "$SRT_VERSION_MARKER" && "$(cat "$SRT_VERSION_MARKER")" == "$SRT_RELEASE_TAG" ]]; then
     echo "srt-bonding-relay $SRT_RELEASE_TAG already installed."
 else
@@ -146,7 +146,7 @@ else
     echo "Installed: /usr/local/bin/srt-bonding-relay"
 fi
 
-step "6/10 Service user and directories"
+step "6/9 Service user and directories"
 if ! id "$SERVICE_USER" &>/dev/null; then
     useradd --system --home "$APP_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
     echo "Created user: $SERVICE_USER"
@@ -156,7 +156,7 @@ fi
 mkdir -p "$APP_DIR" "$DATA_DIR" "$DATA_DIR/objs" "$CONF_DIR"
 chown "$SERVICE_USER:$SERVICE_USER" "$APP_DIR" "$DATA_DIR" "$DATA_DIR/objs" "$CONF_DIR"
 
-step "7/10 Application"
+step "7/9 Application"
 if [[ ! -d "$APP_DIR/.git" ]]; then
     git clone "$REPO_URL" "$APP_DIR"
 else
@@ -171,7 +171,7 @@ npm prune --omit=dev
 chown -R "$SERVICE_USER:$SERVICE_USER" "$APP_DIR"
 echo "Build complete."
 
-step "8/10 Config and data"
+step "8/9 Config and data"
 # SRT passphrase: the repo configs ship a public default, so on first install
 # (when these files don't exist yet at $CONF_DIR) generate a per-server secret
 # and write it to both. On reinstall, each file's currently-deployed
@@ -252,225 +252,7 @@ echo "Config: $CONF_DIR/srs.conf"
 echo "App config: $APP_DIR/restream.json"
 echo "Data:   $DB_FILE"
 
-step "9/10 fail2ban"
-# Bans IPs that repeatedly hit the on_publish/on_play hooks with bad stream
-# keys (i.e. brute-forcing RTMP, which has no passphrase). Reads the app's
-# journald output; the log format is emitted by src/api/srs.ts.
-#
-# There used to be a second jail here for bad SRT passphrases against
-# srt-bonding-relay's listener (10081), but srt-bonding-relay v2.1.0 stopped
-# logging that rejection, and SRS's own SRT listener (10080) never logged it
-# either (the handshake fails before srt_accept() returns) — see README's
-# "SRT connections with a bad passphrase are not blocked by fail2ban". With
-# neither SRT path logging anything to match on, this is the only jail left.
-apt-get install -y -q fail2ban
-# Clean up that dead jail from any previous install of this script - it can
-# never trigger anymore, and an orphaned jail.d/filter.d pair would otherwise
-# sit around forever since fail2ban only reads what's currently on disk.
-rm -f /etc/fail2ban/filter.d/srt-bonding-relay.conf \
-    /etc/fail2ban/jail.d/srt-bonding-relay.local \
-    /etc/fail2ban/jail.d/srt-bonding-relay-whitelist.local
-cat > /etc/fail2ban/filter.d/restream-srs.conf <<'EOF'
-[Definition]
-# No leading ^: the systemd backend matches against
-# "<SYSLOG_IDENTIFIER>[<pid>]: <message>", not the raw MESSAGE field, so an
-# anchored regex never matches and this jail silently never bans anyone.
-failregex = \[srs-hook\] rejected (?:publish|play) from <HOST>:
-journalmatch = _SYSTEMD_UNIT=restream-srs.service
-EOF
-cat > /etc/fail2ban/jail.d/restream-srs.local <<'EOF'
-[restream-srs]
-enabled = true
-backend = systemd
-filter = restream-srs
-# Ban on all ports: an IP probing stream keys has no legitimate use here.
-# protocol=all is required too - fail2ban's default action protocol is tcp,
-# so without this the ban only ever blocked TCP (RTMP) and SRT (UDP) sailed
-# straight through a "banned" IP.
-banaction = iptables-allports
-protocol = all
-maxretry = 5
-findtime = 600
-bantime = 3600
-EOF
-
-systemctl enable fail2ban
-systemctl restart fail2ban
-echo "fail2ban: jail 'restream-srs' active (5 rejected publishes/plays in 10 min => 1 h ban)"
-
-# Lets the dashboard (Settings -> IP Whitelist) keep trusted IPs out of the
-# jail above and unban them live, without restarting fail2ban or
-# restream-srs.service (a restart would kill every in-flight output ffmpeg).
-# Invoked via sudo since restream-srs.service is unprivileged. The API does
-# full IP/CIDR validation; this script still rejects unsafe tokens before
-# writing root-owned fail2ban config.
-cat > /usr/local/sbin/restream-srs-fail2ban-apply <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-JAIL=restream-srs
-
-if [[ "${1:-}" != "sync" ]]; then
-    echo "usage: $0 sync <ip-or-cidr> [...]" >&2
-    exit 1
-fi
-shift
-
-validate_safe_ip_or_cidr_token() {
-    local value="$1"
-    local addr="${value%%/*}"
-    local prefix=""
-
-    [[ "$value" =~ ^[0-9A-Fa-f:.]+(/[0-9]{1,3})?$ ]] || return 1
-    [[ -n "$addr" ]] || return 1
-
-    if [[ "$value" == */* ]]; then
-        prefix="${value##*/}"
-        [[ "$prefix" =~ ^[0-9]+$ ]] || return 1
-        if [[ "$addr" == *:* ]]; then
-            (( prefix <= 128 )) || return 1
-        else
-            (( prefix <= 32 )) || return 1
-        fi
-    fi
-
-    return 0
-}
-
-for ip in "$@"; do
-    validate_safe_ip_or_cidr_token "$ip" || {
-        echo "ERROR: rejecting invalid IP/CIDR: $ip" >&2
-        exit 1
-    }
-done
-
-# Fail2ban reads this file itself on its own next (re)start, so this write
-# alone is enough regardless of whether fail2ban is up right now.
-CONF="/etc/fail2ban/jail.d/${JAIL}-whitelist.local"
-TMP_CONF="$(mktemp "${CONF}.XXXXXX")"
-{
-    echo "[$JAIL]"
-    if [[ $# -gt 0 ]]; then
-        printf 'ignoreip = %s\n' "$*"
-    fi
-} > "$TMP_CONF"
-chmod 644 "$TMP_CONF"
-mv "$TMP_CONF" "$CONF"
-
-# Below is the live half, needed only to apply/unban immediately.
-if ! fail2ban-client ping >/dev/null 2>&1; then
-    echo "fail2ban is not running; whitelist file written and will apply once it starts" >&2
-    exit 1
-fi
-
-fail2ban-client reload "$JAIL" >/dev/null
-
-# ignoreip only stops *future* bans; an IP just added to the whitelist that's
-# already sitting in the jail needs an explicit unban. unbanip errors on an
-# IP that isn't currently banned, which is the common case, so ignore that.
-for ip in "$@"; do
-    fail2ban-client set "$JAIL" unbanip "$ip" >/dev/null 2>&1 || true
-done
-EOF
-chown root:root /usr/local/sbin/restream-srs-fail2ban-apply
-chmod 755 /usr/local/sbin/restream-srs-fail2ban-apply
-
-# Read-only counterpart: lets the dashboard show currently banned IPs (which
-# jail, when banned, when they'll be unbanned, and the log line that triggered
-# it). `fail2ban-client status` gives the live banned-IP list; ban/unban times
-# and the triggering match come from fail2ban's own sqlite ban database, which
-# is root-only for the same reason as the control socket. Both reads are
-# combined into one script so the dashboard needs only a single sudo call.
-cat > /usr/local/sbin/restream-srs-fail2ban-status <<'PYEOF'
-#!/usr/bin/env python3
-import json
-import re
-import sqlite3
-import subprocess
-import sys
-
-JAIL = "restream-srs"
-DB_PATH = "/var/lib/fail2ban/fail2ban.sqlite3"
-
-
-def banned_ips(jail):
-    try:
-        out = subprocess.run(
-            ["fail2ban-client", "status", jail],
-            capture_output=True, text=True, timeout=10, check=True,
-        )
-    except (subprocess.SubprocessError, OSError):
-        return []
-    m = re.search(r"Banned IP list:\s*(.*)", out.stdout)
-    return m.group(1).split() if m else []
-
-
-def ban_record(conn, jail, ip):
-    if conn is None:
-        return None
-    row = conn.execute(
-        "SELECT timeofban, bantime, data FROM bans WHERE jail = ? AND ip = ? "
-        "ORDER BY timeofban DESC LIMIT 1",
-        (jail, ip),
-    ).fetchone()
-    if not row:
-        return None
-    timeofban, bantime, data = row
-    reason = None
-    if data:
-        try:
-            matches = json.loads(data).get("matches") or []
-            if matches:
-                reason = matches[-1].strip()
-        except (ValueError, AttributeError):
-            reason = None
-    unban_at = None
-    if bantime is not None and int(bantime) >= 0:
-        unban_at = (int(timeofban) + int(bantime)) * 1000
-    return {"bannedAt": int(timeofban) * 1000, "unbanAt": unban_at, "reason": reason}
-
-
-def main():
-    try:
-        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
-    except sqlite3.Error:
-        conn = None
-
-    results = []
-    for ip in banned_ips(JAIL):
-        record = ban_record(conn, JAIL, ip) or {}
-        results.append({
-            "ip": ip,
-            "jail": JAIL,
-            "bannedAt": record.get("bannedAt"),
-            "unbanAt": record.get("unbanAt"),
-            "reason": record.get("reason"),
-        })
-
-    if conn is not None:
-        conn.close()
-    json.dump(results, sys.stdout)
-
-
-if __name__ == "__main__":
-    main()
-PYEOF
-chown root:root /usr/local/sbin/restream-srs-fail2ban-status
-chmod 755 /usr/local/sbin/restream-srs-fail2ban-status
-
-SUDOERS_TMP="$WORK/restream-srs-fail2ban.sudoers"
-cat > "$SUDOERS_TMP" <<EOF
-$SERVICE_USER ALL=(root) NOPASSWD: /usr/local/sbin/restream-srs-fail2ban-apply, /usr/local/sbin/restream-srs-fail2ban-status
-EOF
-if ! visudo -cf "$SUDOERS_TMP"; then
-    echo "ERROR: generated sudoers rule for fail2ban whitelisting failed validation" >&2
-    exit 1
-fi
-install -m 0440 -o root -g root "$SUDOERS_TMP" /etc/sudoers.d/restream-srs-fail2ban
-echo "fail2ban: dashboard IP whitelist wired up (Settings -> IP Whitelist)"
-echo "fail2ban: dashboard ban list wired up (Settings -> Currently Banned)"
-
-step "10/10 Systemd"
+step "9/9 Systemd"
 cat > /etc/systemd/system/srs.service <<EOF
 [Unit]
 Description=SRS Streaming Server
@@ -551,15 +333,10 @@ RestartSec=2
 LimitNOFILE=1048576
 TasksMax=infinity
 LimitNPROC=infinity
-# Intentionally omit NoNewPrivileges: the dashboard uses sudoers-limited helper
-# scripts to read/apply fail2ban state.
 PrivateTmp=true
 ProtectSystem=full
-# ProtectSystem's read-only bind mount applies to this service's mount
-# namespace regardless of UID, so the sudo'd fail2ban-apply helper below
-# still can't write under /etc unless its target dir is listed here too -
-# escalating to root via sudo does not escape the namespace.
-ReadWritePaths=$DATA_DIR $CONF_DIR /etc/fail2ban/jail.d
+NoNewPrivileges=true
+ReadWritePaths=$DATA_DIR $CONF_DIR
 
 [Install]
 WantedBy=multi-user.target

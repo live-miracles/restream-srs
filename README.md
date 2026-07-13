@@ -131,10 +131,9 @@ check entirely — SRS and the relay treat empty the same as unset.
 Ingest is further locked down by SRS HTTP hooks handled by the app:
 `on_publish` rejects unknown stream keys, and `on_play` rejects any play not
 from loopback (only the app's own FFmpeg ever pulls streams), so the public
-ports are ingest-only. The installer also sets up a fail2ban jail that bans
-IPs after repeated rejected publishes/plays (RTMP/SRT stream-key checks) —
-see [Known issues](#srt-connections-with-a-bad-passphrase-are-not-blocked-by-fail2ban)
-for why there's no equivalent jail for bad SRT passphrases.
+ports are ingest-only. See
+[Known issues](#why-fail2ban-is-not-used) for why rejected attempts are logged
+but not converted into firewall bans.
 
 ---
 
@@ -169,7 +168,7 @@ of it rather than relying on the dashboard password alone.
 
 **RTMP/SRT ingest ports (21935, 10080, 10081) are different** — they have
 to stay open to the raw internet so OBS/hardware encoders can reach them, so
-they're hardened at the SRS/relay/fail2ban layer instead:
+they're hardened at the SRS/relay layer instead:
 - SRT (`10080`, `10081`) requires a passphrase, checked at the handshake
   before a connection is accepted at all — see
   [SRS and SRT relay config](#srs-and-srt-relay-config).
@@ -179,14 +178,10 @@ they're hardened at the SRS/relay/fail2ban layer instead:
 - `on_play` rejects any playback request not from loopback, so the public
   ports are ingest-only — nothing can pull a stream back out through SRS
   directly.
-- A fail2ban jail (set up by `server-install.sh`) bans IPs after repeated
-  rejected publishes/plays.
 - RTMP listens on a non-default port (`21935`, not `1935`) to cut down on
   generic scanner noise.
-- Known gap: bad-passphrase attempts against either SRT listener (`10080`
-  direct to SRS, `10081` via the relay) aren't logged in a way fail2ban can
-  act on — see
-  [Known issues](#srt-connections-with-a-bad-passphrase-are-not-blocked-by-fail2ban).
+- Rejected publish/play attempts are logged, but this app does not install
+  fail2ban; see [Known issues](#why-fail2ban-is-not-used).
 
 Never expose `1985` (SRS HTTP API) or `8081` (relay status) — the app only
 talks to those over loopback.
@@ -277,20 +272,10 @@ Prerequisites: Node.js 22+ plus `curl`, `unzip`, `tar`, and `xz-utils`.
 **1. Install dependencies and local media binaries:**
 ```bash
 npm install
-npm run dev-install   # downloads SRS and pinned FFmpeg into ./objs, sets up fail2ban (needs sudo)
+npm run dev-install   # downloads SRS and pinned FFmpeg into ./objs
 ```
 Rerunning `npm run dev-install` also refreshes the sibling `../srt-bonding-relay`
 repo when it has no local changes and rebuilds `./objs/srt-bonding-relay`.
-
-The SRS/relay install itself needs no root. It also sets up the same
-`restream-srs` fail2ban jail production uses (this does need `sudo`), so
-Settings -> "fail2ban Currently Banned" has something to show. Since
-`npm run dev` isn't a systemd unit, real rejected-publish attempts won't
-auto-ban locally the way they do in production - ban a harmless test-only IP
-by hand to see the table populated:
-```bash
-sudo fail2ban-client set restream-srs banip 203.0.113.5
-```
 
 To use a local SRS binary:
 ```bash
@@ -546,10 +531,15 @@ healthy output's normal 65-90MB baseline, and far below the 1.5GB+ range where
 the kernel OOM-killer struck) — well before the kernel ever needs to get
 involved, so the cascading restart doesn't happen.
 
-### SRT connections with a bad passphrase are not blocked by fail2ban
+### Why fail2ban is not used
 
-Neither SRT listener logs a bad-passphrase rejection in a form fail2ban can
-act on, so there is no jail for either one:
+This repo intentionally does not install or manage fail2ban. Earlier versions
+used it as a narrow RTMP/app-hook protection, but it added root-owned config,
+sudo helper scripts, dashboard whitelist/status UI, and extra test surface while
+leaving the most important SRT gap uncovered.
+
+Neither SRT listener logs a bad-passphrase rejection in a form fail2ban could
+act on:
 
 - SRS's own SRT server (port `10080`) rejects handshakes that fail its
   `passphrase` check — either the peer declares no encryption at all, or
@@ -561,15 +551,20 @@ act on, so there is no jail for either one:
   `[srt-relay] rejected connection (bad passphrase) from <HOST>` line from
   its own `srt_accept()` KMSTATE check, and a dedicated `srt-bonding-relay`
   fail2ban jail watched it. As of `srt-bonding-relay` v2.1.0 that line is no
-  longer logged, so the jail had nothing left to match and was removed.
+  longer logged, so a jail would have nothing left to match.
 
-The `restream-srs` fail2ban jail only watches app-level
-`[srs-hook] rejected publish/play from <HOST>` lines from `restream-srs.service`
-(a different log source entirely), so it can't cover either SRT listener.
+The app still logs rejected `on_publish` and `on_play` attempts, which would be
+enough for a fail2ban jail covering repeated bad RTMP stream-key attempts from
+the same IP. That protection is intentionally not included because it is only a
+partial defense: it does not cover SRT bad passphrases, does little against
+distributed attackers, and is not a replacement for a proper edge/firewall
+deployment for high-risk events.
 
 This is not believed to be a practical brute-force risk: the configured
 passphrase is a long random string, and each guess requires a live SRT handshake
 round trip, so online guessing is computationally infeasible regardless of
-banning. The real effect is unbounded log/CPU noise from a misconfigured device
-or scanner retrying indefinitely, with nothing to stop it at the network level.
-Tracked in [issue #10](https://github.com/live-miracles/restream-srs/issues/10).
+banning. The real effect is possible log/CPU noise from a misconfigured device
+or scanner retrying indefinitely. For small events, keep the deployment simple
+and rely on strong stream keys, a strong SRT passphrase, and the non-default RTMP
+port. For larger or higher-risk events, keep the origin private and put a
+media-aware ingest edge or provider firewall/DDoS layer in front of it.

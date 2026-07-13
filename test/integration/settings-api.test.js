@@ -80,23 +80,14 @@ function dispatch(app, method, route, body) {
     });
 }
 
-function createHarness({ applyIpWhitelist } = {}) {
+function createHarness() {
     const app = express();
 
     const db = createDb(':memory:');
-    const calls = [];
-    const apply =
-        applyIpWhitelist ??
-        (async (ips) => {
-            calls.push(ips);
-            return { ok: true };
-        });
-    const getBannedIps = async () => ({ ok: true, bans: [] });
-    registerSettingsApi(app, db, apply, getBannedIps);
+    registerSettingsApi(app, db);
 
     return {
         db,
-        whitelistCalls: calls,
         request: (method, route, body) => dispatch(app, method, route, body),
     };
 }
@@ -124,7 +115,6 @@ describe('Settings API integration', () => {
             harness.db.replaceHostProbeTargets([
                 { slot: 1, label: 'YouTube', host: 'a.rtmp.youtube.com', port: 1935 },
             ]);
-            harness.db.replaceWhitelistIps(['203.0.113.4']);
 
             const res = await harness.request('POST', '/api/settings/general', {
                 name: 'New Name',
@@ -135,7 +125,6 @@ describe('Settings API integration', () => {
             assert.equal(harness.db.getSetting('serverName'), 'New Name');
             assert.equal(harness.db.getSetting('srtPassphrase'), 'secret-value');
             assert.equal(harness.db.listHostProbeTargets().length, 1);
-            assert.deepEqual(harness.db.listWhitelistIps(), ['203.0.113.4']);
         });
 
         test('ignores extraneous payload fields such as an SRT passphrase', async () => {
@@ -206,51 +195,6 @@ describe('Settings API integration', () => {
 
             assert.equal(res.status, 200);
             assert.equal(harness.db.getSetting('serverName'), 'Control Room');
-        });
-    });
-
-    describe('POST /api/settings/whitelist', () => {
-        test('saves and dedupes the IP whitelist', async () => {
-            const harness = createHarness();
-            const res = await harness.request('POST', '/api/settings/whitelist', {
-                whitelistIps: ['203.0.113.4', '203.0.113.0/24', '203.0.113.4'],
-            });
-
-            assert.equal(res.status, 200);
-            assert.deepEqual([...res.body.whitelistIps].sort(), ['203.0.113.0/24', '203.0.113.4']);
-            assert.equal(res.body.whitelistApplied, true);
-            assert.deepEqual(harness.db.listWhitelistIps().sort(), [
-                '203.0.113.0/24',
-                '203.0.113.4',
-            ]);
-            assert.deepEqual(harness.whitelistCalls, [res.body.whitelistIps]);
-        });
-
-        test('rejects an invalid whitelist entry', async () => {
-            const harness = createHarness();
-            const res = await harness.request('POST', '/api/settings/whitelist', {
-                whitelistIps: ['not-an-ip'],
-            });
-
-            assert.equal(res.status, 400);
-            assert.deepEqual(harness.db.listWhitelistIps(), []);
-        });
-
-        test('surfaces a fail2ban apply failure without losing the save', async () => {
-            const harness = createHarness({
-                applyIpWhitelist: async () => ({
-                    ok: false,
-                    error: 'sudo: a password is required',
-                }),
-            });
-            const res = await harness.request('POST', '/api/settings/whitelist', {
-                whitelistIps: ['203.0.113.4'],
-            });
-
-            assert.equal(res.status, 200);
-            assert.equal(res.body.whitelistApplied, false);
-            assert.equal(res.body.whitelistError, 'sudo: a password is required');
-            assert.deepEqual(harness.db.listWhitelistIps(), ['203.0.113.4']);
         });
     });
 });

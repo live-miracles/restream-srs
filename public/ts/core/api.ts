@@ -8,7 +8,6 @@ import type {
     SystemMetrics,
     MetricSample,
     SrsLogsData,
-    Fail2banBansData,
 } from '../types.js';
 
 let loadingCount = 0;
@@ -103,16 +102,6 @@ export const updateHostProbes = (hostProbeTargets: ConfigData['hostProbeTargets'
         body: { hostProbeTargets },
     });
 
-export const updateWhitelist = (whitelistIps: ConfigData['whitelistIps']) =>
-    apiRequest<{
-        whitelistIps: string[];
-        whitelistApplied: boolean;
-        whitelistError: string | null;
-    }>('/api/settings/whitelist', {
-        method: 'POST',
-        body: { whitelistIps },
-    });
-
 export const createPipeline = () => apiRequest('/api/pipelines', { method: 'POST' });
 
 export const updatePipeline = (id: string, name: string, streamKeyId?: number) =>
@@ -197,5 +186,3 @@ export const getPipelineLogs = (pipelineId: string) =>
     apiRequest<PipelineLog[]>(`/api/pipelines/${pipelineId}/logs`);
 
 export const getSrsLogs = () => apiRequest<SrsLogsData>('/api/srs-logs');
-
-export const getFail2banBans = () => apiRequest<Fail2banBansData>('/api/settings/fail2ban-bans');
