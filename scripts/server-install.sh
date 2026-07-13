@@ -272,7 +272,10 @@ rm -f /etc/fail2ban/filter.d/srt-bonding-relay.conf \
     /etc/fail2ban/jail.d/srt-bonding-relay-whitelist.local
 cat > /etc/fail2ban/filter.d/restream-srs.conf <<'EOF'
 [Definition]
-failregex = ^\[srs-hook\] rejected (?:publish|play) from <HOST>:
+# No leading ^: the systemd backend matches against
+# "<SYSLOG_IDENTIFIER>[<pid>]: <message>", not the raw MESSAGE field, so an
+# anchored regex never matches and this jail silently never bans anyone.
+failregex = \[srs-hook\] rejected (?:publish|play) from <HOST>:
 journalmatch = _SYSTEMD_UNIT=restream-srs.service
 EOF
 cat > /etc/fail2ban/jail.d/restream-srs.local <<'EOF'
@@ -281,7 +284,11 @@ enabled = true
 backend = systemd
 filter = restream-srs
 # Ban on all ports: an IP probing stream keys has no legitimate use here.
+# protocol=all is required too - fail2ban's default action protocol is tcp,
+# so without this the ban only ever blocked TCP (RTMP) and SRT (UDP) sailed
+# straight through a "banned" IP.
 banaction = iptables-allports
+protocol = all
 maxretry = 5
 findtime = 600
 bantime = 3600
@@ -548,7 +555,11 @@ LimitNPROC=infinity
 # scripts to read/apply fail2ban state.
 PrivateTmp=true
 ProtectSystem=full
-ReadWritePaths=$DATA_DIR $CONF_DIR
+# ProtectSystem's read-only bind mount applies to this service's mount
+# namespace regardless of UID, so the sudo'd fail2ban-apply helper below
+# still can't write under /etc unless its target dir is listed here too -
+# escalating to root via sudo does not escape the namespace.
+ReadWritePaths=$DATA_DIR $CONF_DIR /etc/fail2ban/jail.d
 
 [Install]
 WantedBy=multi-user.target

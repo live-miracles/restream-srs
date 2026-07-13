@@ -94,7 +94,10 @@ setup_fail2ban_dev() {
 
     sudo tee /etc/fail2ban/filter.d/restream-srs.conf >/dev/null <<'EOF'
 [Definition]
-failregex = ^\[srs-hook\] rejected (?:publish|play) from <HOST>:
+# No leading ^: the systemd backend matches against
+# "<SYSLOG_IDENTIFIER>[<pid>]: <message>", not the raw MESSAGE field, so an
+# anchored regex never matches and this jail silently never bans anyone.
+failregex = \[srs-hook\] rejected (?:publish|play) from <HOST>:
 journalmatch = _SYSTEMD_UNIT=restream-srs.service
 EOF
 
@@ -104,7 +107,11 @@ enabled = true
 backend = systemd
 filter = restream-srs
 # Ban on all ports: an IP probing stream keys has no legitimate use here.
+# protocol=all is required too - fail2ban's default action protocol is tcp,
+# so without this the ban only ever blocked TCP (RTMP) and SRT (UDP) sailed
+# straight through a "banned" IP.
 banaction = iptables-allports
+protocol = all
 maxretry = 5
 findtime = 600
 bantime = 3600
