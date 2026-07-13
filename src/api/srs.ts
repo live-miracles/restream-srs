@@ -51,10 +51,8 @@ export function registerSrsHooks(app: Express, db: Db): void {
 
         const valid = db.listPipelines().some((p) => p.streamKey === stream);
         if (!valid) {
-            // "rejected ... from <ip>:" is matched by the fail2ban filter that
-            // server-install.sh writes — keep the format in sync if changing
-            // it. The IP goes before the attacker-controlled stream name so a
-            // crafted name can't spoof or evade the match.
+            // Put the IP before the attacker-controlled stream name so logs stay
+            // easy to scan and cannot be made to look like a different client.
             console.log(`[srs-hook] rejected publish from ${ip}: ${stream}`);
             if (hookApp) void kickSrsClientsByStream(hookApp, stream).catch(() => {});
             return res.status(403).json({ code: 403 });

@@ -149,8 +149,8 @@ export function registerAuthApi(app: Express, db: Db): void {
         const password = (req.body?.password as string | undefined) ?? '';
         const hash = db.getSetting('dashboardPasswordHash');
         if (!hash || !(await verifyPassword(password, hash))) {
-            // IP first, before anything attacker-influenced, so log-based
-            // banning (fail2ban) can match on it reliably.
+            // IP first, before anything attacker-influenced, so auth failures
+            // stay easy to scan in logs.
             console.warn(`[auth] client_ip=${ip} rejected login: incorrect password`);
             noteLoginFailure(ip);
             return res.status(401).json({ error: 'Incorrect password' });

@@ -185,20 +185,6 @@ export interface SrsLogsData {
     relay: ServerLogTail;
 }
 
-export interface Fail2banBan {
-    ip: string;
-    jail: string;
-    bannedAt: number | null;
-    unbanAt: number | null;
-    reason: string | null;
-}
-
-export interface Fail2banBansData {
-    ok: boolean;
-    bans: Fail2banBan[];
-    error?: string;
-}
-
 export interface PipelineLog {
     id: number;
     pipelineId: number;
@@ -253,7 +239,6 @@ export interface ConfigData {
     pipelines: Pipeline[];
     outputs: Output[];
     hostProbeTargets: HostProbeTarget[];
-    whitelistIps: string[];
     encodings: string[];
     streamKeys: StreamKey[];
     serverName: string;
