@@ -163,6 +163,7 @@ export const logout = () => apiRequest<{ ok: boolean }>('/api/auth/logout', { me
 
 export const getVersion = () =>
     apiRequest<{
+        app: string;
         commit: string;
         srs: string;
         srtRelay: string;

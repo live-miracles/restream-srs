@@ -156,6 +156,7 @@ export function openSettings(): void {
     regenHint.classList.toggle('hidden', !hasPipelines);
     void api.getVersion().then((v) => {
         if (!v) return;
+        (document.getElementById('v-app') as HTMLElement).textContent = `v${v.app}`;
         (document.getElementById('v-commit') as HTMLElement).textContent = v.commit;
         (document.getElementById('v-srs') as HTMLElement).textContent = v.srs;
         (document.getElementById('v-relay') as HTMLElement).textContent = v.srtRelay;
