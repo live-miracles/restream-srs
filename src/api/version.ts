@@ -1,6 +1,7 @@
 import { execFile } from 'child_process';
 import fs from 'fs';
 import os from 'os';
+import path from 'path';
 import type { Express } from 'express';
 import { readAppConfig } from '../utils/appConfig.js';
 import { readSrsConfigValues } from '../utils/srsConfig.js';
@@ -21,6 +22,16 @@ function exec(cmd: string, args: string[], cwd?: string, env?: NodeJS.ProcessEnv
             },
         );
     });
+}
+
+function readAppVersion(): string {
+    try {
+        const pkgPath = path.join(__dirname, '..', '..', 'package.json');
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { version?: string };
+        return pkg.version ?? 'unknown';
+    } catch {
+        return 'unknown';
+    }
 }
 
 function readOsRelease(): string {
@@ -60,6 +71,7 @@ async function getSrtRelayVersion(): Promise<string> {
 }
 
 interface VersionResult {
+    app: string;
     commit: string;
     srs: string;
     srtRelay: string;
@@ -87,6 +99,7 @@ export function registerVersionApi(app: Express): void {
 
         const date = commitDate.split(' ')[0] || '';
         cached = {
+            app: readAppVersion(),
             commit: date ? `${date} ${commitLine}` : commitLine || 'unknown',
             srs: srs || 'unknown',
             srtRelay,
