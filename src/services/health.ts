@@ -19,6 +19,7 @@ import { inputPullUrl, type InputProtocol, type InputState } from './inputState.
 
 const FFPROBE_CMD = readAppConfig().ffprobePath;
 const FFPROBE_TIMEOUT_MS = 15000;
+const FFPROBE_FAILED_REFRESH_MS = 30000;
 // Stagger concurrent ffprobe launches instead of capping concurrency with a
 // semaphore. The real risk is the thundering-herd burst (all N pipelines firing
 // at the same millisecond after a mass reconnect), not the sustained overlap —
@@ -191,13 +192,20 @@ export function hasBondedRelayPublishConflict(params: {
     return params.inputConnected && params.relayInputActive && !params.relayAcceptedBySrs;
 }
 
-function probeError(result: ProbeResult | null): string {
-    if (!result) return 'ffprobe did not detect a readable media stream';
+function formatTimeOfDay(ts: number): string {
+    const d = new Date(ts);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+}
+
+function probeError(result: ProbeResult | null, checkedAt: number): string {
+    const prefix = formatTimeOfDay(checkedAt);
+    if (!result) return `${prefix} ffprobe did not detect a readable media stream`;
     const video = result.video;
-    if (!video) return 'ffprobe did not detect a video stream';
-    if (!video.codec) return 'ffprobe detected video without codec metadata';
-    if (video.width <= 0 || video.height <= 0) return 'ffprobe detected video without dimensions';
-    return 'ffprobe media validation failed';
+    if (!video) return `${prefix} ffprobe did not detect a video stream`;
+    if (!video.codec) return `${prefix} ffprobe detected video without codec metadata`;
+    if (video.width <= 0 || video.height <= 0)
+        return `${prefix} ffprobe detected video without dimensions`;
+    return `${prefix} ffprobe media validation failed`;
 }
 
 function parseFrameRate(str: unknown): number | null {
@@ -348,12 +356,13 @@ export function createHealthService(
                 });
                 if ((ffprobeGenerations.get(pipelineId) ?? 0) !== generation) return;
                 const ok = isProbeUsable(result);
+                const checkedAt = Date.now();
                 ffprobeResults.set(pipelineId, {
                     result,
                     startedAt,
-                    checkedAt: Date.now(),
+                    checkedAt,
                     ok,
-                    error: ok ? null : probeError(result),
+                    error: ok ? null : probeError(result, checkedAt),
                 });
             } finally {
                 ffprobeInFlight.delete(pipelineId);
@@ -365,7 +374,11 @@ export function createHealthService(
         timer.unref?.();
     }
 
-    function scheduleInitialFfprobe(
+    // Probes once per connected publisher; if that probe fails, keeps retrying
+    // every FFPROBE_FAILED_REFRESH_MS until it succeeds. Once a probe succeeds
+    // for this publisher, it stops re-probing (avoids repeated SRT play/teardown
+    // cycles once the input is known healthy).
+    function scheduleFfprobeUntilHealthy(
         pipelineId: number,
         streamKey: string,
         protocol: InputProtocol,
@@ -373,13 +386,9 @@ export function createHealthService(
     ): void {
         if (ffprobeTimers.has(pipelineId) || ffprobeInFlight.has(pipelineId)) return;
         const status = ffprobeResults.get(pipelineId);
-        if (status) return;
-        scheduleFfprobe(
-            pipelineId,
-            streamKey,
-            protocol,
-            stagger * FFPROBE_STAGGER_MS,
-        );
+        if (status?.ok) return;
+        if (status && Date.now() - status.checkedAt < FFPROBE_FAILED_REFRESH_MS) return;
+        scheduleFfprobe(pipelineId, streamKey, protocol, stagger * FFPROBE_STAGGER_MS);
     }
 
     let pollInProgress = false;
@@ -506,7 +515,7 @@ export function createHealthService(
                     if (publisherCid) inputPublisherCid.set(pipeline.id, publisherCid);
                     inputState.setPipelineState(pipeline.id, nowLive, nowProtocol);
                     if (nowProtocol) {
-                        scheduleInitialFfprobe(
+                        scheduleFfprobeUntilHealthy(
                             pipeline.id,
                             pipeline.streamKey,
                             nowProtocol,

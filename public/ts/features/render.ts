@@ -46,7 +46,8 @@ type OverviewIssue = {
 type BondingIndicator = {
     leftColor: string;
     rightColor: string;
-    title: string;
+    issues: OverviewIssue[];
+    offMessage: string | null;
 };
 type RelayFlowStatus = 'good' | 'warn' | 'error' | 'off';
 
@@ -160,14 +161,19 @@ function outStatus(o: OutputView, input: InputHealth): OutStatus {
 }
 
 function inputStatus(input: InputHealth): InputStatus {
-    if (input.live) {
-        return input.recvBitrateKbps !== null && input.recvBitrateKbps < LOW_BITRATE_KBPS
-            ? 'warn'
-            : 'good';
-    }
     if (input.connected && input.mediaOk === false) return 'error';
+    if (input.live) {
+        if (inputMissingAudio(input)) return 'warn';
+        if (input.recvBitrateKbps !== null && input.recvBitrateKbps < LOW_BITRATE_KBPS)
+            return 'warn';
+        return 'good';
+    }
     if (input.connected) return 'warn';
     return 'off';
+}
+
+function inputMissingAudio(input: InputHealth): boolean {
+    return input.live && input.audioTracks.length === 0 && input.audio === null;
 }
 
 function inputStatusColor(input: InputHealth): string {
@@ -181,11 +187,11 @@ function inputStatusColor(input: InputHealth): string {
 function overviewStatusBadge(st: InputStatus | OutStatus): string {
     if (st === 'error') return '<span class="badge badge-sm badge-error">ERROR</span>';
     if (st === 'warn') return '<span class="badge badge-sm badge-warning">WARNING</span>';
+    if (st === 'off') return '<span class="font-mono text-xs opacity-40">—</span>';
     return '<span class="badge badge-sm badge-success">OK</span>';
 }
 
-function renderOverviewIssues(issues: OverviewIssue[]): string {
-    if (issues.length === 0) return '<span class="opacity-40">—</span>';
+function issueLinesHtml(issues: OverviewIssue[]): string {
     return issues
         .map((issue) => {
             const cls = issue.severity === 'error' ? 'text-error' : 'text-warning';
@@ -194,29 +200,51 @@ function renderOverviewIssues(issues: OverviewIssue[]): string {
         .join('');
 }
 
+function renderOverviewIssues(issues: OverviewIssue[]): string {
+    if (issues.length === 0) return '<span class="opacity-40">—</span>';
+    return issueLinesHtml(issues);
+}
+
+// Content for a `.js-tooltip-content` popup: one colored line per issue (error/warning),
+// or a single muted line when there's nothing wrong but a status is still worth explaining.
+function renderIssueTooltip(issues: OverviewIssue[], offMessage?: string | null): string {
+    if (issues.length > 0) return issueLinesHtml(issues);
+    if (offMessage) {
+        return `<div class="text-xs leading-snug opacity-70">${escapeHtml(offMessage)}</div>`;
+    }
+    return '';
+}
+
 function inputIssues(input: InputHealth): OverviewIssue[] {
     const st = inputStatus(input);
     if (st === 'error') {
         return [
             {
                 severity: 'error',
-                message: [inputStatusMessage(input), formatMediaProbeStatus(input)]
-                    .filter(Boolean)
-                    .join(' '),
+                message: inputStatusMessage(input),
             },
         ];
     }
     if (st === 'warn') {
-        return [
-            {
+        if (!input.live) {
+            return [
+                {
+                    severity: 'warning',
+                    message: inputStatusMessage(input),
+                },
+            ];
+        }
+        const issues: OverviewIssue[] = [];
+        if (input.recvBitrateKbps !== null && input.recvBitrateKbps < LOW_BITRATE_KBPS) {
+            issues.push({
                 severity: 'warning',
-                message: input.live
-                    ? `Input bitrate is below ${LOW_BITRATE_KBPS} kb/s.`
-                    : [inputStatusMessage(input), formatMediaProbeStatus(input)]
-                          .filter(Boolean)
-                          .join(' '),
-            },
-        ];
+                message: `Input bitrate is below ${LOW_BITRATE_KBPS} kb/s.`,
+            });
+        }
+        if (inputMissingAudio(input)) {
+            issues.push({ severity: 'warning', message: 'No audio track detected in input.' });
+        }
+        return issues;
     }
     return [];
 }
@@ -519,7 +547,8 @@ function getBondingIndicator(
         return {
             leftColor: STATUS_COLOR_OFF,
             rightColor: STATUS_COLOR_OFF,
-            title: 'SRT bonding relay is not running; bonded input unavailable',
+            issues: [],
+            offMessage: 'SRT bonding relay is not running; bonded input unavailable',
         };
     }
 
@@ -527,21 +556,22 @@ function getBondingIndicator(
         return {
             leftColor: STATUS_COLOR_OFF,
             rightColor: STATUS_COLOR_OFF,
-            title: 'No bonded SRT input for this stream key',
+            issues: [],
+            offMessage: 'No bonded SRT input for this stream key',
         };
     }
 
-    const reasons = [
-        ...relayInputReasons(pipeline, relayProcessRunning),
-        ...relayOutputReasons(pipeline, relayProcessRunning),
-    ];
+    const inputSt = relayInputStatus(pipeline, relayProcessRunning);
+    const outputSt = relayOutputStatus(pipeline, relayProcessRunning);
+    const issues = relayIssues(pipeline, relayProcessRunning, inputSt, outputSt);
 
     return {
-        leftColor: flowStatusColor(relayInputStatus(pipeline, relayProcessRunning)),
-        rightColor: flowStatusColor(relayOutputStatus(pipeline, relayProcessRunning)),
-        title:
-            reasons.length > 0
-                ? reasons.join('; ')
+        leftColor: flowStatusColor(inputSt),
+        rightColor: flowStatusColor(outputSt),
+        issues,
+        offMessage:
+            issues.length > 0
+                ? null
                 : 'Bonded SRT input active and forwarding to downstream output',
     };
 }
@@ -683,16 +713,19 @@ function renderPipelineList(): void {
                         ? STATUS_COLOR_GOOD
                         : STATUS_COLOR_OFF;
             const selected = p.id === selectedId ? 'bg-base-100' : '';
-            const inputStateForTitle = inputStatus(p.input);
-            const inputTitle = p.input.live
-                ? inputStateForTitle === 'warn'
-                    ? 'Input bitrate is below warning threshold.'
-                    : ''
-                : inputStateForTitle === 'warn' || inputStateForTitle === 'error'
-                  ? [inputStatusMessage(p.input), formatMediaProbeStatus(p.input)]
-                        .filter(Boolean)
-                        .join(' ')
-                  : '';
+            const relayInputSt = relayInputStatus(p, relayProcessRunning);
+            const relayOutputSt = relayOutputStatus(p, relayProcessRunning);
+            const statusIssues: OverviewIssue[] = [
+                ...inputIssues(p.input),
+                ...p.outs.flatMap((o) =>
+                    outputIssues(o, p.input).map((issue) => ({
+                        severity: issue.severity,
+                        message: `${o.name}: ${issue.message}`,
+                    })),
+                ),
+                ...relayIssues(p, relayProcessRunning, relayInputSt, relayOutputSt),
+            ];
+            const statusTooltip = renderIssueTooltip(statusIssues);
 
             const badge = (n: number, cls: string) =>
                 n > 0 ? `<div class="badge badge-sm ${cls} px-2">${n}</div>` : '';
@@ -705,8 +738,11 @@ function renderPipelineList(): void {
                 : '';
 
             return `<li>
-            <div class="flex items-center gap-2 ${selected} cursor-pointer js-select-pipeline" data-id="${p.id}" title="${escapeHtml(inputTitle)}">
-                <div class="rounded-box h-5 w-5 shrink-0" style="background:linear-gradient(90deg,${inColor},${inColor} 45%,#242933 45%,#242933 55%,${outColor} 55%)"></div>
+            <div class="flex items-center gap-2 ${selected} cursor-pointer js-select-pipeline" data-id="${p.id}">
+                <div class="js-tooltip shrink-0">
+                    <div class="rounded-box h-5 w-5" style="background:linear-gradient(90deg,${inColor},${inColor} 45%,#242933 45%,#242933 55%,${outColor} 55%)"></div>
+                    <div class="js-tooltip-content hidden">${statusTooltip}</div>
+                </div>
                 ${badge(outGood, 'badge-success')}
                 ${badge(outWarn, 'badge-warning')}
                 ${badge(outFailed, 'badge-error')}
@@ -751,13 +787,18 @@ function inputStatusMessage(input: InputHealth): string {
     return input.mediaError ?? 'Input connected, waiting for valid media.';
 }
 
+function renderMediaProbeNotice(input: InputHealth): string {
+    const message =
+        input.mediaError ?? 'Codec info is still being probed — this may take a moment.';
+    const toneClass = input.mediaError ? 'text-error' : input.live ? 'opacity-50' : 'text-warning';
+    const probeStatus = input.mediaError ? null : formatMediaProbeStatus(input);
+    return `<p class="text-xs ${toneClass} mt-2">${escapeHtml(message)}${probeStatus ? ` <span class="opacity-60">${escapeHtml(probeStatus)}</span>` : ''}</p>`;
+}
+
 function renderInputStats(input: InputHealth): string {
     if (!input.connected) return '';
     if (!input.live) {
-        const probeStatus = formatMediaProbeStatus(input);
-        const message = inputStatusMessage(input);
-        const toneClass = input.mediaError ? 'text-error' : 'text-warning';
-        return `<p class="text-xs ${toneClass} mt-2">${escapeHtml(message)}${probeStatus ? ` <span class="opacity-60">${escapeHtml(probeStatus)}</span>` : ''}</p>`;
+        return renderMediaProbeNotice(input);
     }
 
     const v = input.video;
@@ -778,9 +819,7 @@ function renderInputStats(input: InputHealth): string {
             ${compactStat('Prof', v.profile || null)}
             ${compactStat('Lvl', v.level || null)}
         </div>`
-                : input.isSrt
-                  ? `<p class="text-xs opacity-50 mt-2">Codec info is still being probed — this may take a moment.</p>`
-                  : ''
+                : renderMediaProbeNotice(input)
         }
         ${
             input.audioTracks.length > 0
@@ -849,6 +888,14 @@ function roundUpNice(v: number): number {
     const exp = Math.pow(10, Math.floor(Math.log10(v)));
     const f = v / exp;
     return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * exp;
+}
+
+function formatChartTimeTick(ts: number): string {
+    const d = new Date(ts);
+    const minutes = d.getMinutes();
+    const mm = minutes.toString().padStart(2, '0');
+    if (minutes % 10 !== 0) return mm;
+    return `${d.getHours().toString().padStart(2, '0')}:${mm}`;
 }
 
 function drawChart(
@@ -941,15 +988,10 @@ function drawChart(
         ctx.lineWidth = 1;
         ctx.stroke();
         ctx.setLineDash([]);
-        const d = new Date(ts);
         ctx.fillStyle = labelColor;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
-        ctx.fillText(
-            `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`,
-            x,
-            H - mB + 5,
-        );
+        ctx.fillText(formatChartTimeTick(ts), x, H - mB + 5);
     }
 
     // Fill under curve
@@ -1059,30 +1101,22 @@ function renderOverview(): void {
             audioTracks && audioTracks.length > 0
                 ? audioTracks.map((t, i) => {
                       const label = escapeHtml([t.language, t.title].filter(Boolean).join(' '));
-                      const numberPrefix = audioTracks.length > 1 ? `${i + 1}. ` : '';
-                      return (
-                          numberPrefix +
-                          audioSpec(t.codec, t.channels, t.sampleRate, label || undefined)
-                      );
+                      const prefix = `Track ${i + 1}: `;
+                      return `${prefix}${audioSpec(t.codec, t.channels, t.sampleRate, label || undefined)}`;
                   })
                 : fallbackAudio
                   ? [
-                        audioSpec(
+                        `Track 1: ${audioSpec(
                             fallbackAudio.codec,
                             fallbackAudio.channel,
                             fallbackAudio.sample_rate,
-                        ),
+                        )}`,
                     ]
                   : [];
         if (!vSpec && audioLines.length === 0) return '—';
         const head = [protocol, vSpec].filter(Boolean).join(' ');
         if (audioLines.length === 0) return head || '—';
-        const firstLine = head ? `${head} | ${audioLines[0]}` : audioLines[0];
-        // Indent continuation lines with non-breaking spaces so they line up under the
-        // first audio track (monospace font makes character count == column width).
-        const indent = '&nbsp;'.repeat(head ? head.length + 3 : 0);
-        const restLines = audioLines.slice(1).map((line) => indent + line);
-        return [firstLine, ...restLines].join('<br>');
+        return [head, ...audioLines].filter(Boolean).join('<br>');
     };
 
     const statusBg = (error: boolean, warn: boolean): string =>
@@ -1124,8 +1158,7 @@ function renderOverview(): void {
     const fmtRtt = (ms: number | null): string =>
         ms != null ? `${ms.toFixed(ms >= 10 ? 0 : 1)} ms` : '—';
     const legCells = (leg: SrtBondingLeg | null): string => {
-        if (!leg)
-            return `${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}`;
+        if (!leg) return `${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}`;
         const color = legStateDotColor(leg.state);
         const rx = leg.recvUniquePacketsTotal ?? leg.recvPacketsTotal;
         return `
@@ -1821,12 +1854,14 @@ function renderPipelineInfo(selectedId: string | null): void {
     const bondingCard = document.getElementById('srt-bonding-card');
     const bondingDot = document.getElementById('srt-bonding-status-dot');
     const bondingDotFill = document.getElementById('srt-bonding-status-fill');
+    const bondingTooltipContent = document.getElementById('srt-bonding-status-tooltip-content');
     const bondingUrl = document.getElementById('srt-bonding-url');
     const bondingStats = document.getElementById('srt-bonding-stats');
     const bondingLegs = document.getElementById('srt-bonding-legs');
     const bondingErrWrap = document.getElementById('srt-bonding-last-error-wrap');
     const bondingErrTs = document.getElementById('srt-bonding-last-error-ts');
     const bondingErr = document.getElementById('srt-bonding-last-error');
+    const bondingErrInfoBtn = document.getElementById('srt-bonding-last-error-info');
     const bondingInputActive = pipeline.srtBonding.inputActive;
     const bondingOutputConnected = pipeline.srtBonding.outputConnected;
     const relayProcessRunning = state.health.srtRelay?.status === 'running';
@@ -1848,7 +1883,12 @@ function renderPipelineInfo(selectedId: string | null): void {
             `${indicator.leftColor} 0 45%, ` +
             `#242933 45% 55%, ` +
             `${indicator.rightColor} 55% 100%)`;
-        bondingDot.title = indicator.title;
+        if (bondingTooltipContent) {
+            bondingTooltipContent.innerHTML = renderIssueTooltip(
+                indicator.issues,
+                indicator.offMessage,
+            );
+        }
     }
     if (bondingUrl) {
         let bondingDisplayUrl = bondingUrlValue.replace(pipeline.streamKey, masked);
@@ -1983,6 +2023,11 @@ function renderPipelineInfo(selectedId: string | null): void {
               })
             : '';
         bondingErr.textContent = lastErrorLine;
+        if (bondingErrInfoBtn) {
+            (bondingErrInfoBtn as HTMLButtonElement).onclick = () => {
+                void import('../features/editor.js').then((ed) => ed.showRelayError(pipeline.id));
+            };
+        }
     }
 
     renderPreview(pipeline);
@@ -1993,7 +2038,6 @@ function renderPipelineInfo(selectedId: string | null): void {
 
 const ICON_PENCIL = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>`;
 const ICON_TRASH = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>`;
-const ICON_INFO = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>`;
 const ICON_HISTORY = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/><path d="M12 7v5l3 2"/></svg>`;
 const ICON_ITERATION_CW = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 3 3-3 3"/><path d="M15 5a9 9 0 1 1-3 16.9"/></svg>`;
 const ICON_WARN = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>`;
@@ -2125,7 +2169,6 @@ function renderOutputCard(
                 ${retryBadge}
                 <span class="text-xs ${lastErrorColor} shrink-0">${lastErrorTs}</span>
                 <span class="text-xs ${lastErrorColor} truncate">${escapeHtml(lastErrorLine)}</span>
-                <button class="btn btn-xs btn-ghost p-0 leading-none shrink-0 ${lastErrorColor}" data-action="error-info" data-out-id="${o.id}" title="View full error">${ICON_INFO}</button>
            </div>`
             : '';
     const historyBtn = o.hasErrorHistory
@@ -2339,3 +2382,63 @@ export function renderPipelines(): void {
     renderPipelineList();
     renderPipelineInfo(selectedId);
 }
+
+// ── Hover tooltips ────────────────────────────────────
+//
+// Status circles live inside columns with overflow-y-auto (for scrolling long
+// pipeline/output lists), which clips any absolutely-positioned popup that
+// tries to overflow the column's edge — the popup would show as scroll-clipped
+// or blend into the column background instead of floating over neighboring
+// columns. Rather than positioning content in place, we reparent the hovered
+// element's `.js-tooltip-content` into a single fixed-position portal (see
+// #hover-tooltip in index.html) that lives outside all scroll containers, and
+// position that portal from the trigger's viewport rect. Trigger elements are
+// re-rendered constantly (innerHTML swaps), so this is wired once via
+// delegation on `document` rather than per-element listeners.
+function initHoverTooltips(): void {
+    const portal = document.getElementById('hover-tooltip');
+    if (!portal) return;
+    let activeTrigger: Element | null = null;
+
+    const hide = (): void => {
+        portal.classList.add('hidden');
+        activeTrigger = null;
+    };
+
+    const show = (trigger: Element, content: Element): void => {
+        if (!content.innerHTML.trim()) return;
+        portal.innerHTML = content.innerHTML;
+        portal.classList.remove('hidden');
+        const rect = trigger.getBoundingClientRect();
+        const pw = portal.offsetWidth;
+        const ph = portal.offsetHeight;
+        let left = rect.right + 8;
+        if (left + pw > window.innerWidth - 8) left = rect.left - pw - 8;
+        left = Math.max(8, left);
+        const top = Math.max(
+            8,
+            Math.min(rect.top + rect.height / 2 - ph / 2, window.innerHeight - ph - 8),
+        );
+        portal.style.left = `${left}px`;
+        portal.style.top = `${top}px`;
+        activeTrigger = trigger;
+    };
+
+    document.addEventListener('mouseover', (e) => {
+        const trigger = (e.target as Element | null)?.closest?.('.js-tooltip');
+        if (!trigger || trigger === activeTrigger) return;
+        const content = trigger.querySelector(':scope > .js-tooltip-content');
+        if (!content) return;
+        show(trigger, content);
+    });
+
+    document.addEventListener('mouseout', (e) => {
+        const trigger = (e.target as Element | null)?.closest?.('.js-tooltip');
+        if (!trigger || trigger !== activeTrigger) return;
+        const related = (e as MouseEvent).relatedTarget as Node | null;
+        if (related && trigger.contains(related)) return;
+        hide();
+    });
+}
+
+initHoverTooltips();

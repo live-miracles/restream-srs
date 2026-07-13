@@ -419,9 +419,10 @@ unaffected — they never went through `srt_to_rtmp` — and are pulled over RTM
 The SRS log fills with `srt serve error code=6001(SrtIo)(SRT read or write failed) :
 srt play recv thread : ... socket status=SRTS_BROKEN` at a steady background rate.
 This is expected noise, not an incident: it fires on **every** teardown of an SRT
-play (pull) connection — including the one-shot ffprobe media check this app
-runs when a publisher connects to an SRT input — not just on genuine
-connection failures.
+play (pull) connection — including the ffprobe media check this app runs when a
+publisher connects to an SRT input, and its retries every
+`FFPROBE_FAILED_REFRESH_MS` while that probe keeps failing — not just on
+genuine connection failures.
 
 Confirmed in SRS 6.0 source (`src/app/srs_app_srt_conn.cpp`,
 `src/protocol/srs_protocol_srt.cpp`): `SrsMpegtsSrtConn::cycle()` logs at
@@ -448,7 +449,7 @@ The app runs these recovery loops:
 
 | Watchdog | Scope | Restart condition | Notes |
 |----------|-------|-------------------|-------|
-| Health poll / input recovery | SRS reachability, live pipeline inputs, desired running outputs | When SRS and the pipeline input become ready, outputs whose desired state is `running` are started or restarted with staggered timing | Computed once every 5s and shared by dashboard clients. Inputs become live from SRS publisher presence; ffprobe is used only for a one-shot media/track metadata check. |
+| Health poll / input recovery | SRS reachability, live pipeline inputs, desired running outputs | When SRS and the pipeline input become ready, outputs whose desired state is `running` are started or restarted with staggered timing | Computed once every 5s and shared by dashboard clients. Inputs become live from SRS publisher presence; ffprobe fills in media/track metadata and retries every `FFPROBE_FAILED_REFRESH_MS` until it succeeds, then stops for that publisher. |
 | Output progress watchdog | Every running FFmpeg output process | After warmup, if the input is ready but FFmpeg `total_size` / `out_time_ms` stop advancing for the configured stall window | Protocol-agnostic backstop; covers SRT outputs and local RTMP relays |
 | Remote RTMP socket watchdog | Running outputs with remote RTMP/RTMPS sinks | After socket warmup and grace, if the destination socket is missing or remains in a closing state such as `CLOSE-WAIT` | Uses one `ss -H -tanp` snapshot per watchdog interval; local RTMP/RTMPS sinks are ignored because local input/output sockets are ambiguous |
 | Output memory watchdog | Every running FFmpeg output process | After warmup, if process RSS crosses `memory_limit_mb` (or its per-encoding override) | Reads `/proc/<pid>/status`; unconditional — a leaking process can still show advancing `total_size`/healthy sockets, so this doesn't wait on the other two. Once RSS crosses 70% of the limit the output surfaces a yellow "High memory usage" warning in the dashboard, before the watchdog actually restarts it at 100%. The limit is doubled for outputs on a 4K (≥3840px on either dimension) input — the 2x multiplier is a placeholder, not a measured baseline; see [#11](https://github.com/live-miracles/restream-srs/issues/11) |
@@ -460,11 +461,12 @@ watchdog is advisory: if `ss` fails or times out, it does not restart anything,
 and a socket warning does not prevent the other watchdogs from acting.
 
 Input media validation is separate from the output watchdogs. The health service
-stays on the regular 5s poll, but ffprobe only runs once per connected publisher:
+stays on the regular 5s poll, but ffprobe backs off once a publisher's probe
+succeeds:
 
 | Input check | Scope | Cadence | Notes |
 |-------------|-------|---------|-------|
-| Initial media validation | Connected RTMP/SRT inputs without a previous probe result for this publisher | One immediate probe, staggered across pipelines | Input liveness and output recovery do not wait for a valid ffprobe result; ffprobe fills in media/track details when available. |
+| Media validation | Connected RTMP/SRT inputs without a successful probe yet for this publisher | Immediate probe (staggered across pipelines), then retried every `FFPROBE_FAILED_REFRESH_MS` (30s) while it keeps failing | Stops re-probing once a probe succeeds for the current publisher; a new probe cycle starts on the next publisher change. Input liveness and output recovery do not wait for a valid ffprobe result — ffprobe fills in media/track details when available. |
 
 ### SRT bonding relay
 

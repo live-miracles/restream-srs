@@ -1140,6 +1140,36 @@ export async function showOutputError(pipelineId: string, outId: string): Promis
         .join('');
 }
 
+// Unlike output errors, the relay only ever carries one lastError/lastErrorAt
+// pair (no persisted history), so this reads straight from the already-loaded
+// health snapshot instead of calling out to an API.
+export function showRelayError(pipelineId: string): void {
+    const modal = document.getElementById('logs-modal') as HTMLDialogElement | null;
+    const titleEl = document.getElementById('logs-modal-title');
+    const contentEl = document.getElementById('logs-modal-content');
+    if (!modal || !contentEl) return;
+
+    const pipeline = state.pipelines.find((p) => p.id === pipelineId);
+    if (titleEl) titleEl.textContent = `SRT Bonding Relay Error — ${pipeline?.name ?? pipelineId}`;
+
+    const message = pipeline?.srtBonding.lastError;
+    if (!message) {
+        contentEl.innerHTML = '<p class="opacity-50 text-sm">No error recorded.</p>';
+        modal.showModal();
+        return;
+    }
+
+    const ts = pipeline?.srtBonding.lastErrorAt
+        ? new Date(pipeline.srtBonding.lastErrorAt).toLocaleString(undefined, { hour12: false })
+        : '';
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    contentEl.innerHTML = `
+        <div class="text-xs opacity-50 mb-2">${ts}</div>
+        <pre class="text-xs text-error opacity-80 whitespace-pre-wrap break-all overflow-x-auto">${esc(message)}</pre>
+    `;
+    modal.showModal();
+}
+
 const LOG_TERMINALS: { label: string; elId: string; key: 'srs' | 'dashboard' | 'relay' }[] = [
     { label: 'SRS', elId: 'srs-log-tail', key: 'srs' },
     { label: 'Dashboard', elId: 'dashboard-log-tail', key: 'dashboard' },
