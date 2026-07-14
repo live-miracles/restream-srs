@@ -18,8 +18,6 @@ import {
     showSrsLogs,
     openAddOutput,
     submitOutputForm,
-    addSinkRow,
-    removeSinkRow,
     onSinkServerChange,
     onOutputTypeChange,
     copyOutputs,
@@ -53,8 +51,6 @@ declare global {
         outputsStartAllBtn: () => Promise<void>;
         outputsStopAllBtn: () => Promise<void>;
         outFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
-        outAddSink: () => void;
-        outRemoveSink: (btn: HTMLElement) => void;
         outSinkServerChange: (select: HTMLSelectElement) => void;
         outTypeChange: (select: HTMLSelectElement) => void;
         copyText: (text: string) => Promise<void>;
@@ -165,8 +161,6 @@ window.outputsStopAllBtn = async () => {
 };
 
 window.outFormBtn = (btn) => submitOutputForm(btn);
-window.outAddSink = () => addSinkRow();
-window.outRemoveSink = (btn) => removeSinkRow(btn);
 window.outSinkServerChange = (select) => onSinkServerChange(select);
 window.outTypeChange = (select) => onOutputTypeChange(select);
 

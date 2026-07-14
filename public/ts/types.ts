@@ -15,11 +15,6 @@ export interface Pipeline {
     srtPublishUrlLocal: string;
 }
 
-export interface OutputSink {
-    url: string;
-    audioEncoding: string;
-}
-
 export interface HostProbeTarget {
     slot: number;
     label: string;
@@ -57,20 +52,17 @@ export interface Output {
     name: string;
     desiredState: 'running' | 'stopped';
     videoEncoding: string;
-    sinks: OutputSink[];
-    lastError: string | null;
-    hasErrorHistory: boolean;
-}
-
-export interface SinkPayload {
     url: string;
     audioEncoding: string;
+    lastError: string | null;
+    hasErrorHistory: boolean;
 }
 
 export interface OutputPayload {
     name: string;
     videoEncoding: string;
-    sinks: SinkPayload[];
+    url: string;
+    audioEncoding: string;
 }
 
 export interface VideoInfo {

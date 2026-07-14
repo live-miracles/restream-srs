@@ -237,11 +237,10 @@ ffmpeg -re -stream_loop -1 -i video.mp4 \
 ## API
 
 All routes below sit behind the session-cookie auth middleware except
-`/api/ready`, `/api/auth/login`, and the SRS publish hook. An output fans out to
-one or more **sinks**; each sink has its own `url` and `audioEncoding`, while
-`videoEncoding` is shared per output. The input is pulled back over whatever
-protocol it was published with (SRT input → SRT pull, RTMP input → RTMP pull),
-so there is no pull-method setting.
+`/api/ready`, `/api/auth/login`, and the SRS publish hook. An output pushes to a
+single destination: `url` and `audioEncoding`, plus `videoEncoding`. The input is
+pulled back over whatever protocol it was published with (SRT input → SRT pull,
+RTMP input → RTMP pull), so there is no pull-method setting.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -259,8 +258,8 @@ so there is no pull-method setting.
 | POST | `/api/pipelines/:id/preview/start` | Start an HLS preview `{ audioTrack? }` |
 | POST | `/api/pipelines/:id/preview/keepalive` | Refresh the preview TTL — previews with no keepalive for 90s are stopped automatically (covers closed browser tabs) |
 | POST | `/api/pipelines/:id/preview/stop` | Stop the HLS preview |
-| POST | `/api/pipelines/:id/outputs` | Create output `{ name, videoEncoding, sinks: [{ url, audioEncoding }] }` |
-| POST | `/api/pipelines/:id/outputs/bulk` | Bulk create outputs `{ outputs: [{ name, videoEncoding, sinks }] }` — validates all before creating any |
+| POST | `/api/pipelines/:id/outputs` | Create output `{ name, videoEncoding, url, audioEncoding }` |
+| POST | `/api/pipelines/:id/outputs/bulk` | Bulk create outputs `{ outputs: [{ name, videoEncoding, url, audioEncoding }] }` — validates all before creating any |
 | DELETE | `/api/pipelines/:id/outputs` | Clear all outputs for the pipeline — returns 409 if any output is still running |
 | POST | `/api/pipelines/:id/outputs/:outId` | Update output (same body as create) |
 | DELETE | `/api/pipelines/:id/outputs/:outId` | Delete output (stops it first if running) |
@@ -448,7 +447,7 @@ The app runs these recovery loops:
 |----------|-------|-------------------|-------|
 | Health poll / input recovery | SRS reachability, live pipeline inputs, desired running outputs | When SRS and the pipeline input become ready, outputs whose desired state is `running` are started or restarted with staggered timing | Computed once every 5s and shared by dashboard clients. Inputs become live from SRS publisher presence; ffprobe fills in media/track metadata and retries every `FFPROBE_FAILED_REFRESH_MS` until it succeeds, then stops for that publisher. |
 | Output progress watchdog | Every running FFmpeg output process | After warmup, if the input is ready but FFmpeg `total_size` / `out_time_ms` stop advancing for the configured stall window | Protocol-agnostic backstop; covers SRT outputs and local RTMP relays |
-| Remote RTMP socket watchdog | Running outputs with remote RTMP/RTMPS sinks | After socket warmup and grace, if the destination socket is missing or remains in a closing state such as `CLOSE-WAIT` | Uses one `ss -H -tanp` snapshot per watchdog interval; local RTMP/RTMPS sinks are ignored because local input/output sockets are ambiguous |
+| Remote RTMP socket watchdog | Running outputs with a remote RTMP/RTMPS destination | After socket warmup and grace, if the destination socket is missing or remains in a closing state such as `CLOSE-WAIT` | Uses one `ss -H -tanp` snapshot per watchdog interval; a local RTMP/RTMPS destination is ignored because local input/output sockets are ambiguous |
 | Output memory watchdog | Every running FFmpeg output process | After warmup, if process RSS crosses `memory_limit_mb` (or its per-encoding override) | Reads `/proc/<pid>/status`; unconditional — a leaking process can still show advancing `total_size`/healthy sockets, so this doesn't wait on the other two. Once RSS crosses 70% of the limit the output surfaces a yellow "High memory usage" warning in the dashboard, before the watchdog actually restarts it at 100%. The limit is doubled for outputs on a 4K (≥3840px on either dimension) input — the 2x multiplier is a placeholder, not a measured baseline; see [#11](https://github.com/live-miracles/restream-srs/issues/11) |
 
 All three output watchdogs use the same restart path: they write a detailed
@@ -509,10 +508,7 @@ include the pid, stall duration, last ffmpeg progress values, and stderr tail.
 pid-level TCP socket state for the process. Local RTMP/RTMPS outputs are excluded
 from the TCP socket check because ffmpeg's local input pull and local output push
 both connect to local SRS and are ambiguous in `ss`; those relays are still
-covered by the output-progress watchdog. For an output that fans out to multiple
-sinks, a partial failure may not be identified down to an individual sink if
-another sink keeps `total_size` / `out_time_ms` advancing and the socket state is
-ambiguous. The common remote one-output-to-one-destination case is fully covered.
+covered by the output-progress watchdog.
 
 ### A corrupt input can make an FFmpeg output leak memory (capped by a watchdog)
 

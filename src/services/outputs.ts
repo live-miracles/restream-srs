@@ -7,10 +7,6 @@ import { red, yellow, green } from '../utils/ansiColor.js';
 import type { Db, Output } from '../types.js';
 import type { InputState } from './inputState.js';
 
-function hasValidSinks(output: Output): boolean {
-    return output.sinks.length > 0 && output.sinks.every((s) => validateOutputUrl(s.url));
-}
-
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000];
 // Outputs retry indefinitely — an input can be down for hours during a major
 // incident and must come back on its own when it returns. While the input/SRS is
@@ -415,35 +411,23 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
         );
     }
 
-    function rtmpSinkRequirement(url: string): { port: number; local: boolean } | null {
+    function requiredRtmpSocket(output: Output): { port: number; local: boolean } | null {
+        const url = output.url;
         if (!url.startsWith('rtmp://') && !url.startsWith('rtmps://')) return null;
+        let port: number;
+        let local: boolean;
         try {
             const parsed = new URL(url);
-            const port = parsed.port
-                ? Number(parsed.port)
-                : parsed.protocol === 'rtmps:'
-                  ? 443
-                  : 1935;
-            return { port, local: isLocalAddress(parsed.hostname) };
+            port = parsed.port ? Number(parsed.port) : parsed.protocol === 'rtmps:' ? 443 : 1935;
+            local = isLocalAddress(parsed.hostname);
         } catch {
-            return { port: url.startsWith('rtmps://') ? 443 : 1935, local: false };
+            port = url.startsWith('rtmps://') ? 443 : 1935;
+            local = false;
         }
-    }
-
-    function requiredRtmpSockets(
-        output: Output,
-    ): Map<string, { port: number; local: boolean; count: number }> {
-        const required = new Map<string, { port: number; local: boolean; count: number }>();
-        for (const sink of output.sinks) {
-            const req = rtmpSinkRequirement(sink.url);
-            if (req == null) continue;
-            // Local RTMP sockets are ambiguous: the ffmpeg input pull and output push
-            // both connect to local SRS, so leave local relays to the progress watchdog.
-            if (req.local) continue;
-            const key = `${req.local ? 'local' : 'remote'}:${req.port}`;
-            required.set(key, { ...req, count: (required.get(key)?.count ?? 0) + 1 });
-        }
-        return required;
+        // Local RTMP sockets are ambiguous: the ffmpeg input pull and output push
+        // both connect to local SRS, so leave local relays to the progress watchdog.
+        if (local) return null;
+        return { port, local };
     }
 
     function socketMatchesRequirement(
@@ -459,24 +443,20 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
     function destinationSocketWarning(output: Output, proc: ChildProcess): string | null {
         if (!tcpSocketSnapshotUsable) return null;
         if (proc.pid == null) return null;
-        const required = requiredRtmpSockets(output);
-        if (required.size === 0) return null;
+        const requirement = requiredRtmpSocket(output);
+        if (requirement == null) return null;
 
         const sockets = tcpSocketsByPid.get(proc.pid) ?? [];
-        for (const requirement of required.values()) {
-            const bad = sockets.find(
-                (s) => socketMatchesRequirement(s, requirement) && TCP_BAD_STATES.has(s.state),
-            );
-            if (bad) return `RTMP socket ${bad.state} on destination port ${requirement.port}`;
-        }
+        const bad = sockets.find(
+            (s) => socketMatchesRequirement(s, requirement) && TCP_BAD_STATES.has(s.state),
+        );
+        if (bad) return `RTMP socket ${bad.state} on destination port ${requirement.port}`;
 
-        for (const requirement of required.values()) {
-            const healthy = sockets.filter(
-                (s) => socketMatchesRequirement(s, requirement) && TCP_HEALTHY_STATES.has(s.state),
-            ).length;
-            if (healthy < requirement.count) {
-                return `RTMP socket missing (${healthy}/${requirement.count} established on destination port ${requirement.port})`;
-            }
+        const healthy = sockets.some(
+            (s) => socketMatchesRequirement(s, requirement) && TCP_HEALTHY_STATES.has(s.state),
+        );
+        if (!healthy) {
+            return `RTMP socket missing (destination port ${requirement.port} not established)`;
         }
 
         return null;
@@ -632,13 +612,18 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
     }
 
     async function startJob(output: Output): Promise<void> {
-        if (!hasValidSinks(output)) throw new Error('Invalid output URL');
+        if (!validateOutputUrl(output.url)) throw new Error('Invalid output URL');
 
         const pipeline = db.getPipeline(output.pipelineId);
         if (!pipeline) throw new Error('Pipeline not found');
         // Pull the input back the same way it was published. Default to RTMP until known.
         const inputUrl = inputState.pullUrl(output.pipelineId, pipeline.streamKey);
-        const args = buildFfmpegArgs(inputUrl, output.sinks, output.videoEncoding);
+        const args = buildFfmpegArgs(
+            inputUrl,
+            output.url,
+            output.audioEncoding,
+            output.videoEncoding,
+        );
 
         // stdout and stderr must stay as 'pipe' (not 'ignore' or 'inherit').
         // When Node.js exits for any reason — including SIGKILL or a crash — the OS
@@ -760,7 +745,7 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
             if (statuses.get(outputId)?.status === 'running') return;
             const output = db.getOutput(outputId);
             if (!output) throw new Error('Output not found');
-            if (!hasValidSinks(output)) throw new Error('Invalid output URL');
+            if (!validateOutputUrl(output.url)) throw new Error('Invalid output URL');
             clearRetry(outputId);
             getRetry(outputId).failures = 0;
             // Input not live yet — keep the output "running" (desiredState) but

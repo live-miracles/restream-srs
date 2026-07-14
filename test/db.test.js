@@ -102,45 +102,36 @@ describe('Output CRUD', () => {
         const o = db.createOutput({
             pipelineId: p.id,
             name: 'YouTube',
-            sinks: [{ url: 'rtmp://a.rtmp.youtube.com/live2/key' }],
+            url: 'rtmp://a.rtmp.youtube.com/live2/key',
         });
         const got = db.listOutputs().find((out) => out.id === o.id);
         assert.equal(got?.name, 'YouTube');
-        assert.equal(got?.sinks.length, 1);
-        assert.equal(got?.sinks[0].url, 'rtmp://a.rtmp.youtube.com/live2/key');
-        assert.equal(got?.sinks[0].audioEncoding, 'copy');
+        assert.equal(got?.url, 'rtmp://a.rtmp.youtube.com/live2/key');
+        assert.equal(got?.audioEncoding, 'copy');
         assert.equal(got?.desiredState, 'stopped');
         assert.equal(got?.videoEncoding, 'copy');
     });
 
-    test('createOutput persists multiple sinks with per-sink audio encoding', () => {
+    test('createOutput persists a custom audio encoding', () => {
         const db = makeDb();
         const p = db.createPipeline();
         const o = db.createOutput({
             pipelineId: p.id,
-            name: 'Split',
-            sinks: [
-                { url: 'rtmp://en', audioEncoding: '0' },
-                { url: 'rtmp://fr', audioEncoding: '1' },
-            ],
+            name: 'French track',
+            url: 'rtmp://fr',
+            audioEncoding: '1',
         });
         const got = db.listOutputs().find((out) => out.id === o.id);
-        assert.equal(got?.sinks.length, 2);
-        assert.deepEqual(
-            got?.sinks.map((s) => [s.url, s.audioEncoding]),
-            [
-                ['rtmp://en', '0'],
-                ['rtmp://fr', '1'],
-            ],
-        );
+        assert.equal(got?.url, 'rtmp://fr');
+        assert.equal(got?.audioEncoding, '1');
     });
 
     test('listOutputsForPipeline scopes to the right pipeline', () => {
         const db = makeDb();
         const p1 = db.createPipeline();
         const p2 = db.createPipeline();
-        db.createOutput({ pipelineId: p1.id, name: 'A', sinks: [{ url: 'rtmp://a' }] });
-        db.createOutput({ pipelineId: p2.id, name: 'B', sinks: [{ url: 'rtmp://b' }] });
+        db.createOutput({ pipelineId: p1.id, name: 'A', url: 'rtmp://a' });
+        db.createOutput({ pipelineId: p2.id, name: 'B', url: 'rtmp://b' });
         const outs = db.listOutputsForPipeline(p1.id);
         assert.equal(outs.length, 1);
         assert.equal(outs[0].name, 'A');
@@ -149,8 +140,8 @@ describe('Output CRUD', () => {
     test('multiple outputs on same pipeline get sequential seq numbers', () => {
         const db = makeDb();
         const p = db.createPipeline();
-        const o1 = db.createOutput({ pipelineId: p.id, name: 'A', sinks: [{ url: 'rtmp://a' }] });
-        const o2 = db.createOutput({ pipelineId: p.id, name: 'B', sinks: [{ url: 'rtmp://b' }] });
+        const o1 = db.createOutput({ pipelineId: p.id, name: 'A', url: 'rtmp://a' });
+        const o2 = db.createOutput({ pipelineId: p.id, name: 'B', url: 'rtmp://b' });
         assert.equal(o1.seq, 1);
         assert.equal(o2.seq, 2);
     });
@@ -160,9 +151,9 @@ describe('Output CRUD', () => {
         const p = db.createPipeline();
         const revBefore = db.getConfigRev();
         const created = db.createOutputs([
-            { pipelineId: p.id, name: 'A', sinks: [{ url: 'rtmp://a' }] },
-            { pipelineId: p.id, name: 'B', videoEncoding: '720p', sinks: [{ url: 'rtmp://b' }] },
-            { pipelineId: p.id, name: 'C', sinks: [{ url: 'srt://c' }] },
+            { pipelineId: p.id, name: 'A', url: 'rtmp://a' },
+            { pipelineId: p.id, name: 'B', videoEncoding: '720p', url: 'rtmp://b' },
+            { pipelineId: p.id, name: 'C', url: 'srt://c' },
         ]);
         assert.deepEqual(
             created.map((o) => [o.name, o.seq]),
@@ -182,9 +173,9 @@ describe('Output CRUD', () => {
         const p = db.createPipeline();
         assert.throws(() =>
             db.createOutputs([
-                { pipelineId: p.id, name: 'A', sinks: [{ url: 'rtmp://a' }] },
+                { pipelineId: p.id, name: 'A', url: 'rtmp://a' },
                 // Violates the outputs.pipeline_id NOT NULL constraint mid-batch.
-                { pipelineId: null, name: 'B', sinks: [{ url: 'rtmp://b' }] },
+                { pipelineId: null, name: 'B', url: 'rtmp://b' },
             ]),
         );
         assert.equal(db.listOutputsForPipeline(p.id).length, 0);
@@ -193,52 +184,56 @@ describe('Output CRUD', () => {
     test('setOutputDesiredState persists the change', () => {
         const db = makeDb();
         const p = db.createPipeline();
-        const o = db.createOutput({ pipelineId: p.id, name: 'X', sinks: [{ url: 'rtmp://x' }] });
+        const o = db.createOutput({ pipelineId: p.id, name: 'X', url: 'rtmp://x' });
         db.setOutputDesiredState(o.id, 'running');
         assert.equal(db.listOutputs().find((out) => out.id === o.id)?.desiredState, 'running');
     });
 
-    test('updateOutput persists name, encoding, and sink changes', () => {
+    test('updateOutput persists name, encoding, and destination changes', () => {
         const db = makeDb();
         const p = db.createPipeline();
         const o = db.createOutput({
             pipelineId: p.id,
             name: 'Old',
-            sinks: [{ url: 'rtmp://old' }],
+            url: 'rtmp://old',
         });
         db.updateOutput(o.id, {
             name: 'New',
             videoEncoding: '720p',
-            sinks: [{ url: 'rtmp://new', audioEncoding: '2' }],
+            url: 'rtmp://new',
+            audioEncoding: '2',
         });
         const got = db.listOutputs().find((out) => out.id === o.id);
         assert.equal(got?.name, 'New');
         assert.equal(got?.videoEncoding, '720p');
-        assert.equal(got?.sinks.length, 1);
-        assert.equal(got?.sinks[0].url, 'rtmp://new');
-        assert.equal(got?.sinks[0].audioEncoding, '2');
+        assert.equal(got?.url, 'rtmp://new');
+        assert.equal(got?.audioEncoding, '2');
     });
 
-    test('updateOutput replaces sinks rather than appending', () => {
+    test('updateOutput overwrites the destination rather than merging', () => {
         const db = makeDb();
         const p = db.createPipeline();
         const o = db.createOutput({
             pipelineId: p.id,
             name: 'X',
-            sinks: [{ url: 'rtmp://a' }, { url: 'rtmp://b' }],
+            url: 'rtmp://a',
+            audioEncoding: '0',
         });
         db.updateOutput(o.id, {
             name: 'X',
             videoEncoding: 'copy',
-            sinks: [{ url: 'rtmp://only' }],
+            url: 'rtmp://only',
+            audioEncoding: 'copy',
         });
-        assert.equal(db.listOutputs().find((out) => out.id === o.id)?.sinks.length, 1);
+        const got = db.listOutputs().find((out) => out.id === o.id);
+        assert.equal(got?.url, 'rtmp://only');
+        assert.equal(got?.audioEncoding, 'copy');
     });
 
     test('deleteOutput removes the output', () => {
         const db = makeDb();
         const p = db.createPipeline();
-        const o = db.createOutput({ pipelineId: p.id, name: 'X', sinks: [{ url: 'rtmp://x' }] });
+        const o = db.createOutput({ pipelineId: p.id, name: 'X', url: 'rtmp://x' });
         assert.ok(db.deleteOutput(o.id));
         assert.equal(
             db.listOutputs().find((out) => out.id === o.id),
@@ -249,7 +244,7 @@ describe('Output CRUD', () => {
     test('setOutputLastError keeps the five most recent errors', () => {
         const db = makeDb();
         const p = db.createPipeline();
-        const o = db.createOutput({ pipelineId: p.id, name: 'X', sinks: [{ url: 'rtmp://x' }] });
+        const o = db.createOutput({ pipelineId: p.id, name: 'X', url: 'rtmp://x' });
 
         for (let i = 1; i <= 6; i++) db.setOutputLastError(o.id, `error ${i}`, 'crash');
 
@@ -266,7 +261,7 @@ describe('Output CRUD', () => {
     test('setOutputLastError records kind, and stopped entries do not become the current error', () => {
         const db = makeDb();
         const p = db.createPipeline();
-        const o = db.createOutput({ pipelineId: p.id, name: 'X', sinks: [{ url: 'rtmp://x' }] });
+        const o = db.createOutput({ pipelineId: p.id, name: 'X', url: 'rtmp://x' });
 
         db.setOutputLastError(o.id, 'ffmpeg crashed', 'crash');
         db.setOutputLastError(o.id, 'leftover stderr from a manual stop', 'stopped');
@@ -290,7 +285,7 @@ describe('Output CRUD', () => {
     test('stopped-only diagnostics surface as history without a current error', () => {
         const db = makeDb();
         const p = db.createPipeline();
-        const o = db.createOutput({ pipelineId: p.id, name: 'X', sinks: [{ url: 'rtmp://x' }] });
+        const o = db.createOutput({ pipelineId: p.id, name: 'X', url: 'rtmp://x' });
 
         db.setOutputLastError(o.id, 'leftover stderr from a manual stop', 'stopped');
 
@@ -306,7 +301,7 @@ describe('Output CRUD', () => {
     test('deleting a pipeline cascades to its outputs', () => {
         const db = makeDb();
         const p = db.createPipeline();
-        const o = db.createOutput({ pipelineId: p.id, name: 'X', sinks: [{ url: 'rtmp://x' }] });
+        const o = db.createOutput({ pipelineId: p.id, name: 'X', url: 'rtmp://x' });
         db.deletePipeline(p.id);
         assert.equal(
             db.listOutputs().find((out) => out.id === o.id),
@@ -348,7 +343,7 @@ describe('Config revision', () => {
         const rev1 = db.getConfigRev();
         assert.ok(rev1 > rev0);
 
-        const o = db.createOutput({ pipelineId: p.id, name: 'A', sinks: [{ url: 'rtmp://a' }] });
+        const o = db.createOutput({ pipelineId: p.id, name: 'A', url: 'rtmp://a' });
         const rev2 = db.getConfigRev();
         assert.ok(rev2 > rev1);
 
@@ -359,7 +354,7 @@ describe('Config revision', () => {
     test('does not bump on lastError or pipeline-log writes', () => {
         const db = makeDb();
         const p = db.createPipeline();
-        const o = db.createOutput({ pipelineId: p.id, name: 'A', sinks: [{ url: 'rtmp://a' }] });
+        const o = db.createOutput({ pipelineId: p.id, name: 'A', url: 'rtmp://a' });
         const rev = db.getConfigRev();
 
         db.setOutputLastError(o.id, 'boom', 'crash');

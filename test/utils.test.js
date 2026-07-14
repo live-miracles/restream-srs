@@ -38,8 +38,6 @@ const {
 } = require('../src/utils/ffmpeg');
 const { rtmpPullUrl, srtPullUrl, rtmpPublishUrl, srtPublishUrl } = require('../src/utils/srs');
 
-const sink = (url, audioEncoding = 'copy') => ({ url, audioEncoding });
-
 after(() => {
     process.chdir(originalCwd);
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -62,23 +60,23 @@ describe('validateOutputUrl', () => {
 
 describe('buildFfmpegArgs', () => {
     test('includes input URL after -i', () => {
-        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')]);
+        const args = buildFfmpegArgs('rtmp://in', 'rtmp://out', 'copy');
         assert.equal(args[args.indexOf('-i') + 1], 'rtmp://in');
     });
 
     test('copy encoding copies video only (-c:v copy)', () => {
-        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')], 'copy');
+        const args = buildFfmpegArgs('rtmp://in', 'rtmp://out', 'copy', 'copy');
         assert.equal(args[args.indexOf('-c:v') + 1], 'copy');
     });
 
     test('unknown encoding falls back to video copy', () => {
-        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')], 'bogus');
+        const args = buildFfmpegArgs('rtmp://in', 'rtmp://out', 'copy', 'bogus');
         assert.equal(args[args.indexOf('-c:v') + 1], 'copy');
     });
 
-    test('FLV sinks normalize audio timestamps (asetpts+aac), SRT sinks copy', () => {
-        const flv = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')], 'copy');
-        const srt = buildFfmpegArgs('rtmp://in', [sink('srt://host:10080')], 'copy');
+    test('FLV destination normalizes audio timestamps (asetpts+aac), SRT destination copies', () => {
+        const flv = buildFfmpegArgs('rtmp://in', 'rtmp://out', 'copy', 'copy');
+        const srt = buildFfmpegArgs('rtmp://in', 'srt://host:10080', 'copy', 'copy');
         // FLV: re-encode with timestamp normalization
         assert.ok(flv.includes('-af'));
         assert.ok(flv.some((a) => String(a).includes('asetpts')));
@@ -88,166 +86,65 @@ describe('buildFfmpegArgs', () => {
         assert.equal(srt[srt.indexOf('-c:a') + 1], 'copy');
     });
 
-    test('mixed-protocol non-copy sinks fall back to per-output args', () => {
-        const args = buildFfmpegArgs(
-            'rtmp://in',
-            [sink('rtmp://out1'), sink('srt://out2:10080')],
-            '720p',
-        );
-        assert.ok(!args.includes('tee'));
-        assert.equal(args.filter((a) => a === 'libx264').length, 2);
-        assert.equal(args.filter((a) => a === 'flv').length, 1);
-        assert.equal(args.filter((a) => a === 'mpegts').length, 1);
-        assert.ok(args.some((a) => String(a).includes('asetpts')));
-        assert.equal(args[args.lastIndexOf('-c:a') + 1], 'copy');
-    });
-
-    test('tee path copies audio when all sinks are SRT', () => {
-        const args = buildFfmpegArgs(
-            'rtmp://in',
-            [sink('srt://out1:10080'), sink('srt://out2:10080')],
-            '720p',
-        );
-        assert.ok(!args.includes('-af'));
-        assert.equal(args[args.indexOf('-c:a') + 1], 'copy');
-    });
-
-    test('RTMP sink uses -f flv', () => {
-        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')]);
+    test('RTMP destination uses -f flv', () => {
+        const args = buildFfmpegArgs('rtmp://in', 'rtmp://out', 'copy');
         assert.equal(args[args.lastIndexOf('-f') + 1], 'flv');
     });
 
-    test('SRT sink uses -f mpegts', () => {
-        const args = buildFfmpegArgs('rtmp://in', [sink('srt://host:10080')]);
+    test('SRT destination uses -f mpegts', () => {
+        const args = buildFfmpegArgs('rtmp://in', 'srt://host:10080', 'copy');
         assert.equal(args[args.lastIndexOf('-f') + 1], 'mpegts');
     });
 
     test('720p encoding includes 1280:720 scale', () => {
-        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')], '720p');
+        const args = buildFfmpegArgs('rtmp://in', 'rtmp://out', 'copy', '720p');
         assert.ok(args.some((a) => String(a).includes('1280:720')));
     });
 
     test('1080p encoding includes 1920:1080 scale', () => {
-        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')], '1080p');
+        const args = buildFfmpegArgs('rtmp://in', 'rtmp://out', 'copy', '1080p');
         assert.ok(args.some((a) => String(a).includes('1920:1080')));
     });
 
     test('always includes -progress pipe:1 for bitrate monitoring', () => {
-        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')]);
+        const args = buildFfmpegArgs('rtmp://in', 'rtmp://out', 'copy');
         assert.equal(args[args.indexOf('-progress') + 1], 'pipe:1');
     });
 
     test('sets a 10-minute -rw_timeout before -i so a dead input exits', () => {
-        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')]);
+        const args = buildFfmpegArgs('rtmp://in', 'rtmp://out', 'copy');
         const i = args.indexOf('-rw_timeout');
         assert.ok(i >= 0 && i < args.indexOf('-i'));
         assert.equal(args[i + 1], String(10 * 60 * 1_000_000));
     });
 
     test('suppresses ffmpeg stderr stats spam (-nostats -loglevel warning)', () => {
-        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')]);
+        const args = buildFfmpegArgs('rtmp://in', 'rtmp://out', 'copy');
         assert.ok(args.includes('-nostats'));
         assert.equal(args[args.indexOf('-loglevel') + 1], 'warning');
     });
 
     test('FLV copy audio maps track 0 explicitly (not ffmpeg default selection)', () => {
-        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out', 'copy')]);
+        const args = buildFfmpegArgs('rtmp://in', 'rtmp://out', 'copy');
         const maps = args.filter((a, i) => args[i - 1] === '-map');
         assert.deepEqual(maps, ['0:v:0?', '0:a:0?']);
     });
 
     test('SRT copy audio adds no -map (ffmpeg default selection)', () => {
-        const args = buildFfmpegArgs('rtmp://in', [sink('srt://out:10080', 'copy')]);
+        const args = buildFfmpegArgs('rtmp://in', 'srt://out:10080', 'copy');
         assert.ok(!args.includes('-map'));
     });
 
-    test('selecting a track on an FLV sink maps video + that audio stream', () => {
-        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out', '1')]);
+    test('selecting a track on an FLV destination maps video + that audio stream', () => {
+        const args = buildFfmpegArgs('rtmp://in', 'rtmp://out', '1');
         const maps = args.filter((a, i) => args[i - 1] === '-map');
         assert.deepEqual(maps, ['0:v:0?', '0:a:1?']);
     });
 
-    test('fans out to multiple sinks in one command (copy encoding, per-output args)', () => {
-        const args = buildFfmpegArgs('rtmp://in', [
-            sink('rtmp://en', '0'),
-            sink('srt://fr:10080', '1'),
-        ]);
-        // input options precede -i, which precedes the fan-out sink URLs
-        assert.ok(args.indexOf('-rw_timeout') < args.indexOf('-i'));
-        assert.ok(args.indexOf('-i') < args.indexOf('rtmp://en'));
-        assert.ok(args.includes('rtmp://en'));
-        assert.ok(args.includes('srt://fr:10080'));
-        // one flv output and one mpegts output
-        assert.equal(args.filter((a) => a === 'flv').length, 1);
-        assert.equal(args.filter((a) => a === 'mpegts').length, 1);
-        // FLV sink maps a single track explicitly; SRT sink keeps its own map
-        assert.deepEqual(
-            args.filter((a, i) => args[i - 1] === '-map'),
-            ['0:v:0?', '0:a:0?', '0:v:0', '0:a:1'],
-        );
-    });
-
-    test('multiple sinks with non-copy encoding and uniform audio use tee muxer', () => {
-        const args = buildFfmpegArgs(
-            'rtmp://in',
-            [sink('rtmp://out1'), sink('rtmp://out2')],
-            '720p',
-        );
-        // tee muxer: exactly one -f tee
-        const fIndices = args.reduce((acc, a, i) => (a === '-f' ? [...acc, i] : acc), []);
-        assert.equal(fIndices.length, 1);
-        assert.equal(args[fIndices[0] + 1], 'tee');
-        // tee spec contains both URLs with correct flv format
-        const teeSpec = args[args.length - 1];
-        assert.ok(teeSpec.includes('[f=flv]rtmp://out1'));
-        assert.ok(teeSpec.includes('[f=flv]rtmp://out2'));
-        // encoding args appear only once
-        assert.equal(args.filter((a) => a === 'libx264').length, 1);
-        assert.ok(args.some((a) => String(a).includes('1280:720')));
-    });
-
-    test('multiple sinks with non-copy encoding and different audio fall back to per-output args', () => {
-        const args = buildFfmpegArgs(
-            'rtmp://in',
-            [sink('rtmp://out1', '0'), sink('rtmp://out2', '1')],
-            '720p',
-        );
-        // no tee muxer
-        assert.ok(!args.includes('tee'));
-        assert.ok(args.includes('rtmp://out1'));
-        assert.ok(args.includes('rtmp://out2'));
-        // encoding applied per sink
-        assert.equal(args.filter((a) => a === 'libx264').length, 2);
-    });
-
-    test('single sink with non-copy encoding does not use tee', () => {
-        const args = buildFfmpegArgs('rtmp://in', [sink('rtmp://out')], '1080p');
-        assert.ok(!args.includes('tee'));
-        assert.ok(args.some((a) => String(a).includes('1920:1080')));
-    });
-
-    test('SRT sink URL parameters are passed through unchanged', () => {
+    test('SRT destination URL parameters are passed through unchanged', () => {
         const url = 'srt://host:10080?mode=caller&latency=240000&streamid=x';
-        const args = buildFfmpegArgs('rtmp://in', [sink(url)]);
+        const args = buildFfmpegArgs('rtmp://in', url, 'copy');
         assert.ok(args.includes(url));
-    });
-
-    test('SRT sink URL parameters are preserved in the tee muxer path', () => {
-        const args = buildFfmpegArgs(
-            'rtmp://in',
-            [
-                sink('srt://out1:10080?mode=caller&latency=240000&streamid=a'),
-                sink('srt://out2:10080?mode=listener&latency=240000&streamid=b'),
-            ],
-            '720p',
-        );
-        const teeSpec = args[args.length - 1];
-        assert.ok(
-            teeSpec.includes('[f=mpegts]srt://out1:10080?mode=caller&latency=240000&streamid=a'),
-        );
-        assert.ok(
-            teeSpec.includes('[f=mpegts]srt://out2:10080?mode=listener&latency=240000&streamid=b'),
-        );
     });
 });
 

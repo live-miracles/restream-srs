@@ -6,8 +6,6 @@ import type {
     Pipeline,
     Output,
     PipelineLog,
-    OutputSink,
-    SinkInput,
     StreamKey,
     HostProbeTarget,
     OutputErrorRecord,
@@ -194,7 +192,8 @@ export function createDb(dbPath?: string): Db {
             name: row.name as string,
             desiredState: row.desired_state as 'running' | 'stopped',
             videoEncoding: (row.encoding as string) || 'copy',
-            sinks: JSON.parse(row.sinks as string) as OutputSink[],
+            url: row.url as string,
+            audioEncoding: (row.audio_encoding as string) || 'copy',
             lastError: toLastErrorString(latestCrashRecord(errorHistory)),
             hasErrorHistory: errorHistory.length > 0,
         };
@@ -210,17 +209,8 @@ export function createDb(dbPath?: string): Db {
         return row ? parseOutputErrorHistory(row.last_error as string | null) : [];
     }
 
-    function sinksToJson(sinks: SinkInput[]): string {
-        return JSON.stringify(
-            sinks.map((s) => ({
-                url: s.url,
-                audioEncoding: s.audioEncoding ?? 'copy',
-            })),
-        );
-    }
-
     // Monotonic config revision, bumped on every config-shaping write (pipelines,
-    // outputs, sinks, stream keys, settings). Clients compare the value delivered
+    // outputs, stream keys, settings). Clients compare the value delivered
     // with the health snapshot against the rev they loaded /api/config at; a higher
     // server rev means someone else edited the config and they should reload.
     //
@@ -255,12 +245,14 @@ export function createDb(dbPath?: string): Db {
         pipelineId,
         name,
         videoEncoding = 'copy',
-        sinks,
+        url,
+        audioEncoding = 'copy',
     }: {
         pipelineId: number;
         name: string;
         videoEncoding?: string;
-        sinks: SinkInput[];
+        url: string;
+        audioEncoding?: string;
     }): string {
         const seqRow = sqlite
             .prepare(
@@ -271,9 +263,9 @@ export function createDb(dbPath?: string): Db {
         const id = `${pipelineId}-${seq}`;
         sqlite
             .prepare(
-                'INSERT INTO outputs (id, pipeline_id, seq, name, desired_state, encoding, sinks) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                'INSERT INTO outputs (id, pipeline_id, seq, name, desired_state, encoding, url, audio_encoding) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
             )
-            .run(id, pipelineId, seq, name, 'stopped', videoEncoding, sinksToJson(sinks));
+            .run(id, pipelineId, seq, name, 'stopped', videoEncoding, url, audioEncoding);
         return id;
     }
 
@@ -435,10 +427,12 @@ export function createDb(dbPath?: string): Db {
             return getOutputsByPipeline(pipelineId);
         },
 
-        updateOutput(id: string, { name, videoEncoding, sinks }): Output | null {
+        updateOutput(id: string, { name, videoEncoding, url, audioEncoding }): Output | null {
             sqlite
-                .prepare('UPDATE outputs SET name = ?, encoding = ?, sinks = ? WHERE id = ?')
-                .run(name, videoEncoding, sinksToJson(sinks), id);
+                .prepare(
+                    'UPDATE outputs SET name = ?, encoding = ?, url = ?, audio_encoding = ? WHERE id = ?',
+                )
+                .run(name, videoEncoding, url, audioEncoding, id);
             bumpConfigRev();
             return getOutputById(id);
         },
