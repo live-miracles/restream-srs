@@ -30,6 +30,7 @@ export interface AudioTrackInfo {
     profile: string;
     language: string | null;
     title: string | null;
+    pid: number | null;
 }
 
 export interface SrsStream {

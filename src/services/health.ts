@@ -91,6 +91,7 @@ export interface HealthSnapshot {
 
 export interface SrsEvent {
     ts: number;
+    source: 'srs' | 'relay';
     type: 'up' | 'down';
     message: string;
 }
@@ -208,6 +209,14 @@ function probeError(result: ProbeResult | null, checkedAt: number): string {
     return `${prefix} ffprobe media validation failed`;
 }
 
+// ffprobe reports each mpegts elementary stream's PID as a hex string (e.g.
+// "0x65"); RTMP/FLV sources have no PID concept and leave this field absent.
+function parseMpegtsPid(id: unknown): number | null {
+    if (typeof id !== 'string') return null;
+    const pid = Number.parseInt(id, 16);
+    return Number.isFinite(pid) ? pid : null;
+}
+
 function parseFrameRate(str: unknown): number | null {
     if (!str) return null;
     const parts = String(str).split('/');
@@ -249,6 +258,7 @@ function runFfprobe(
                             profile: (s.profile as string) || '',
                             language: tags.language ?? null,
                             title: tags.title ?? null,
+                            pid: parseMpegtsPid(s.id),
                         };
                     });
                     resolve({
@@ -298,9 +308,13 @@ export function createHealthService(
 
     const srsEvents: SrsEvent[] = [];
     let prevSrsReachable: boolean | null = null;
+    // Only 'failed' (was reachable, now isn't) is worth a "down" event — 'stopped'
+    // also covers a relay that has simply never been started (no bonding pipeline
+    // configured), which would otherwise fire a spurious down event on every boot.
+    let prevRelayFailed = false;
 
-    function pushSrsEvent(type: 'up' | 'down', message: string): void {
-        srsEvents.push({ ts: Date.now(), type, message });
+    function pushSrsEvent(source: 'srs' | 'relay', type: 'up' | 'down', message: string): void {
+        srsEvents.push({ ts: Date.now(), source, type, message });
         if (srsEvents.length > MAX_SRS_EVENTS) srsEvents.shift();
     }
 
@@ -451,7 +465,7 @@ export function createHealthService(
             if (prevSrsReachable !== false) {
                 const reason = streamsResult.reason;
                 const msg = `Unreachable: ${reason instanceof Error ? reason.message : String(reason)}`;
-                pushSrsEvent('down', msg);
+                pushSrsEvent('srs', 'down', msg);
                 console.warn(`[srs] ${msg}`);
             }
         }
@@ -459,11 +473,23 @@ export function createHealthService(
             clients = clientsResult.value;
         }
         if (srsReachable && prevSrsReachable === false) {
-            pushSrsEvent('up', 'SRS is reachable again');
+            pushSrsEvent('srs', 'up', 'Reachable again');
             console.log('[srs] reachable again');
         }
         prevSrsReachable = srsReachable;
         inputState.setSrsReachable(srsReachable);
+
+        const relayStats = srtRelayService.getStats();
+        const relayFailed = relayStats.status === 'failed';
+        if (relayFailed && !prevRelayFailed) {
+            const msg = `Unreachable: ${relayStats.lastError ?? 'unknown error'}`;
+            pushSrsEvent('relay', 'down', msg);
+            console.warn(`[relay] ${msg}`);
+        } else if (!relayFailed && prevRelayFailed && relayStats.status === 'running') {
+            pushSrsEvent('relay', 'up', 'Reachable again');
+            console.log('[relay] reachable again');
+        }
+        prevRelayFailed = relayFailed;
 
         const liveByPath = new Map<string, SrsStream>();
         for (const s of streams) {
@@ -476,7 +502,6 @@ export function createHealthService(
             if (client.publish && client.id) publisherByCid.set(client.id, client);
         }
         const pipelinesHealth: Record<string, PipelineHealth> = {};
-        const relayStats = srtRelayService.getStats();
         let ffprobeStagger = 0;
         let restartStagger = 0;
         for (const pipeline of pipelines) {
