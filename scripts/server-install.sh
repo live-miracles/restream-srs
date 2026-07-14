@@ -39,13 +39,12 @@ SRT_FILENAME="srt-bonding-relay-linux-x86_64.tar.gz"
 SRT_SHA256="${SRT_SHA256:-c26588ecd90408a544ccababe2ecd78af09fe4741525c1a1726e58742270d88f}"
 SRT_URL="${SRT_URL:-https://github.com/live-miracles/srt-bonding-relay/releases/download/${SRT_RELEASE_TAG}/${SRT_FILENAME}}"
 
-# FFmpeg is pinned to a specific immutable BtbN build (a month-end autobuild tag,
-# which BtbN retains for 2 years) instead of the floating "latest" tag, so installs
-# are reproducible and the SHA256 stays valid. To bump: pick a newer month-end tag
-# from https://github.com/BtbN/FFmpeg-Builds/releases, then take the linux64-gpl
-# (non-shared) filename and its hash from that release's checksums.sha256.
+# Mirrored into our own releases since BtbN prunes autobuild tags after ~2 years.
+# To bump: grab a newer linux64-gpl build from BtbN/FFmpeg-Builds/releases, upload
+# it via `gh release create ffmpeg-n<ver> <file> --repo live-miracles/restream-srs`,
+# then update these values (and scripts/dev-server-install.sh) to match.
 FFMPEG_VERSION=7.1
-FFMPEG_BUILD_TAG="autobuild-2026-05-31-13-22"
+FFMPEG_BUILD_TAG="ffmpeg-n7.1.4-7-gadcf20da26"
 FFMPEG_FILENAME="ffmpeg-n7.1.4-7-gadcf20da26-linux64-gpl-7.1.tar.xz"
 FFMPEG_SHA256="ce46c711e3ff79ae1e9318bf7daa54c77f41ce37b71010c44f4a0b38f1d7a29f"
 
@@ -87,7 +86,7 @@ else
 fi
 
 step "3/9 FFmpeg $FFMPEG_VERSION"
-FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_BUILD_TAG}/${FFMPEG_FILENAME}"
+FFMPEG_URL="https://github.com/live-miracles/restream-srs/releases/download/${FFMPEG_BUILD_TAG}/${FFMPEG_FILENAME}"
 
 if /usr/local/bin/ffmpeg -version 2>/dev/null | grep -q "ffmpeg version n${FFMPEG_VERSION}"; then
     echo "FFmpeg $FFMPEG_VERSION already installed."
