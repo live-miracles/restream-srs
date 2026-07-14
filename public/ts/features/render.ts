@@ -826,13 +826,14 @@ function renderInputStats(input: InputHealth): string {
                 ? `
         <h3 class="mt-3 text-sm font-semibold opacity-60">Audio <span class="font-normal">(${input.audioTracks.length} track${input.audioTracks.length > 1 ? 's' : ''})</span></h3>
         <table class="table table-xs mt-1">
-            <thead><tr><th>#</th><th>Codec</th><th>Ch</th><th>Sample Rate</th><th>Profile</th>${input.audioTracks.some((t) => t.language || t.title) ? '<th>Label</th>' : ''}</tr></thead>
+            <thead><tr><th>#</th>${input.audioTracks.some((t) => t.pid != null) ? '<th>PID</th>' : ''}<th>Codec</th><th>Ch</th><th>Freq</th><th>Profile</th>${input.audioTracks.some((t) => t.language || t.title) ? '<th>Label</th>' : ''}</tr></thead>
             <tbody>
                 ${input.audioTracks
                     .map((t) => {
                         const label = escapeHtml([t.language, t.title].filter(Boolean).join(' — '));
                         return `<tr>
                         <td class="font-mono">${t.index + 1}</td>
+                        ${input.audioTracks.some((x) => x.pid != null) ? `<td class="font-mono">${t.pid ?? '—'}</td>` : ''}
                         <td>${t.codec || '—'}</td>
                         <td>${t.channels || '—'}</td>
                         <td>${t.sampleRate ? `${(t.sampleRate / 1000).toFixed(1)} kHz` : '—'}</td>
@@ -1084,11 +1085,10 @@ function renderOverview(): void {
         return `${codec || '—'} ${channels ? `${channels}ch` : '—'}${sr ? ` @${sr}` : ''}${label ? ` <span class="opacity-40">${label}</span>` : ''}`;
     };
 
-    // One "Stream specification" cell replaces the separate Proto/V.Codec/Resolution/FPS/Scan/
-    // A.Codec/Ch/Sample Rate columns. Multiple audio tracks stack as extra lines within the same
-    // cell instead of extra table rows.
+    // One "Stream specification" cell replaces the separate V.Codec/Resolution/FPS/Scan/
+    // A.Codec/Ch/Sample Rate columns (protocol has its own Type column). Multiple audio
+    // tracks stack as extra lines within the same cell instead of extra table rows.
     const streamSpec = (
-        protocol: string | null,
         video: Pick<
             VideoInfo,
             'codec' | 'width' | 'height' | 'fps' | 'fieldOrder' | 'profile' | 'level'
@@ -1114,10 +1114,12 @@ function renderOverview(): void {
                     ]
                   : [];
         if (!vSpec && audioLines.length === 0) return '—';
-        const head = [protocol, vSpec].filter(Boolean).join(' ');
-        if (audioLines.length === 0) return head || '—';
-        return [head, ...audioLines].filter(Boolean).join('<br>');
+        if (audioLines.length === 0) return vSpec || '—';
+        return [vSpec, ...audioLines].filter(Boolean).join('<br>');
     };
+
+    const typeBadge = (protocol: string | null): string =>
+        protocol ? `<span class="badge badge-sm badge-outline">${protocol}</span>` : '—';
 
     const statusBg = (error: boolean, warn: boolean): string =>
         error
@@ -1217,7 +1219,7 @@ function renderOverview(): void {
     const inputActiveCount = state.pipelines.filter((p) => !isOffline(inputStatus(p.input))).length;
     let inputRows = '';
     if (state.pipelines.length === 0) {
-        inputRows = `<tr><td colspan="6" class="py-4 text-center opacity-50">No pipelines yet.</td></tr>`;
+        inputRows = `<tr><td colspan="7" class="py-4 text-center opacity-50">No pipelines yet.</td></tr>`;
     } else {
         for (const p of state.pipelines) {
             const inp = p.input;
@@ -1234,20 +1236,21 @@ function renderOverview(): void {
                       : 'RTMP'
                 : null;
             const audioTracks = inp.audioTracks.length > 0 ? inp.audioTracks : null;
-            const spec = streamSpec(protocolLabel, inp.video, audioTracks, inp.audio);
+            const spec = streamSpec(inp.video, audioTracks, inp.audio);
             inputRows += `<tr class="hover" ${statusBg(isError, isWarn)}>
                 <td class="overview-name-col font-semibold">${escapeHtml(p.name)}</td>
                 <td>${overviewStatusBadge(st)}</td>
                 <td>${renderOverviewIssues(inputIssues(inp))}</td>
                 <td class="font-mono text-xs">${inp.live ? formatUptime(inp.uptimeMs) : '—'}</td>
                 <td class="font-mono text-xs">${inp.connected ? formatBitrate(inp.recvBitrateKbps) : '—'}</td>
+                <td>${typeBadge(protocolLabel)}</td>
                 <td class="font-mono text-xs">${spec}</td>
             </tr>`;
         }
         if (problemsOnly && inputRows === '') {
-            inputRows = `<tr><td colspan="6" class="py-4 text-center opacity-50">No input issues.</td></tr>`;
+            inputRows = `<tr><td colspan="7" class="py-4 text-center opacity-50">No input issues.</td></tr>`;
         } else if (activeOnly && inputRows === '') {
-            inputRows = `<tr><td colspan="6" class="py-4 text-center opacity-50">No active inputs.</td></tr>`;
+            inputRows = `<tr><td colspan="7" class="py-4 text-center opacity-50">No active inputs.</td></tr>`;
         }
     }
 
@@ -1262,7 +1265,7 @@ function renderOverview(): void {
     );
     let outputRows = '';
     if (totalOuts === 0) {
-        outputRows = `<tr><td colspan="7" class="py-4 text-center opacity-50">No outputs yet.</td></tr>`;
+        outputRows = `<tr><td colspan="8" class="py-4 text-center opacity-50">No outputs yet.</td></tr>`;
     } else {
         for (const p of state.pipelines) {
             for (const o of p.outs) {
@@ -1278,19 +1281,12 @@ function renderOverview(): void {
                     o.failures > 0
                         ? `<span class="text-error inline-flex items-center align-middle" title="${o.failures} error${o.failures === 1 ? '' : 's'} since this output was last started">${ICON_ERROR}</span>`
                         : '';
-                const protocolLabel = isOn
-                    ? o.sinks[0]?.url.startsWith('srt://')
+                const protocolLabel = o.sinks[0]
+                    ? o.sinks[0].url.startsWith('srt://')
                         ? 'SRT'
-                        : o.sinks[0]
-                          ? 'RTMP'
-                          : null
+                        : 'RTMP'
                     : null;
-                const spec = streamSpec(
-                    protocolLabel,
-                    media?.video ?? null,
-                    null,
-                    media?.audio ?? null,
-                );
+                const spec = streamSpec(media?.video ?? null, null, media?.audio ?? null);
                 outputRows += `<tr class="hover" ${statusBg(st === 'error', st === 'warn')}>
                     <td class="overview-name-col"><span class="opacity-40 text-xs">${escapeHtml(p.name)} ·</span> ${escapeHtml(o.name)} ${errorBadge}</td>
                     <td>${badge}</td>
@@ -1298,14 +1294,15 @@ function renderOverview(): void {
                     <td class="font-mono text-xs">${outUptimeMs !== null ? formatUptime(outUptimeMs) : '—'}</td>
                     ${td(formatBitrate(o.bitrateKbps))}
                     <td class="font-mono text-xs ${memorySeverityClass(outputMemoryPercent(o))}">${formatOutputMemory(o) ?? '—'}</td>
+                    <td>${typeBadge(protocolLabel)}</td>
                     <td class="font-mono text-xs">${spec}</td>
                 </tr>`;
             }
         }
         if (problemsOnly && outputRows === '') {
-            outputRows = `<tr><td colspan="7" class="py-4 text-center opacity-50">No output issues.</td></tr>`;
+            outputRows = `<tr><td colspan="8" class="py-4 text-center opacity-50">No output issues.</td></tr>`;
         } else if (activeOnly && outputRows === '') {
-            outputRows = `<tr><td colspan="7" class="py-4 text-center opacity-50">No active outputs.</td></tr>`;
+            outputRows = `<tr><td colspan="8" class="py-4 text-center opacity-50">No active outputs.</td></tr>`;
         }
     }
 
@@ -1381,14 +1378,14 @@ function renderOverview(): void {
         <h2 class="mb-2 text-lg font-bold">Inputs <span class="badge badge-neutral badge-sm ml-1">${state.pipelines.length}</span></h2>
         <div class="overflow-x-auto mb-6">
             <table class="table table-sm">
-                ${thead(['Pipeline', 'Status', 'Issues', 'Uptime', 'Bitrate', 'Stream Specification'])}
+                ${thead(['Pipeline', 'Status', 'Issues', 'Uptime', 'Bitrate', 'Type', 'Stream Specification'])}
                 <tbody>${inputRows}</tbody>
             </table>
         </div>
         <h2 class="mb-2 text-lg font-bold">Outputs <span class="badge badge-neutral badge-sm ml-1">${totalOuts}</span></h2>
         <div class="overflow-x-auto">
             <table class="table table-sm">
-                ${thead(['Pipeline · Output', 'Status', 'Issues', 'Uptime', 'Bitrate', 'RAM', 'Stream Specification'])}
+                ${thead(['Pipeline · Output', 'Status', 'Issues', 'Uptime', 'Bitrate', 'RAM', 'Type', 'Stream Specification'])}
                 <tbody>${outputRows}</tbody>
             </table>
         </div>`;

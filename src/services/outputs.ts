@@ -3,6 +3,7 @@ import type { ChildProcess } from 'child_process';
 import fs from 'fs';
 import { buildFfmpegArgs, validateOutputUrl } from '../utils/ffmpeg.js';
 import { readAppConfig } from '../utils/appConfig.js';
+import { red, yellow, green } from '../utils/ansiColor.js';
 import type { Db, Output } from '../types.js';
 import type { InputState } from './inputState.js';
 
@@ -174,6 +175,11 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
     function scheduleRetry(output: Output): void {
         const r = getRetry(output.id);
         const delayMs = RETRY_DELAYS_MS[Math.min(r.failures - 1, RETRY_DELAYS_MS.length - 1)];
+        console.warn(
+            yellow(
+                `[outputs] ${output.id} (${output.name}) retry ${r.failures} scheduled in ${delayMs}ms`,
+            ),
+        );
         scheduleTryStart(output.id, delayMs);
     }
 
@@ -207,7 +213,7 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
             }
             await startJob(output);
         } catch (err) {
-            console.warn(`[outputs] ${outputId} auto-start failed:`, err);
+            console.warn(red(`[outputs] ${outputId} auto-start failed:`), err);
         } finally {
             startLocks.delete(outputId);
         }
@@ -485,11 +491,12 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
     }
 
     function maybeKillForSocketWarning(
-        outputId: string,
+        output: Output,
         proc: ChildProcess,
         reason: string,
         now: number,
     ): boolean {
+        const outputId = output.id;
         const warning = recordSocketWarning(outputId, reason, now);
         if (now - warning.badSinceMs <= OUTPUT_SOCKET_GRACE_MS) return false;
 
@@ -502,7 +509,11 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
         } catch {
             /* non-critical; still restart the stuck process */
         }
-        console.warn(`[outputs] ${outputId} socket unhealthy: ${reason}, killing pid=${proc.pid}`);
+        console.warn(
+            yellow(
+                `[outputs] ${outputId} (${output.name}) socket unhealthy: ${reason}, killing pid=${proc.pid}`,
+            ),
+        );
         watchdogKills.add(outputId);
         void killProcess(outputId, proc, false);
         return true;
@@ -535,7 +546,7 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
             if (now - startedAtMs >= OUTPUT_SOCKET_WARMUP_MS) {
                 const socketWarning = destinationSocketWarning(output, proc);
                 if (socketWarning) {
-                    if (maybeKillForSocketWarning(outputId, proc, socketWarning, now)) continue;
+                    if (maybeKillForSocketWarning(output, proc, socketWarning, now)) continue;
                 } else {
                     socketWarnings.delete(outputId);
                 }
@@ -553,11 +564,13 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
                         /* non-critical; still restart the runaway process */
                     }
                     console.warn(
-                        `[outputs] ${outputId} memory limit exceeded: rss=${Math.round(
-                            rssBytes / (1024 * 1024),
-                        )}MB (limit ${Math.round(
-                            limitBytes / (1024 * 1024),
-                        )}MB), killing pid=${proc.pid} for retry`,
+                        yellow(
+                            `[outputs] ${outputId} (${output.name}) memory limit exceeded: rss=${Math.round(
+                                rssBytes / (1024 * 1024),
+                            )}MB (limit ${Math.round(
+                                limitBytes / (1024 * 1024),
+                            )}MB), killing pid=${proc.pid} for retry`,
+                        ),
                     );
                     watchdogKills.add(outputId);
                     void killProcess(outputId, proc, false);
@@ -585,9 +598,11 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
                 /* non-critical; still restart the stuck process */
             }
             console.warn(
-                `[outputs] ${outputId} stalled: no output progress for ${Math.round(
-                    (now - p.lastOutputProgressAtMs) / 1000,
-                )}s, killing pid=${proc.pid} for retry`,
+                yellow(
+                    `[outputs] ${outputId} (${output.name}) stalled: no output progress for ${Math.round(
+                        (now - p.lastOutputProgressAtMs) / 1000,
+                    )}s, killing pid=${proc.pid} for retry`,
+                ),
             );
             watchdogKills.add(outputId);
             void killProcess(outputId, proc, false);
@@ -646,7 +661,7 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
             lastBitrateKbps: null,
             stderrTail: '',
         });
-        console.log(`[outputs] ${output.id} started pid=${child.pid}`);
+        console.log(green(`[outputs] ${output.id} (${output.name}) started pid=${child.pid}`));
 
         let buf = '';
         child.stdout?.on('data', (d: Buffer) => {
@@ -666,7 +681,7 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
         });
 
         child.on('error', (err) => {
-            console.warn(`[outputs] ${output.id} error:`, err.message);
+            console.warn(red(`[outputs] ${output.id} error:`), err.message);
         });
 
         child.on('close', (code, signal) => {
@@ -675,8 +690,11 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
             const status = wasStop ? 'stopped' : 'failed';
             processes.delete(output.id);
             setStatus(output.id, status, null);
+            const exitColor = status === 'failed' ? red : green;
             console.log(
-                `[outputs] ${output.id} exited code=${code} signal=${signal} status=${status}`,
+                exitColor(
+                    `[outputs] ${output.id} (${output.name}) exited code=${code} signal=${signal} status=${status}`,
+                ),
             );
 
             if (!wasStop) {

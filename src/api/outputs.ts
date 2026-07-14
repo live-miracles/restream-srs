@@ -2,6 +2,7 @@ import type { Express } from 'express';
 import { validateOutputUrl, validateAudioEncoding, ENCODINGS } from '../utils/ffmpeg.js';
 import type { Db, SinkInput } from '../types.js';
 import type { OutputService } from '../services/outputs.js';
+import { cyan } from '../utils/ansiColor.js';
 
 // Validate the sinks array from the request body. Each sink needs a valid URL
 // and audio track selection; multiple tracks are only valid for SRT sinks since
@@ -101,6 +102,11 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
 
         db.setDesiredStateForPipeline(pipelineId, 'running');
         const scheduled = outputService.restartPipelineOutputs(pipelineId);
+        console.log(
+            cyan(
+                `[outputs] user start-all requested: pipeline=${pipelineId} scheduled=${scheduled}`,
+            ),
+        );
         return res.json({ ok: true, scheduled });
     });
 
@@ -113,6 +119,11 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
         const outputs = db.listOutputsForPipeline(pipelineId);
         db.setDesiredStateForPipeline(pipelineId, 'stopped');
         for (const o of outputs) outputService.stop(o.id);
+        console.log(
+            cyan(
+                `[outputs] user stop-all requested: pipeline=${pipelineId} count=${outputs.length}`,
+            ),
+        );
         return res.json({ ok: true });
     });
 
@@ -177,6 +188,7 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
             return res.status(404).json({ error: 'Output not found' });
         }
 
+        console.log(cyan(`[outputs] user delete requested: ${outId} (${output.name})`));
         await outputService.stopAndWait(outId);
         outputService.clearRetryState(outId);
         db.deleteOutput(outId);
@@ -200,6 +212,7 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
             return res.status(404).json({ error: 'Output not found' });
         }
 
+        console.log(cyan(`[outputs] user start requested: ${outId} (${output.name})`));
         try {
             db.setOutputDesiredState(outId, 'running');
             await outputService.start(outId);
@@ -221,6 +234,7 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
             return res.status(404).json({ error: 'Output not found' });
         }
 
+        console.log(cyan(`[outputs] user stop requested: ${outId} (${output.name})`));
         db.setOutputDesiredState(outId, 'stopped');
         outputService.stop(outId);
         return res.json({ ok: true });

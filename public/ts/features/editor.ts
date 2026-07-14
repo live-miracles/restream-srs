@@ -546,6 +546,7 @@ function audioOptionsHtml(tracks: AudioTrackInfo[], selected: string): string {
         const val = String(t.index);
         seen.add(val);
         const parts = [`Track ${t.index + 1}`];
+        if (t.pid != null) parts.push(`[pid: ${t.pid}]`);
         if (t.language) parts.push(`(${t.language})`);
         if (t.title) parts.push(`— ${t.title}`);
         parts.push(`· ${t.codec} ${t.channels}ch`);
@@ -1016,8 +1017,8 @@ export function showRelayError(pipelineId: string): void {
 }
 
 const LOG_TERMINALS: { label: string; elId: string; key: 'srs' | 'dashboard' | 'relay' }[] = [
-    { label: 'SRS', elId: 'srs-log-tail', key: 'srs' },
     { label: 'Dashboard', elId: 'dashboard-log-tail', key: 'dashboard' },
+    { label: 'SRS', elId: 'srs-log-tail', key: 'srs' },
     { label: 'Relay', elId: 'relay-log-tail', key: 'relay' },
 ];
 
@@ -1095,8 +1096,15 @@ export async function showSrsLogs(): Promise<void> {
         return section;
     };
 
-    const srsTerminal = LOG_TERMINALS[0];
-    let html = renderTerminal(srsTerminal.label, srsTerminal.elId, data[srsTerminal.key]);
+    let html = '';
+    for (const { label, elId, key } of LOG_TERMINALS) {
+        html += renderTerminal(label, elId, data[key]);
+    }
+
+    const CONNECTIVITY_SOURCE_LABEL: Record<'srs' | 'relay', string> = {
+        srs: 'SRS',
+        relay: 'SRT Bonding Relay',
+    };
 
     html += '<p class="text-xs font-semibold uppercase opacity-50 mt-4 mb-2">Connectivity</p>';
     if (data.events.length === 0) {
@@ -1110,16 +1118,13 @@ export async function showSrsLogs(): Promise<void> {
                     (e) =>
                         `<div class="flex items-center gap-3 border-b border-base-200 py-1.5 last:border-0">
                             <span class="badge badge-xs leading-none shrink-0 uppercase ${e.type === 'up' ? 'badge-success' : 'badge-error'}">${e.type}</span>
+                            <span class="badge badge-xs badge-outline shrink-0">${CONNECTIVITY_SOURCE_LABEL[e.source]}</span>
                             <span class="opacity-70 shrink-0">${fmtTs(e.ts)}</span>
                             <span class="opacity-80">${esc(e.message)}</span>
                         </div>`,
                 )
                 .join('') +
             '</div>';
-    }
-
-    for (const { label, elId, key } of LOG_TERMINALS.slice(1)) {
-        html += renderTerminal(label, elId, data[key]);
     }
 
     contentEl.innerHTML = html;

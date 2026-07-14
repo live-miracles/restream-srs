@@ -98,6 +98,7 @@ export interface AudioTrackInfo {
     profile: string;
     language: string | null;
     title: string | null;
+    pid: number | null;
 }
 
 export interface OutputStatus {
@@ -169,6 +170,7 @@ export interface SrtBondingStatus {
 
 export interface SrsLogEvent {
     ts: number;
+    source: 'srs' | 'relay';
     type: 'up' | 'down';
     message: string;
 }
