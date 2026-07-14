@@ -150,7 +150,7 @@ function outStatus(o: OutputView, input: InputHealth): OutStatus {
     if (o.desiredState === 'stopped') return 'off';
     if (o.status === 'failed') return 'error';
     if (o.status === 'running') {
-        if (!input.live) return 'error';
+        if (!input.live) return 'warn';
         if (o.warningReason !== null) return 'warn';
         if (o.bitrateKbps !== null && o.bitrateKbps >= LOW_BITRATE_KBPS) return 'good';
         if (o.bitrateKbps === null && hasCurrentOutputError(o)) return 'error';
@@ -320,9 +320,6 @@ function outputIssues(o: OutputView, input: InputHealth): OverviewIssue[] {
                 },
             ];
         }
-        if (!input.live && o.status === 'running') {
-            return [{ severity: 'error', message: 'Output is running but input is not live.' }];
-        }
         if (hasCurrentOutputError(o)) {
             return [
                 {
@@ -337,6 +334,9 @@ function outputIssues(o: OutputView, input: InputHealth): OverviewIssue[] {
     }
 
     if (o.warningReason) return [{ severity: 'warning', message: o.warningReason }];
+    if (!input.live && o.status === 'running') {
+        return [{ severity: 'warning', message: 'Output is running but input is not live.' }];
+    }
     if (o.status === 'running' && o.bitrateKbps === null) {
         return [
             { severity: 'warning', message: 'Output is running but no bitrate is reported yet.' },
@@ -1450,7 +1450,8 @@ function drawProbeChart(
     const toRgba = (c: string, a: number): string => {
         if (c.startsWith('rgb(')) return c.replace('rgb(', 'rgba(').replace(')', `, ${a})`);
         if (c.startsWith('#')) {
-            const hex = c.length === 4 ? c.replace(/[0-9a-f]/gi, (ch) => ch + ch).slice(1) : c.slice(1);
+            const hex =
+                c.length === 4 ? c.replace(/[0-9a-f]/gi, (ch) => ch + ch).slice(1) : c.slice(1);
             const num = parseInt(hex, 16);
             return `rgba(${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255}, ${a})`;
         }
