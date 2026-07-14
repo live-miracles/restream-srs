@@ -4,6 +4,12 @@ const SRS_CLIENT_FETCH_TIMEOUT_MS = 3000;
 const SRS_CLIENT_HEALTH_FETCH_TIMEOUT_MS = 1000;
 const SRS_CLIENT_HEALTH_FETCH_COUNT = 1000;
 const SRS_STREAMS_FETCH_TIMEOUT_MS = 5000;
+// SRS's /api/v1/streams silently caps the response at 10 entries unless an
+// explicit count is given (undocumented default; see ossrs/srs#4358 and
+// ossrs/srs#4580) — with more than 10 concurrent streams across pipelines,
+// whichever ones fall outside that window vanish from the response and their
+// pipelines misread as input-not-live.
+const SRS_STREAMS_FETCH_COUNT = 1000;
 
 export interface SrsStreamVideo {
     codec: string;
@@ -112,10 +118,13 @@ export async function fetchSrsClientsForHealth(): Promise<SrsClient[]> {
 
 export async function fetchSrsStreams(): Promise<SrsStream[]> {
     const srsApiUrl = readSrsConfigValues().apiUrl;
-    const res = await fetch(`${srsApiUrl}/api/v1/streams/`, {
-        signal: AbortSignal.timeout(SRS_STREAMS_FETCH_TIMEOUT_MS),
-        headers: { Connection: 'close' },
-    });
+    const res = await fetch(
+        `${srsApiUrl}/api/v1/streams/?start=0&count=${SRS_STREAMS_FETCH_COUNT}`,
+        {
+            signal: AbortSignal.timeout(SRS_STREAMS_FETCH_TIMEOUT_MS),
+            headers: { Connection: 'close' },
+        },
+    );
     if (!res.ok) throw new Error(`SRS API ${res.status}`);
     const data = (await res.json()) as { code: number; streams: SrsStream[] };
     return data.streams || [];

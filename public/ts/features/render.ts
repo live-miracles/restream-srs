@@ -2442,6 +2442,14 @@ function initHoverTooltips(): void {
         if (related && trigger.contains(related)) return;
         hide();
     });
+
+    // Pipeline/output lists re-render on every poll by swapping innerHTML,
+    // which can detach the currently-hovered trigger without ever firing a
+    // mouseout — leaving the portal stuck open with stale content. Catch that
+    // by checking connectivity whenever the DOM churns.
+    new MutationObserver(() => {
+        if (activeTrigger && !activeTrigger.isConnected) hide();
+    }).observe(document.body, { childList: true, subtree: true });
 }
 
 initHoverTooltips();
