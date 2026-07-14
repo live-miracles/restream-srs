@@ -18,7 +18,7 @@ elif [[ -e "$RELAY_REPO_DIR" ]]; then
     echo "ERROR: relay repo path exists but is not a git repo: $RELAY_REPO_DIR" >&2
     exit 1
 else
-    if ! command -v git &>/dev/null; then
+    if ! command -v git &> /dev/null; then
         echo "ERROR: git is required to clone $RELAY_REPO_URL" >&2
         exit 1
     fi

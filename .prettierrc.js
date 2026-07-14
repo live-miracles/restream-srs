@@ -6,7 +6,7 @@ module.exports = {
     semi: true,
     trailingComma: 'all',
     bracketSameLine: true,
-    plugins: ['prettier-plugin-tailwindcss'],
+    plugins: ['prettier-plugin-sh', 'prettier-plugin-tailwindcss'],
     overrides: [
         {
             files: '*.html',

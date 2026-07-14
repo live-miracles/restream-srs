@@ -48,7 +48,7 @@ verify_sha256() {
         return
     fi
     local actual
-    if command -v sha256sum &>/dev/null; then
+    if command -v sha256sum &> /dev/null; then
         actual="$(sha256sum "$file" | awk '{print $1}')"
     else
         actual="$(shasum -a 256 "$file" | awk '{print $1}')"
@@ -76,19 +76,19 @@ if [[ -n "${SRS_LOCAL_BIN:-}" ]]; then
     echo "Installed from local build: $("$SRS_OUT" -v 2>&1 | head -1)"
 fi
 
-if ! command -v curl &>/dev/null; then
+if ! command -v curl &> /dev/null; then
     echo "ERROR: curl is required" >&2
     exit 1
 fi
-if ! command -v unzip &>/dev/null; then
+if ! command -v unzip &> /dev/null; then
     echo "ERROR: unzip is required (apt install unzip)" >&2
     exit 1
 fi
-if ! command -v tar &>/dev/null; then
+if ! command -v tar &> /dev/null; then
     echo "ERROR: tar is required" >&2
     exit 1
 fi
-if ! command -v xz &>/dev/null; then
+if ! command -v xz &> /dev/null; then
     echo "ERROR: xz is required (apt install xz-utils)" >&2
     exit 1
 fi
