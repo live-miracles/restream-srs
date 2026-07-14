@@ -11,11 +11,6 @@ export interface Pipeline {
     streamKeyId: number;
 }
 
-export interface OutputSink {
-    url: string;
-    audioEncoding: string;
-}
-
 export interface HostProbeTarget {
     slot: number;
     label: string;
@@ -37,11 +32,6 @@ export interface HostProbeSummary {
     historySampleCount: number;
     historyFailureCount: number;
     averageLatencyMs: number | null;
-}
-
-export interface SinkInput {
-    url: string;
-    audioEncoding?: string;
 }
 
 export interface PipelineLog {
@@ -73,7 +63,8 @@ export interface Output {
     name: string;
     desiredState: 'running' | 'stopped';
     videoEncoding: string;
-    sinks: OutputSink[];
+    url: string;
+    audioEncoding: string;
     lastError: string | null;
     hasErrorHistory: boolean;
 }
@@ -99,7 +90,8 @@ export interface Db {
         pipelineId: number;
         name: string;
         videoEncoding?: string;
-        sinks: SinkInput[];
+        url: string;
+        audioEncoding?: string;
     }): Output;
     // All-or-nothing batch create (single transaction, single configRev bump).
     createOutputs(
@@ -107,7 +99,8 @@ export interface Db {
             pipelineId: number;
             name: string;
             videoEncoding?: string;
-            sinks: SinkInput[];
+            url: string;
+            audioEncoding?: string;
         }[],
     ): Output[];
     getOutput(id: string): Output | null;
@@ -124,7 +117,8 @@ export interface Db {
         params: {
             name: string;
             videoEncoding: string;
-            sinks: SinkInput[];
+            url: string;
+            audioEncoding: string;
         },
     ): Output | null;
     setOutputDesiredState(id: string, desiredState: 'running' | 'stopped'): Output | null;

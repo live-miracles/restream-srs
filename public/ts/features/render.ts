@@ -425,10 +425,9 @@ function deriveOutputMedia(
           }
         : null;
 
-    const firstSink = output.sinks[0] ?? null;
-    if (!firstSink) return { video, audio: null };
+    if (!output.url) return { video, audio: null };
 
-    if (!firstSink.url.startsWith('srt://')) {
+    if (!output.url.startsWith('srt://')) {
         return {
             video,
             audio: {
@@ -439,7 +438,7 @@ function deriveOutputMedia(
         };
     }
 
-    const track = selectedAudioTrack(input.audioTracks, firstSink.audioEncoding);
+    const track = selectedAudioTrack(input.audioTracks, output.audioEncoding);
     if (track) {
         return {
             video,
@@ -1281,11 +1280,7 @@ function renderOverview(): void {
                     o.failures > 0
                         ? `<span class="text-error inline-flex items-center align-middle" title="${o.failures} error${o.failures === 1 ? '' : 's'} since this output was last started">${ICON_ERROR}</span>`
                         : '';
-                const protocolLabel = o.sinks[0]
-                    ? o.sinks[0].url.startsWith('srt://')
-                        ? 'SRT'
-                        : 'RTMP'
-                    : null;
+                const protocolLabel = o.url ? (o.url.startsWith('srt://') ? 'SRT' : 'RTMP') : null;
                 const spec = streamSpec(media?.video ?? null, null, media?.audio ?? null);
                 outputRows += `<tr class="hover" ${statusBg(st === 'error', st === 'warn')}>
                     <td class="overview-name-col"><span class="opacity-40 text-xs">${escapeHtml(p.name)} ·</span> ${escapeHtml(o.name)} ${errorBadge}</td>
@@ -2113,43 +2108,27 @@ function renderOutputCard(
             `<span class="badge badge-sm whitespace-nowrap ${memCls}" title="ffmpeg RSS vs watchdog memory limit">${formatOutputMemory(o)} RAM</span>`,
         );
     }
-    const fmtSink = (s: (typeof o.sinks)[0]) => {
+    let inlineSink = '';
+    if (o.url) {
         const trackBadge =
-            s.audioEncoding !== 'copy'
-                ? ` <span class="badge badge-xs badge-accent badge-soft whitespace-nowrap">${s.audioEncoding
+            o.audioEncoding !== 'copy'
+                ? ` <span class="badge badge-xs badge-accent badge-soft whitespace-nowrap">${o.audioEncoding
                       .split(',')
                       .map((t) => `T${parseInt(t) + 1}`)
                       .join('+')}</span>`
                 : '';
-        const restreamLabel = restreamSinkLabel(s.url);
+        const restreamLabel = restreamSinkLabel(o.url);
         const display =
             restreamLabel ??
-            (s.url.length > 27 ? s.url.slice(0, 25) + '...' + s.url.slice(-2) : s.url);
-        const dupRefs = dupUrls.get(s.url);
+            (o.url.length > 27 ? o.url.slice(0, 25) + '...' + o.url.slice(-2) : o.url);
+        const dupRefs = dupUrls.get(o.url);
         const dupWarnBtn = dupRefs
-            ? `<button class="btn btn-xs btn-ghost text-warning p-0 leading-none shrink-0" data-action="dup-warn" data-dup-url="${escapeHtml(s.url)}" data-dup-info="${escapeHtml(JSON.stringify(dupRefs))}" title="Duplicate destination — click for details">${ICON_WARN}</button>`
+            ? `<button class="btn btn-xs btn-ghost text-warning p-0 leading-none shrink-0" data-action="dup-warn" data-dup-url="${escapeHtml(o.url)}" data-dup-info="${escapeHtml(JSON.stringify(dupRefs))}" title="Duplicate destination — click for details">${ICON_WARN}</button>`
             : '';
-        return { display, trackBadge, dupRefs, dupWarnBtn };
-    };
-
-    let inlineSink = '';
-    let belowSinks = '';
-    if (o.sinks.length === 1) {
-        const { display, trackBadge, dupRefs, dupWarnBtn } = fmtSink(o.sinks[0]);
         const codeClass = dupRefs
             ? 'text-xs font-normal text-warning whitespace-nowrap'
             : 'text-xs font-normal opacity-60 whitespace-nowrap';
-        inlineSink = `<code class="${codeClass}" title="${escapeHtml(o.sinks[0].url)}">${display}</code>${dupWarnBtn}${trackBadge}`;
-    } else if (o.sinks.length > 1) {
-        belowSinks = `<div class="space-y-0.5 pl-2">${o.sinks
-            .map((s) => {
-                const { display, trackBadge, dupRefs, dupWarnBtn } = fmtSink(s);
-                const codeClass = dupRefs
-                    ? 'text-xs font-normal text-warning'
-                    : 'text-xs font-normal opacity-60';
-                return `<div class="flex items-center gap-1 min-w-0"><code class="${codeClass}" title="${escapeHtml(s.url)}">${display}</code>${dupWarnBtn}${trackBadge}</div>`;
-            })
-            .join('')}</div>`;
+        inlineSink = `<code class="${codeClass}" title="${escapeHtml(o.url)}">${display}</code>${dupWarnBtn}${trackBadge}`;
     }
 
     const showCurrentError = hasCurrentOutputError(o);
@@ -2202,7 +2181,6 @@ function renderOutputCard(
                 ${badges.join('')}
                 ${inlineSink}
             </div>
-            ${belowSinks}
             ${warningHtml}
             ${lastErrorHtml}
         </div>
@@ -2271,11 +2249,10 @@ function renderOutputsList(pipeline: PipelineView): void {
     const urlRefs = new Map<string, DupRef[]>();
     for (const p of state.pipelines) {
         for (const o of p.outs) {
-            for (const s of o.sinks) {
-                if (!s.url) continue;
-                const list = urlRefs.get(s.url) ?? [];
+            if (o.url) {
+                const list = urlRefs.get(o.url) ?? [];
                 list.push({ pipelineName: p.name, outputName: o.name });
-                urlRefs.set(s.url, list);
+                urlRefs.set(o.url, list);
             }
         }
     }

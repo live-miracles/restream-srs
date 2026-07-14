@@ -71,7 +71,8 @@ function makeDb() {
         name: 'YouTube',
         desiredState: 'running',
         videoEncoding: 'copy',
-        sinks: [{ seq: 1, url: 'rtmp://youtube.example/live/key', audioEncoding: 'copy' }],
+        url: 'rtmp://youtube.example/live/key',
+        audioEncoding: 'copy',
         lastError: null,
     };
     return {
@@ -430,9 +431,7 @@ describe('output watchdog', () => {
     test('ignores local RTMP outputs in socket watchdog', async (t) => {
         const proc = new FakeFfmpeg();
         const db = makeDb();
-        db.getOutput('out1').sinks = [
-            { seq: 1, url: 'rtmp://localhost/live/downstream', audioEncoding: 'copy' },
-        ];
+        db.getOutput('out1').url = 'rtmp://localhost/live/downstream';
         const ssOutput =
             'CLOSE-WAIT 0 0 127.0.0.1:50100 127.0.0.1:1935 users:(("ffmpeg",pid=1234,fd=5))\n';
         const createOutputService = loadOutputService(t, proc, {
@@ -457,9 +456,7 @@ describe('output watchdog', () => {
     test('ignores IPv6 localhost RTMP outputs in socket watchdog', async (t) => {
         const proc = new FakeFfmpeg();
         const db = makeDb();
-        db.getOutput('out1').sinks = [
-            { seq: 1, url: 'rtmp://[::1]:1935/live/downstream', audioEncoding: 'copy' },
-        ];
+        db.getOutput('out1').url = 'rtmp://[::1]:1935/live/downstream';
         const ssOutput = 'CLOSE-WAIT 0 0 [::1]:50100 [::1]:1935 users:(("ffmpeg",pid=1234,fd=5))\n';
         const createOutputService = loadOutputService(t, proc, {
             progressStallMs: 500,

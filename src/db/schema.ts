@@ -19,12 +19,10 @@ export function setupDatabaseSchema(db: Database.Database): void {
         )`,
     ).run();
 
-    // One output = one ffmpeg process that pulls the input once and fans out to
-    // one or more sinks, stored as a JSON array [{url, audioEncoding}] — sinks
-    // are only ever read as part of their whole output, so they don't need their
-    // own table. The pull protocol isn't stored — it's derived at runtime from
-    // how the input is currently published (SRT input -> SRT pull, RTMP input ->
-    // RTMP pull).
+    // One output = one ffmpeg process that pulls the input once and pushes to a
+    // single destination (url + audioEncoding). The pull protocol isn't stored
+    // — it's derived at runtime from how the input is currently published (SRT
+    // input -> SRT pull, RTMP input -> RTMP pull).
     // last_error stores up to five recent ffmpeg failures as JSON:
     // [{ts:<ms>,message:<text>}].
     db.prepare(
@@ -35,7 +33,8 @@ export function setupDatabaseSchema(db: Database.Database): void {
             name            TEXT NOT NULL,
             desired_state   TEXT NOT NULL DEFAULT 'stopped',
             encoding        TEXT NOT NULL DEFAULT 'copy',
-            sinks           TEXT NOT NULL DEFAULT '[]',
+            url             TEXT NOT NULL DEFAULT '',
+            audio_encoding  TEXT NOT NULL DEFAULT 'copy',
             last_error      TEXT,
             FOREIGN KEY(pipeline_id) REFERENCES pipelines(id) ON DELETE CASCADE
         )`,

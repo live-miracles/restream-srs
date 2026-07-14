@@ -57,11 +57,6 @@ function buildAudioMapArgs(audioTrack: string): string[] {
     return args;
 }
 
-export interface SinkSpec {
-    url: string;
-    audioEncoding: string;
-}
-
 // Abort the pull if no input data is read for this long (microseconds, ffmpeg's
 // -rw_timeout unit). SRS holds publisher-less pulls open indefinitely, so without
 // this an output whose input never returns (or sits on a stale half-open socket)
@@ -70,18 +65,13 @@ export interface SinkSpec {
 // the preview's ffmpeg pull uses the same bound.
 export const INPUT_TIMEOUT_US = 10 * 60 * 1_000_000; // 10 minutes
 
-// Build a single ffmpeg command that pulls the input once and fans it out to
-// every sink. The shared video encoding is applied per sink; each sink picks its
-// own audio track(s) via -map. SRT sinks use mpegts, everything else uses flv.
-//
-// When encoding video (non-copy) with multiple sinks that share the same audio
-// encoding, the tee muxer is used so ffmpeg encodes once and fans out — avoids
-// paying N× CPU for N sinks. Falls back to per-output args when sinks have
-// different audio encodings (mixed-track SRT layouts), where tee select mapping
-// would be complex and the configuration is rare.
+// Build a single ffmpeg command that pulls the input once and pushes it to one
+// destination. The destination's audio track(s) are selected via -map; SRT
+// destinations use mpegts, everything else uses flv.
 export function buildFfmpegArgs(
     inputUrl: string,
-    sinks: SinkSpec[],
+    url: string,
+    audioEncoding: string,
     videoEncoding = 'copy',
 ): string[] {
     const encArgs = (ENCODINGS[videoEncoding] ?? ENCODINGS.copy).args;
@@ -121,29 +111,11 @@ export function buildFfmpegArgs(
         'pipe:1',
     ];
 
-    const firstSinkIsSrt = sinks[0].url.startsWith('srt://');
-    const useTee =
-        videoEncoding !== 'copy' &&
-        sinks.length > 1 &&
-        sinks.every((s) => s.url.startsWith('srt://') === firstSinkIsSrt) &&
-        sinks.every((s) => s.audioEncoding === sinks[0].audioEncoding);
-
-    if (useTee) {
-        const mapArgs = buildSinkMapArgs(sinks[0].audioEncoding, firstSinkIsSrt);
-        const audioArgs = firstSinkIsSrt ? (['-c:a', 'copy'] as const) : flvAudioArgs(inputUrl);
-        const fmt = firstSinkIsSrt ? 'mpegts' : 'flv';
-        const teeSpec = sinks.map((s) => `[f=${fmt}]${s.url}`).join('|');
-        args.push(...mapArgs, ...encArgs, ...audioArgs, '-f', 'tee', teeSpec);
-        return args;
-    }
-
-    for (const sink of sinks) {
-        const isSrt = sink.url.startsWith('srt://');
-        const mapArgs = buildSinkMapArgs(sink.audioEncoding, isSrt);
-        const audioArgs = isSrt ? (['-c:a', 'copy'] as const) : flvAudioArgs(inputUrl);
-        const fmt = isSrt ? ['-f', 'mpegts'] : ['-f', 'flv'];
-        args.push(...mapArgs, ...encArgs, ...audioArgs, ...fmt, sink.url);
-    }
+    const isSrt = url.startsWith('srt://');
+    const mapArgs = buildSinkMapArgs(audioEncoding, isSrt);
+    const audioArgs = isSrt ? (['-c:a', 'copy'] as const) : flvAudioArgs(inputUrl);
+    const fmt = isSrt ? ['-f', 'mpegts'] : ['-f', 'flv'];
+    args.push(...mapArgs, ...encArgs, ...audioArgs, ...fmt, url);
     return args;
 }
 

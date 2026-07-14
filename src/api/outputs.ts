@@ -1,36 +1,28 @@
 import type { Express } from 'express';
 import { validateOutputUrl, validateAudioEncoding, ENCODINGS } from '../utils/ffmpeg.js';
-import type { Db, SinkInput } from '../types.js';
+import type { Db } from '../types.js';
 import type { OutputService } from '../services/outputs.js';
 import { cyan } from '../utils/ansiColor.js';
 
-// Validate the sinks array from the request body. Each sink needs a valid URL
-// and audio track selection; multiple tracks are only valid for SRT sinks since
-// FLV/RTMP carries a single audio stream.
-function parseSinks(raw: unknown): { sinks: SinkInput[] } | { error: string } {
-    if (!Array.isArray(raw) || raw.length === 0) {
-        return { error: 'at least one sink is required' };
+// Validate an output's destination from the request body. It needs a valid URL
+// and audio track selection; multiple tracks are only valid for an SRT
+// destination since FLV/RTMP carries a single audio stream.
+function parseDestination(
+    body: unknown,
+): { url: string; audioEncoding: string } | { error: string } {
+    const b = body as Record<string, unknown> | null | undefined;
+    const url = (b?.url as string | undefined)?.trim();
+    if (!url || !validateOutputUrl(url)) {
+        return { error: 'a valid url is required (rtmp://, rtmps://, srt://)' };
     }
-    const sinks: SinkInput[] = [];
-    for (const item of raw) {
-        const url = (item?.url as string | undefined)?.trim();
-        if (!url || !validateOutputUrl(url)) {
-            return { error: 'each sink needs a valid url (rtmp://, rtmps://, srt://)' };
-        }
-        const audioEncoding = validateAudioEncoding(item?.audioEncoding);
-        if (audioEncoding === null) {
-            return { error: `invalid audioEncoding for sink ${url}` };
-        }
-        if (!url.startsWith('srt://') && audioEncoding.includes(',')) {
-            return { error: 'multiple audio tracks require an SRT sink' };
-        }
-        sinks.push({ url, audioEncoding });
+    const audioEncoding = validateAudioEncoding(b?.audioEncoding);
+    if (audioEncoding === null) {
+        return { error: 'invalid audioEncoding' };
     }
-    const firstIsSrt = sinks[0].url.startsWith('srt://');
-    if (!sinks.every((s) => s.url.startsWith('srt://') === firstIsSrt)) {
-        return { error: 'all sinks must be the same protocol (SRT or RTMP)' };
+    if (!url.startsWith('srt://') && audioEncoding.includes(',')) {
+        return { error: 'multiple audio tracks require an SRT destination' };
     }
-    return { sinks };
+    return { url, audioEncoding };
 }
 
 export function registerOutputApi(app: Express, db: Db, outputService: OutputService): void {
@@ -42,7 +34,7 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
 
         const name = (req.body?.name as string | undefined)?.trim();
         const videoEncoding = (req.body?.videoEncoding as string | undefined)?.trim() || 'copy';
-        const parsed = parseSinks(req.body?.sinks);
+        const parsed = parseDestination(req.body);
 
         if (!name) return res.status(400).json({ error: 'name is required' });
         if (!ENCODINGS[videoEncoding])
@@ -53,7 +45,8 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
             pipelineId,
             name,
             videoEncoding,
-            sinks: parsed.sinks,
+            url: parsed.url,
+            audioEncoding: parsed.audioEncoding,
         });
         return res.status(201).json(output);
     });
@@ -71,12 +64,13 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
         const validated: {
             name: string;
             videoEncoding: string;
-            sinks: SinkInput[];
+            url: string;
+            audioEncoding: string;
         }[] = [];
         for (const item of rawOutputs) {
             const name = (item?.name as string | undefined)?.trim();
             const videoEncoding = (item?.videoEncoding as string | undefined)?.trim() || 'copy';
-            const parsed = parseSinks(item?.sinks);
+            const parsed = parseDestination(item);
 
             if (!name) return res.status(400).json({ error: 'each output must have a name' });
             if (!ENCODINGS[videoEncoding])
@@ -86,7 +80,8 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
             validated.push({
                 name,
                 videoEncoding,
-                sinks: parsed.sinks,
+                url: parsed.url,
+                audioEncoding: parsed.audioEncoding,
             });
         }
 
@@ -136,7 +131,7 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
 
         // The UI disables Save for running outputs, but a client holding stale
         // config could still submit — the running ffmpeg would keep the old
-        // sinks while the DB shows the new ones until the next restart.
+        // destination while the DB shows the new one until the next restart.
         if (
             output.desiredState !== 'stopped' ||
             outputService.getStats(outId).status === 'running'
@@ -147,7 +142,7 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
         const name = (req.body?.name as string | undefined)?.trim() ?? output.name;
         const videoEncoding =
             (req.body?.videoEncoding as string | undefined)?.trim() ?? output.videoEncoding;
-        const parsed = parseSinks(req.body?.sinks);
+        const parsed = parseDestination(req.body);
 
         if (!name) return res.status(400).json({ error: 'name is required' });
         if (!ENCODINGS[videoEncoding])
@@ -157,7 +152,8 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
         const updated = db.updateOutput(outId, {
             name,
             videoEncoding,
-            sinks: parsed.sinks,
+            url: parsed.url,
+            audioEncoding: parsed.audioEncoding,
         });
         return res.json(updated);
     });

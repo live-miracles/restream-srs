@@ -511,10 +511,9 @@ function outModal(): HTMLDialogElement {
 }
 
 export function onOutputTypeChange(_select: HTMLSelectElement): void {
-    document.querySelectorAll('#out-sinks-container .js-sink-row').forEach((row) => {
-        const audio = (row.querySelector('.js-sink-audio') as HTMLSelectElement | null)?.value;
-        row.outerHTML = sinkRowHtml(currentSinkTracks, '', audio ?? 'copy');
-    });
+    const row = document.querySelector('#out-sinks-container .js-sink-row');
+    const audio = (row?.querySelector('.js-sink-audio') as HTMLSelectElement | null)?.value;
+    if (row) row.outerHTML = sinkRowHtml(currentSinkTracks, '', audio ?? 'copy');
     refreshSinkAudioMode();
 }
 
@@ -577,33 +576,19 @@ function sinkRowHtmlForServer(
     if (idx === CUSTOM_SRT_IDX) {
         const srt = parseSrtUrl(key);
         return `
-        <div class="js-sink-row rounded-box bg-base-200 px-2 py-2">
-          <div class="grid grid-cols-[1fr_auto] gap-2">
-            <div class="min-w-0 space-y-2">
-              <div class="flex flex-wrap gap-1">
-                <select class="select select-sm w-36 js-sink-server" onchange="outSinkServerChange(this)">${serverOpts}</select>
-                <select class="select select-sm w-48 js-sink-audio">${audioOptionsHtml(tracks, audioEncoding)}</select>
-                <input type="text" class="input input-sm w-40 font-mono text-xs js-srt-host" placeholder="Hostname" value="${escapeHtml(srt.host)}" oninput="this.classList.remove('input-error')" />
-                <input type="number" min="1" max="65535" class="input input-sm w-18 font-mono text-xs js-srt-port" placeholder="Port" value="${srt.port ?? ''}" oninput="this.classList.remove('input-error')" />
-              </div>
-              <div class="flex flex-wrap gap-1 js-sink-key-fieldset">
-                <select class="select select-sm w-28 js-srt-mode" title="Type">
-                    <option value="caller"${srt.mode === 'caller' ? ' selected' : ''}>Caller</option>
-                    <option value="listener"${srt.mode === 'listener' ? ' selected' : ''}>Listener</option>
-                </select>
-                ${sinkKeyFieldHtml(idx, key)}
-              </div>
-            </div>
-            <div class="flex items-center">
-              <button type="button" class="btn btn-xs btn-error btn-outline js-sink-remove"
-                      onclick="outRemoveSink(this)" title="Remove destination">
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                <line x1="10" x2="10" y1="11" y2="17" /><line x1="14" x2="14" y1="11" y2="17" />
-              </svg>
-              </button>
-            </div>
+        <div class="js-sink-row rounded-box bg-base-200 px-2 py-2 space-y-2">
+          <div class="flex flex-wrap gap-1">
+            <select class="select select-sm w-36 js-sink-server" onchange="outSinkServerChange(this)">${serverOpts}</select>
+            <select class="select select-sm w-48 js-sink-audio">${audioOptionsHtml(tracks, audioEncoding)}</select>
+            <input type="text" class="input input-sm w-40 font-mono text-xs js-srt-host" placeholder="Hostname" value="${escapeHtml(srt.host)}" oninput="this.classList.remove('input-error')" />
+            <input type="number" min="1" max="65535" class="input input-sm w-18 font-mono text-xs js-srt-port" placeholder="Port" value="${srt.port ?? ''}" oninput="this.classList.remove('input-error')" />
+          </div>
+          <div class="flex flex-wrap gap-1 js-sink-key-fieldset">
+            <select class="select select-sm w-28 js-srt-mode" title="Type">
+                <option value="caller"${srt.mode === 'caller' ? ' selected' : ''}>Caller</option>
+                <option value="listener"${srt.mode === 'listener' ? ' selected' : ''}>Listener</option>
+            </select>
+            ${sinkKeyFieldHtml(idx, key)}
           </div>
         </div>`;
     }
@@ -612,23 +597,7 @@ function sinkRowHtmlForServer(
       <select class="select select-sm w-28 shrink-0 js-sink-server" onchange="outSinkServerChange(this)">${serverOpts}</select>
       <div class="flex-1 min-w-0 js-sink-key-fieldset">${sinkKeyFieldHtml(idx, key)}</div>
       <select class="select select-sm w-52 shrink-0 js-sink-audio">${audioOptionsHtml(tracks, audioEncoding)}</select>
-      <button type="button" class="btn btn-xs btn-error btn-outline js-sink-remove"
-              onclick="outRemoveSink(this)" title="Remove destination">
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-          <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-          <line x1="10" x2="10" y1="11" y2="17" /><line x1="14" x2="14" y1="11" y2="17" />
-        </svg>
-      </button>
     </div>`;
-}
-
-function updateSinkRemoveButtons(): void {
-    const rows = document.querySelectorAll('#out-sinks-container .js-sink-row');
-    rows.forEach((row) => {
-        const btn = row.querySelector('.js-sink-remove') as HTMLButtonElement | null;
-        if (btn) btn.disabled = rows.length <= 1;
-    });
 }
 
 // Constrain each sink's audio-track selector to match the input. RTMP inputs are
@@ -650,32 +619,19 @@ function refreshSinkAudioMode(): void {
         });
 }
 
-function populateSinks(
+function populateDestination(
     tracks: AudioTrackInfo[],
-    sinks: { url: string; audioEncoding: string }[],
+    destination: { url: string; audioEncoding: string } | null,
 ): void {
     currentSinkTracks = tracks;
     const container = document.getElementById('out-sinks-container');
     if (!container) return;
-    const rows = sinks.length ? sinks : [{ url: '', audioEncoding: 'copy' }];
-    container.innerHTML = rows.map((s) => sinkRowHtml(tracks, s.url, s.audioEncoding)).join('');
-    updateSinkRemoveButtons();
+    container.innerHTML = sinkRowHtml(
+        tracks,
+        destination?.url ?? '',
+        destination?.audioEncoding ?? 'copy',
+    );
     refreshSinkAudioMode();
-}
-
-export function addSinkRow(): void {
-    const container = document.getElementById('out-sinks-container');
-    if (!container) return;
-    container.insertAdjacentHTML('beforeend', sinkRowHtml(currentSinkTracks));
-    updateSinkRemoveButtons();
-    refreshSinkAudioMode();
-}
-
-export function removeSinkRow(btn: HTMLElement): void {
-    const rows = document.querySelectorAll('#out-sinks-container .js-sink-row');
-    if (rows.length <= 1) return;
-    btn.closest('.js-sink-row')?.remove();
-    updateSinkRemoveButtons();
 }
 
 export function onSinkServerChange(select: HTMLSelectElement): void {
@@ -706,7 +662,7 @@ export function openAddOutput(pipelineId: string): void {
     (document.getElementById('out-video-encoding-input') as HTMLSelectElement).innerHTML =
         outVideoEncodingOptions('copy');
     (document.getElementById('out-type-input') as HTMLSelectElement).value = 'rtmp';
-    populateSinks(pipelineTracks(pipelineId), []);
+    populateDestination(pipelineTracks(pipelineId), null);
     (document.getElementById('out-modal-title') as HTMLElement).textContent = 'Add Output';
     (document.getElementById('out-save-btn') as HTMLButtonElement).disabled = false;
     (document.getElementById('out-running-hint') as HTMLElement).classList.add('hidden');
@@ -727,9 +683,15 @@ export function openEditOutput(pipelineId: string, outId: string): void {
     currentInputIsSrt = state.pipelines.find((p) => p.id === pipelineId)?.input.isSrt ?? false;
     (document.getElementById('out-video-encoding-input') as HTMLSelectElement).innerHTML =
         outVideoEncodingOptions(output.videoEncoding);
-    (document.getElementById('out-type-input') as HTMLSelectElement).value =
-        output.sinks[0]?.url.startsWith('srt://') ? 'srt' : 'rtmp';
-    populateSinks(pipelineTracks(pipelineId), output.sinks);
+    (document.getElementById('out-type-input') as HTMLSelectElement).value = output.url.startsWith(
+        'srt://',
+    )
+        ? 'srt'
+        : 'rtmp';
+    populateDestination(pipelineTracks(pipelineId), {
+        url: output.url,
+        audioEncoding: output.audioEncoding,
+    });
     (document.getElementById('out-modal-title') as HTMLElement).textContent = 'Edit Output';
 
     const isRunning = output.desiredState === 'running';
@@ -807,10 +769,11 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
     const videoEncoding = (document.getElementById('out-video-encoding-input') as HTMLSelectElement)
         .value;
 
-    const rows = Array.from(document.querySelectorAll('#out-sinks-container .js-sink-row'));
-    const sinks: { url: string; audioEncoding: string }[] = [];
-    let sinksValid = true;
-    for (const row of rows) {
+    const row = document.querySelector('#out-sinks-container .js-sink-row');
+    let url = '';
+    let audioEncoding = 'copy';
+    let destinationValid = row !== null;
+    if (row) {
         const serverIdx = parseInt(
             (row.querySelector('.js-sink-server') as HTMLSelectElement).value,
         );
@@ -819,66 +782,50 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
             | HTMLSelectElement
             | null;
         const key = keyEl?.value.trim() ?? '';
-        const audioEncoding = (row.querySelector('.js-sink-audio') as HTMLSelectElement).value;
-        let url: string;
+        audioEncoding = (row.querySelector('.js-sink-audio') as HTMLSelectElement).value;
         if (serverIdx === CUSTOM_SRT_IDX) {
             const srt = readSrtSettings(row);
             if ('error' in srt) {
-                sinksValid = false;
-                continue;
+                destinationValid = false;
+            } else {
+                url = srt.url;
             }
-            url = srt.url;
         } else if (isRestreamIdx(serverIdx)) {
             const pipeline = (state.config.pipelines ?? []).find((p) => String(p.id) === key);
             keyEl?.classList.toggle('select-error', !pipeline);
             if (!pipeline) {
-                sinksValid = false;
-                continue;
+                destinationValid = false;
+            } else {
+                url =
+                    serverIdx === RESTREAM_RTMP_IDX
+                        ? pipeline.rtmpPublishUrlLocal
+                        : pipeline.srtPublishUrlLocal;
             }
-            url =
-                serverIdx === RESTREAM_RTMP_IDX
-                    ? pipeline.rtmpPublishUrlLocal
-                    : pipeline.srtPublishUrlLocal;
         } else if (serverIdx === INSTAGRAM_RTMP_IDX) {
             if (keyEl instanceof HTMLInputElement) keyEl.classList.toggle('input-error', !key);
             if (!key) {
-                sinksValid = false;
-                continue;
+                destinationValid = false;
+            } else {
+                url = buildInstagramUrl(key);
             }
-            url = buildInstagramUrl(key);
         } else {
             if (keyEl instanceof HTMLInputElement) keyEl.classList.toggle('input-error', !key);
             if (!key) {
-                sinksValid = false;
-                continue;
+                destinationValid = false;
+            } else {
+                url = SERVERS[serverIdx].prefix + key;
+                if (!isValidSinkUrl(serverIdx, url)) {
+                    if (keyEl instanceof HTMLInputElement) keyEl.classList.add('input-error');
+                    destinationValid = false;
+                }
             }
-            url = SERVERS[serverIdx].prefix + key;
-            if (!isValidSinkUrl(serverIdx, url)) {
-                if (keyEl instanceof HTMLInputElement) keyEl.classList.add('input-error');
-                sinksValid = false;
-                continue;
-            }
-        }
-        sinks.push({ url, audioEncoding });
-    }
-
-    if (sinksValid && sinks.length > 0) {
-        const hasSrt = sinks.some((s) => s.url.startsWith('srt://'));
-        const hasRtmp = sinks.some((s) => !s.url.startsWith('srt://'));
-        if (hasSrt && hasRtmp) {
-            for (const row of rows) {
-                (row.querySelector('.js-sink-server') as HTMLSelectElement).classList.add(
-                    'select-error',
-                );
-            }
-            sinksValid = false;
         }
     }
 
-    if (!name || !sinksValid || sinks.length === 0) return;
+    if (!name || !destinationValid) return;
 
     await withBusy(btn, async () => {
-        const payload = { name, videoEncoding, sinks };
+        const payload = { name, videoEncoding, url, audioEncoding };
         const result = outId
             ? await api.updateOutput(pipelineId, outId, payload)
             : await api.createOutput(pipelineId, payload);
@@ -1140,7 +1087,8 @@ function parseOutputsPayload(text: string):
     | {
           name: string;
           videoEncoding: string;
-          sinks: { url: string; audioEncoding: string }[];
+          url: string;
+          audioEncoding: string;
       }[]
     | null {
     let parsed: unknown;
@@ -1157,14 +1105,15 @@ function parseOutputsPayload(text: string):
     const outputs: {
         name: string;
         videoEncoding: string;
-        sinks: { url: string; audioEncoding: string }[];
+        url: string;
+        audioEncoding: string;
     }[] = [];
     for (const item of parsed) {
         if (!item || typeof item !== 'object') {
             api.showError('Invalid output format in clipboard.');
             return null;
         }
-        const { name, videoEncoding, sinks } = item as Record<string, unknown>;
+        const { name, videoEncoding, url, audioEncoding } = item as Record<string, unknown>;
         if (typeof name !== 'string' || !name.trim()) {
             api.showError('Each output must have a non-empty name.');
             return null;
@@ -1173,31 +1122,19 @@ function parseOutputsPayload(text: string):
             api.showError('Each output must have a videoEncoding.');
             return null;
         }
-        if (!Array.isArray(sinks) || sinks.length === 0) {
-            api.showError('Each output must have at least one sink.');
+        if (typeof url !== 'string' || !url.trim()) {
+            api.showError('Each output must have a non-empty url.');
             return null;
         }
-        const validSinks: { url: string; audioEncoding: string }[] = [];
-        for (const sink of sinks) {
-            if (!sink || typeof sink !== 'object') {
-                api.showError('Invalid sink format in clipboard.');
-                return null;
-            }
-            const { url, audioEncoding } = sink as Record<string, unknown>;
-            if (typeof url !== 'string' || !url.trim()) {
-                api.showError('Each sink must have a non-empty url.');
-                return null;
-            }
-            if (typeof audioEncoding !== 'string') {
-                api.showError('Each sink must have an audioEncoding.');
-                return null;
-            }
-            validSinks.push({ url, audioEncoding });
+        if (typeof audioEncoding !== 'string') {
+            api.showError('Each output must have an audioEncoding.');
+            return null;
         }
         outputs.push({
             name: name.trim(),
             videoEncoding,
-            sinks: validSinks,
+            url,
+            audioEncoding,
         });
     }
     if (outputs.length === 0) {
@@ -1233,10 +1170,11 @@ export async function stopAllOutputs(pipelineId: string, btn: HTMLButtonElement)
 export async function copyOutputs(pipelineId: string): Promise<void> {
     const outputs = (state.config.outputs ?? [])
         .filter((o) => String(o.pipelineId) === pipelineId)
-        .map(({ name, videoEncoding, sinks }) => ({
+        .map(({ name, videoEncoding, url, audioEncoding }) => ({
             name,
             videoEncoding,
-            sinks: sinks.map(({ url, audioEncoding }) => ({ url, audioEncoding })),
+            url,
+            audioEncoding,
         }));
     await copyText(JSON.stringify(outputs, null, 2));
 }

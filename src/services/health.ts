@@ -636,9 +636,7 @@ export function createHealthService(
                 if (output.pipelineId === pipeline.id) return false;
                 if (output.desiredState !== 'running') return false;
                 if (outputService.getStats(output.id).status !== 'running') return false;
-                return output.sinks.some((sink) =>
-                    localSrtOutputTargetsStream(sink.url, pipeline.streamKey),
-                );
+                return localSrtOutputTargetsStream(output.url, pipeline.streamKey);
             });
             const relayAcceptedBySrs =
                 !!srtStream &&
