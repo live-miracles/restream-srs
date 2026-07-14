@@ -582,9 +582,9 @@ function sinkRowHtmlForServer(
             <div class="min-w-0 space-y-2">
               <div class="flex flex-wrap gap-1">
                 <select class="select select-sm w-36 js-sink-server" onchange="outSinkServerChange(this)">${serverOpts}</select>
-                <select class="select select-sm w-32 js-sink-audio">${audioOptionsHtml(tracks, audioEncoding)}</select>
+                <select class="select select-sm w-48 js-sink-audio">${audioOptionsHtml(tracks, audioEncoding)}</select>
                 <input type="text" class="input input-sm w-40 font-mono text-xs js-srt-host" placeholder="Hostname" value="${escapeHtml(srt.host)}" oninput="this.classList.remove('input-error')" />
-                <input type="number" min="1" max="65535" class="input input-sm w-[4.5rem] font-mono text-xs js-srt-port" placeholder="Port" value="${srt.port ?? ''}" oninput="this.classList.remove('input-error')" />
+                <input type="number" min="1" max="65535" class="input input-sm w-18 font-mono text-xs js-srt-port" placeholder="Port" value="${srt.port ?? ''}" oninput="this.classList.remove('input-error')" />
               </div>
               <div class="flex flex-wrap gap-1 js-sink-key-fieldset">
                 <select class="select select-sm w-28 js-srt-mode" title="Type">
@@ -609,9 +609,9 @@ function sinkRowHtmlForServer(
     }
     return `
     <div class="js-sink-row flex items-center gap-2 rounded-box bg-base-200 px-2 py-1">
-      <select class="select select-sm w-36 shrink-0 js-sink-server" onchange="outSinkServerChange(this)">${serverOpts}</select>
+      <select class="select select-sm w-28 shrink-0 js-sink-server" onchange="outSinkServerChange(this)">${serverOpts}</select>
       <div class="flex-1 min-w-0 js-sink-key-fieldset">${sinkKeyFieldHtml(idx, key)}</div>
-      <select class="select select-sm w-36 js-sink-audio">${audioOptionsHtml(tracks, audioEncoding)}</select>
+      <select class="select select-sm w-52 shrink-0 js-sink-audio">${audioOptionsHtml(tracks, audioEncoding)}</select>
       <button type="button" class="btn btn-xs btn-error btn-outline js-sink-remove"
               onclick="outRemoveSink(this)" title="Remove destination">
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

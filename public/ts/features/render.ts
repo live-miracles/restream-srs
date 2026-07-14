@@ -2088,7 +2088,9 @@ function renderOutputCard(
                 ? STATUS_COLOR_ERROR
                 : STATUS_COLOR_OFF;
     const uptimeMs = o.startedAtMs !== null ? Date.now() - o.startedAtMs : null;
-    const badges = [`<span class="badge badge-sm whitespace-nowrap">${o.videoEncoding}</span>`];
+    const badges = [
+        `<span class="badge badge-sm badge-accent badge-soft whitespace-nowrap">${o.videoEncoding}</span>`,
+    ];
     if (uptimeMs !== null) {
         badges.push(
             `<span class="font-mono text-xs opacity-60 whitespace-nowrap">${formatUptime(uptimeMs)}</span>`,
@@ -2114,9 +2116,9 @@ function renderOutputCard(
     const fmtSink = (s: (typeof o.sinks)[0]) => {
         const trackBadge =
             s.audioEncoding !== 'copy'
-                ? ` <span class="badge badge-xs badge-info whitespace-nowrap">${s.audioEncoding
+                ? ` <span class="badge badge-xs badge-accent badge-soft whitespace-nowrap">${s.audioEncoding
                       .split(',')
-                      .map((t) => `A${parseInt(t) + 1}`)
+                      .map((t) => `T${parseInt(t) + 1}`)
                       .join('+')}</span>`
                 : '';
         const restreamLabel = restreamSinkLabel(s.url);
