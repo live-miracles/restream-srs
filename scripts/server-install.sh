@@ -51,7 +51,10 @@ FFMPEG_SHA256="ce46c711e3ff79ae1e9318bf7daa54c77f41ce37b71010c44f4a0b38f1d7a29f"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-step() { echo; echo "=== $* ==="; }
+step() {
+    echo
+    echo "=== $* ==="
+}
 
 # Verify a downloaded file against an expected SHA256. An empty expected hash
 # skips the check (used when a custom version/URL override makes the pin moot).
@@ -77,7 +80,7 @@ apt-get update -q
 apt-get install -y -q curl tar xz-utils unzip git ca-certificates
 
 step "2/9 Node.js 22"
-if node --version 2>/dev/null | grep -q '^v22'; then
+if node --version 2> /dev/null | grep -q '^v22'; then
     echo "Node.js 22 already installed: $(node --version)"
 else
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
@@ -88,7 +91,7 @@ fi
 step "3/9 FFmpeg $FFMPEG_VERSION"
 FFMPEG_URL="https://github.com/live-miracles/restream-srs/releases/download/${FFMPEG_BUILD_TAG}/${FFMPEG_FILENAME}"
 
-if /usr/local/bin/ffmpeg -version 2>/dev/null | grep -q "ffmpeg version n${FFMPEG_VERSION}"; then
+if /usr/local/bin/ffmpeg -version 2> /dev/null | grep -q "ffmpeg version n${FFMPEG_VERSION}"; then
     echo "FFmpeg $FFMPEG_VERSION already installed."
 else
     echo "Downloading $FFMPEG_FILENAME..."
@@ -146,7 +149,7 @@ else
 fi
 
 step "6/9 Service user and directories"
-if ! id "$SERVICE_USER" &>/dev/null; then
+if ! id "$SERVICE_USER" &> /dev/null; then
     useradd --system --home "$APP_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
     echo "Created user: $SERVICE_USER"
 else
@@ -204,7 +207,7 @@ node -e 'const fs=require("fs");const [p,pass]=process.argv.slice(1);const c=fs.
     "$CONF_DIR/srs.conf" "$SRS_SRT_PASSPHRASE"
 node -e 'const fs=require("fs");const [p,pass]=process.argv.slice(1);const c=JSON.parse(fs.readFileSync(p,"utf8"));c.passphrase=pass;fs.writeFileSync(p,JSON.stringify(c,null,4)+"\n");' \
     "$CONF_DIR/srt-bonding-relay.json" "$RELAY_SRT_PASSPHRASE"
-cat > "$APP_DIR/restream.json" <<EOF
+cat > "$APP_DIR/restream.json" << EOF
 {
     "port": 8080,
     "database_path": "$DATA_DIR/db.sqlite",
@@ -252,7 +255,7 @@ echo "App config: $APP_DIR/restream.json"
 echo "Data:   $DB_FILE"
 
 step "9/9 Systemd"
-cat > /etc/systemd/system/srs.service <<EOF
+cat > /etc/systemd/system/srs.service << EOF
 [Unit]
 Description=SRS Streaming Server
 After=network-online.target restream-srs.service
@@ -278,7 +281,7 @@ ReadWritePaths=$DATA_DIR $CONF_DIR
 WantedBy=multi-user.target
 EOF
 
-cat > /etc/systemd/system/srt-bonding-relay.service <<EOF
+cat > /etc/systemd/system/srt-bonding-relay.service << EOF
 [Unit]
 Description=Shared SRT Bonding Relay
 After=network-online.target restream-srs.service srs.service
@@ -303,7 +306,7 @@ ReadWritePaths=$DATA_DIR $CONF_DIR
 WantedBy=multi-user.target
 EOF
 
-cat > /etc/systemd/system/restream-srs.service <<EOF
+cat > /etc/systemd/system/restream-srs.service << EOF
 [Unit]
 Description=Restream SRS Control Plane
 After=network-online.target
@@ -316,7 +319,7 @@ Group=$SERVICE_USER
 # Journal files are only readable by root and the systemd-journal group -
 # sharing a UID with srs.service/srt-bonding-relay.service does not itself
 # grant read access. Lets the dashboard's /api/srs-logs shell out to
-# `journalctl -u <unit>` for any unit's log, not just srs.service.
+# \`journalctl -u <unit>\` for any unit's log, not just srs.service.
 SupplementaryGroups=systemd-journal
 WorkingDirectory=$APP_DIR
 Environment=NODE_ENV=production
@@ -343,7 +346,7 @@ EOF
 
 systemctl daemon-reload
 systemctl enable srs.service srt-bonding-relay.service restream-srs.service
-systemctl stop srt-bonding-relay.service srs.service restream-srs.service 2>/dev/null || true
+systemctl stop srt-bonding-relay.service srs.service restream-srs.service 2> /dev/null || true
 systemctl start restream-srs.service
 systemctl start srs.service
 systemctl start srt-bonding-relay.service
