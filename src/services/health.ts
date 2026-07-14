@@ -612,11 +612,6 @@ export function createHealthService(
                 const stats = outputService.getStats(outId);
                 outputsHealth[outId] = {
                     ...stats,
-                    // Bitrate from ffmpeg is meaningless when the input is offline
-                    // (ffmpeg may still be connected to the destination, draining
-                    // buffered data). Hide it so the UI doesn't show a high bitrate
-                    // alongside a red/error status.
-                    bitrateKbps: displayLive ? stats.bitrateKbps : null,
                     failures: stats.failures,
                     lastError: lastErrorById.get(outId) ?? null,
                     hasErrorHistory: hasErrorHistoryById.get(outId) ?? false,
