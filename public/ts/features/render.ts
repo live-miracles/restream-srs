@@ -1431,6 +1431,7 @@ function drawProbeChart(
     samples: Array<{ ts: number; ok: boolean; latencyMs: number | null }>,
     windowStart: number,
     windowEnd: number,
+    intervalMs: number,
 ): void {
     const canvas = document.getElementById(id) as HTMLCanvasElement | null;
     if (!canvas) return;
@@ -1446,14 +1447,19 @@ function drawProbeChart(
 
     ctx.clearRect(0, 0, displayW, displayH);
     const base = getComputedStyle(canvas).color;
-    const toRgba = (c: string, a: number) =>
-        c.startsWith('rgb(')
-            ? c.replace('rgb(', 'rgba(').replace(')', `, ${a})`)
-            : `rgba(128,128,128,${a})`;
+    const toRgba = (c: string, a: number): string => {
+        if (c.startsWith('rgb(')) return c.replace('rgb(', 'rgba(').replace(')', `, ${a})`);
+        if (c.startsWith('#')) {
+            const hex = c.length === 4 ? c.replace(/[0-9a-f]/gi, (ch) => ch + ch).slice(1) : c.slice(1);
+            const num = parseInt(hex, 16);
+            return `rgba(${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255}, ${a})`;
+        }
+        return `rgba(128,128,128,${a})`;
+    };
     const gridColor = toRgba(base, 0.18);
     const labelColor = toRgba(base, 0.65);
     const okColor = '#22c55e';
-    const failColor = '#ef4444';
+    const failColor = '#dc2626';
 
     ctx.font = '10px ui-monospace, monospace';
 
@@ -1528,15 +1534,13 @@ function drawProbeChart(
         ctx.stroke();
     }
 
+    const halfInterval = Math.max(1, intervalMs) / 2;
+    ctx.fillStyle = toRgba(failColor, 0.35);
     for (const sample of samples) {
         if (sample.ok) continue;
-        const x = xFor(sample.ts);
-        ctx.beginPath();
-        ctx.moveTo(x, m.top);
-        ctx.lineTo(x, displayH - m.bottom);
-        ctx.strokeStyle = toRgba(failColor, 0.85);
-        ctx.lineWidth = 1;
-        ctx.stroke();
+        const xStart = xFor(sample.ts - halfInterval);
+        const xEnd = xFor(sample.ts + halfInterval);
+        ctx.fillRect(xStart, m.top, Math.max(1, xEnd - xStart), cH);
     }
 }
 
@@ -1705,6 +1709,7 @@ function renderHostConnectionsOverview(): void {
             chartSamples,
             windowStart,
             windowEnd,
+            state.hostProbes.intervalMs ?? 5000,
         );
     }
 
