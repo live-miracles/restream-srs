@@ -48,6 +48,7 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
             url: parsed.url,
             audioEncoding: parsed.audioEncoding,
         });
+        console.log(cyan(`[outputs] user add requested: ${output.id} (${output.name})`));
         return res.status(201).json(output);
     });
 
@@ -86,6 +87,11 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
         }
 
         const created = db.createOutputs(validated.map((v) => ({ pipelineId, ...v })));
+        console.log(
+            cyan(
+                `[outputs] user add-bulk requested: pipeline=${pipelineId} count=${created.length}`,
+            ),
+        );
         return res.status(201).json(created);
     });
 
@@ -155,6 +161,7 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
             url: parsed.url,
             audioEncoding: parsed.audioEncoding,
         });
+        console.log(cyan(`[outputs] user update requested: ${outId} (${name})`));
         return res.json(updated);
     });
 
