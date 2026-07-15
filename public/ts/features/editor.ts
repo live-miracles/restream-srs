@@ -519,7 +519,7 @@ function sinkKeyFieldHtml(idx: number, key: string): string {
             fieldsetHtml(
                 'Stream ID',
                 '',
-                `<input type="text" class="input input-sm w-56 font-mono text-xs js-srt-streamid" placeholder="Stream ID" value="${escapeHtml(srt.streamId)}" oninput="this.classList.remove('input-error')" />`,
+                `<input type="text" class="input input-sm w-80 font-mono text-xs js-srt-streamid" placeholder="Stream ID" value="${escapeHtml(srt.streamId)}" oninput="this.classList.remove('input-error')" />`,
             ),
         ].join('');
     }
@@ -562,7 +562,6 @@ function audioOptionsHtml(tracks: AudioTrackInfo[], selected: string): string {
         const val = String(t.index);
         seen.add(val);
         const parts = [`Track ${t.index + 1}`];
-        if (t.pid != null) parts.push(`[pid: ${t.pid}]`);
         if (t.language) parts.push(`(${t.language})`);
         if (t.title) parts.push(`— ${t.title}`);
         parts.push(`· ${t.codec} ${t.channels}ch`);
