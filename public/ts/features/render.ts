@@ -1,5 +1,6 @@
 import {
     setInnerText,
+    setBadgeCount,
     escapeHtml,
     formatBitrate,
     formatBytesCompact,
@@ -396,7 +397,7 @@ function deriveOutputMedia(
         VideoInfo,
         'codec' | 'width' | 'height' | 'fps' | 'fieldOrder' | 'profile' | 'level'
     > | null;
-    audio: Pick<AudioInfo, 'codec' | 'channel' | 'sample_rate'> | null;
+    audio: Pick<AudioInfo, 'codec' | 'profile' | 'channel' | 'sample_rate'> | null;
 } {
     const preset = OUTPUT_VIDEO_PRESETS[output.videoEncoding] ?? OUTPUT_VIDEO_PRESETS.copy;
     const ctx = { input, output };
@@ -432,6 +433,7 @@ function deriveOutputMedia(
             video,
             audio: {
                 codec: 'aac',
+                profile: 'LC',
                 channel: 2,
                 sample_rate: 48000,
             },
@@ -444,6 +446,7 @@ function deriveOutputMedia(
             video,
             audio: {
                 codec: track.codec,
+                profile: track.profile,
                 channel: track.channels,
                 sample_rate: track.sampleRate,
             },
@@ -679,17 +682,33 @@ function renderPipelineList(): void {
     );
 
     setInnerText('pipe-cnt', state.pipelines.length);
-    setInnerText('pipe-oks', inputsOn);
-    setInnerText('pipe-warns', inputsWarn + inputsFailed);
-    setInnerText('pipe-offs', state.pipelines.filter((p) => inputStatus(p.input) === 'off').length);
+    setBadgeCount('pipe-oks', inputsOn);
+    setBadgeCount('pipe-warns', inputsWarn + inputsFailed);
+    setBadgeCount(
+        'pipe-offs',
+        state.pipelines.filter((p) => inputStatus(p.input) === 'off').length,
+    );
     setInnerText('out-cnt', totalOutputs);
-    setInnerText('out-oks', outputsOn - outputsWarn);
-    setInnerText('out-warns', outputsWarn);
-    setInnerText('out-errors', outputsFailed);
-    setInnerText('out-offs', outputsOff);
+    setBadgeCount('out-oks', outputsOn - outputsWarn);
+    setBadgeCount('out-warns', outputsWarn);
+    setBadgeCount('out-errors', outputsFailed);
+    setBadgeCount('out-offs', outputsOff);
 
     const selectedId = getUrlParam('p');
     const relayProcessRunning = state.health.srtRelay?.status === 'running';
+
+    // Pipelines sharing a stream key can't both actually publish — flag it the
+    // same way duplicate output destination URLs are flagged.
+    const keyRefs = new Map<number, DupRef[]>();
+    for (const p of state.pipelines) {
+        const list = keyRefs.get(p.streamKeyId) ?? [];
+        list.push({ pipelineName: p.name });
+        keyRefs.set(p.streamKeyId, list);
+    }
+    const dupKeys = new Map<number, DupRef[]>();
+    for (const [id, refs] of keyRefs) {
+        if (refs.length > 1) dupKeys.set(id, refs);
+    }
 
     listEl.innerHTML = state.pipelines
         .map((p) => {
@@ -735,6 +754,11 @@ function renderPipelineList(): void {
             const inputTypeBadge = p.input.connected
                 ? `<span class="badge badge-sm badge-outline shrink-0">${p.srtBonding.acceptedBySrs ? 'Relay' : p.input.isSrt ? 'SRT' : 'RTMP'}</span>`
                 : '';
+            const dupKeyRefs = dupKeys.get(p.streamKeyId);
+            const nameClass = dupKeyRefs ? 'truncate min-w-0 text-warning' : 'truncate min-w-0';
+            const dupKeyWarn = dupKeyRefs
+                ? `<span class="js-tooltip text-warning shrink-0 inline-flex" tabindex="0">${ICON_WARN}<div class="js-tooltip-content hidden">${dupTooltip('Duplicate stream key — also used by:', dupKeyRefs)}</div></span>`
+                : '';
 
             return `<li>
             <div class="flex items-center gap-2 ${selected} cursor-pointer js-select-pipeline" data-id="${p.id}">
@@ -746,7 +770,8 @@ function renderPipelineList(): void {
                 ${badge(outWarn, 'badge-warning')}
                 ${badge(outFailed, 'badge-error')}
                 ${badge(outOff, 'badge-ghost')}
-                <a class="truncate min-w-0">${escapeHtml(p.name)}</a>
+                <a class="${nameClass}">${escapeHtml(p.name)}</a>
+                ${dupKeyWarn}
                 ${uptimeSpan}
                 ${inputTypeBadge}
             </div>
@@ -825,7 +850,7 @@ function renderInputStats(input: InputHealth): string {
                 ? `
         <h3 class="mt-3 text-sm font-semibold opacity-60">Audio <span class="font-normal">(${input.audioTracks.length} track${input.audioTracks.length > 1 ? 's' : ''})</span></h3>
         <table class="table table-xs mt-1">
-            <thead><tr><th>#</th>${input.audioTracks.some((t) => t.pid != null) ? '<th>PID</th>' : ''}<th>Codec</th><th>Ch</th><th>Freq</th><th>Profile</th>${input.audioTracks.some((t) => t.language || t.title) ? '<th>Label</th>' : ''}</tr></thead>
+            <thead><tr><th>#</th>${input.audioTracks.some((t) => t.pid != null) ? '<th>PID</th>' : ''}<th>Codec</th><th>Profile</th><th>Ch</th><th>Freq</th>${input.audioTracks.some((t) => t.language || t.title) ? '<th>Label</th>' : ''}</tr></thead>
             <tbody>
                 ${input.audioTracks
                     .map((t) => {
@@ -834,9 +859,9 @@ function renderInputStats(input: InputHealth): string {
                         <td class="font-mono">${t.index + 1}</td>
                         ${input.audioTracks.some((x) => x.pid != null) ? `<td class="font-mono">${t.pid ?? '—'}</td>` : ''}
                         <td>${t.codec || '—'}</td>
+                        <td>${t.profile || '—'}</td>
                         <td>${t.channels || '—'}</td>
                         <td>${t.sampleRate ? `${(t.sampleRate / 1000).toFixed(1)} kHz` : '—'}</td>
-                        <td>${t.profile || '—'}</td>
                         ${input.audioTracks.some((x) => x.language || x.title) ? `<td class="opacity-60">${label || ''}</td>` : ''}
                     </tr>`;
                     })
@@ -849,12 +874,12 @@ function renderInputStats(input: InputHealth): string {
         <div class="mt-1">
             ${renderCompactMetaRow([
                 { label: 'Codec', value: a.codec },
+                { label: 'Profile', value: a.profile || null },
                 {
                     label: 'Sample Rate',
                     value: a.sample_rate ? `${(a.sample_rate / 1000).toFixed(1)} kHz` : null,
                 },
                 { label: 'Channels', value: a.channel },
-                { label: 'Profile', value: a.profile || null },
             ])}
         </div>`
                   : ''
@@ -1031,7 +1056,7 @@ function renderOverview(): void {
     const fmtHz = (hz: number | null | undefined): string => {
         if (!hz) return '—';
         const k = hz / 1000;
-        return `${Number.isInteger(k) ? k : k.toFixed(1)} kHz`;
+        return `${Number.isInteger(k) ? k : k.toFixed(1)}kHz`;
     };
 
     const td = (val: string | number | null | undefined): string =>
@@ -1076,12 +1101,14 @@ function renderOverview(): void {
 
     const audioSpec = (
         codec: string | null | undefined,
+        profile: string | null | undefined,
         channels: number | null | undefined,
         sampleRate: number | null | undefined,
         label?: string,
     ): string => {
+        const codecLabel = [codec || '—', codec ? profile || null : null].filter(Boolean).join(' ');
         const sr = sampleRate ? fmtHz(sampleRate) : null;
-        return `${codec || '—'} ${channels ? `${channels}ch` : '—'}${sr ? ` @${sr}` : ''}${label ? ` <span class="opacity-40">${label}</span>` : ''}`;
+        return `${codecLabel} ${channels ? `${channels}ch` : '—'}${sr ? ` ${sr}` : ''}${label ? ` <span class="opacity-40">${label}</span>` : ''}`;
     };
 
     // One "Stream specification" cell replaces the separate V.Codec/Resolution/FPS/Scan/
@@ -1093,7 +1120,7 @@ function renderOverview(): void {
             'codec' | 'width' | 'height' | 'fps' | 'fieldOrder' | 'profile' | 'level'
         > | null,
         audioTracks: AudioTrackInfo[] | null,
-        fallbackAudio: Pick<AudioInfo, 'codec' | 'channel' | 'sample_rate'> | null,
+        fallbackAudio: Pick<AudioInfo, 'codec' | 'channel' | 'sample_rate' | 'profile'> | null,
     ): string => {
         const vSpec = videoSpec(video);
         const audioLines =
@@ -1101,12 +1128,13 @@ function renderOverview(): void {
                 ? audioTracks.map((t, i) => {
                       const label = escapeHtml([t.language, t.title].filter(Boolean).join(' '));
                       const prefix = `Track ${i + 1}: `;
-                      return `${prefix}${audioSpec(t.codec, t.channels, t.sampleRate, label || undefined)}`;
+                      return `${prefix}${audioSpec(t.codec, t.profile, t.channels, t.sampleRate, label || undefined)}`;
                   })
                 : fallbackAudio
                   ? [
                         `Track 1: ${audioSpec(
                             fallbackAudio.codec,
+                            fallbackAudio.profile,
                             fallbackAudio.channel,
                             fallbackAudio.sample_rate,
                         )}`,
@@ -2041,21 +2069,16 @@ const ICON_ITERATION_CW = `<svg xmlns="http://www.w3.org/2000/svg" width="10" he
 const ICON_WARN = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>`;
 const ICON_ERROR = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>`;
 
-type DupRef = { pipelineName: string; outputName: string };
+type DupRef = { pipelineName: string; outputName?: string };
 
-function showDupWarning(url: string, refs: DupRef[]): void {
-    const modal = document.getElementById('dup-warn-modal') as HTMLDialogElement | null;
-    const urlEl = document.getElementById('dup-warn-url');
-    const listEl = document.getElementById('dup-warn-list');
-    if (!modal || !urlEl || !listEl) return;
-    urlEl.textContent = url;
-    listEl.innerHTML = refs
-        .map(
-            (r) =>
-                `<li><span class="font-semibold">${escapeHtml(r.pipelineName)}</span> → ${escapeHtml(r.outputName)}</li>`,
-        )
-        .join('');
-    modal.showModal();
+// Hover-tooltip content for a `.js-tooltip` trigger: a warning headline plus
+// one line per place the duplicated value shows up (see initHoverTooltips).
+function dupTooltip(headline: string, refs: DupRef[]): string {
+    const lines = refs.map(
+        (r) =>
+            `<div class="text-xs leading-snug text-warning">${escapeHtml(r.outputName ? `${r.pipelineName} → ${r.outputName}` : r.pipelineName)}</div>`,
+    );
+    return `<div class="text-xs leading-snug font-semibold text-warning mb-0.5">${escapeHtml(headline)}</div>${lines.join('')}`;
 }
 
 function restreamSinkLabel(url: string): string | null {
@@ -2123,7 +2146,7 @@ function renderOutputCard(
             (o.url.length > 27 ? o.url.slice(0, 25) + '...' + o.url.slice(-2) : o.url);
         const dupRefs = dupUrls.get(o.url);
         const dupWarnBtn = dupRefs
-            ? `<button class="btn btn-xs btn-ghost text-warning p-0 leading-none shrink-0" data-action="dup-warn" data-dup-url="${escapeHtml(o.url)}" data-dup-info="${escapeHtml(JSON.stringify(dupRefs))}" title="Duplicate destination — click for details">${ICON_WARN}</button>`
+            ? `<span class="js-tooltip text-warning shrink-0 inline-flex" tabindex="0">${ICON_WARN}<div class="js-tooltip-content hidden">${dupTooltip('Duplicate destination — also used by:', dupRefs)}</div></span>`
             : '';
         const codeClass = dupRefs
             ? 'text-xs font-normal text-warning whitespace-nowrap'
@@ -2269,11 +2292,6 @@ function renderOutputsList(pipeline: PipelineView): void {
         const btn = (e.target as Element).closest('[data-action]') as HTMLButtonElement | null;
         if (!btn || btn.disabled || btn.classList.contains('btn-disabled')) return;
         const action = btn.dataset.action!;
-        if (action === 'dup-warn') {
-            const refs = JSON.parse(btn.dataset.dupInfo ?? '[]') as DupRef[];
-            showDupWarning(btn.dataset.dupUrl ?? '', refs);
-            return;
-        }
         const outId = btn.dataset.outId!;
         if (action === 'start' || action === 'stop') {
             pendingOutputs.set(outId, action);

@@ -189,31 +189,25 @@
         <div class="mx-auto mt-2 space-y-3 px-4">
           <h2 class="text-xl font-bold" id="out-modal-title">Add Output</h2>
 
-          <div class="flex items-end gap-3">
-            <fieldset class="fieldset">
-              <legend class="fieldset-legend">Output Name</legend>
-              <input type="text" id="out-name-input" class="input w-40" placeholder="YouTube" oninput="this.classList.remove('input-error')" />
-            </fieldset>
+          <div class="flex flex-wrap items-end gap-3">
             <fieldset class="fieldset flex-1">
+              <legend class="fieldset-legend">Output Name</legend>
+              <input type="text" id="out-name-input" class="input w-full" placeholder="YouTube" oninput="this.classList.remove('input-error')" />
+            </fieldset>
+            <fieldset class="fieldset">
               <legend class="fieldset-legend">Video Encoding</legend>
-              <select class="select w-full" id="out-video-encoding-input">
+              <select class="select w-40" id="out-video-encoding-input">
                 <option value="copy">copy</option>
                 <option value="720p">720p</option>
                 <option value="1080p">1080p</option>
               </select>
             </fieldset>
             <fieldset class="fieldset">
-              <legend class="fieldset-legend">Output Type</legend>
-              <select class="select w-28" id="out-type-input" onchange="outTypeChange(this)">
-                <option value="rtmp">RTMP</option>
-                <option value="srt">SRT</option>
-              </select>
+              <legend class="fieldset-legend">Audio Encoding</legend>
+              <select class="select w-52" id="out-audio-encoding-input"></select>
             </fieldset>
           </div>
 
-          <div class="flex items-center justify-between pt-1">
-            <span class="fieldset-legend">Destination</span>
-          </div>
           <div id="out-sinks-container" class="space-y-1"></div>
         </div>
         <div class="modal-action flex-col items-end gap-2">
@@ -240,86 +234,55 @@
       <form method="dialog" class="modal-backdrop"><button>close</button></form>
     </dialog>
 
-    <!-- Duplicate destination warning modal -->
-    <dialog id="dup-warn-modal" class="modal">
-      <div class="modal-box max-w-md">
-        <h3 class="text-warning flex items-center gap-2 text-lg font-bold">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round">
-            <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
-            <path d="M12 9v4" />
-            <path d="M12 17h.01" />
-          </svg>
-          Duplicate Destination
-        </h3>
-        <p class="mt-1 font-mono text-xs break-all opacity-60" id="dup-warn-url"></p>
-        <p class="mt-3 text-sm opacity-70">This URL is used in multiple outputs:</p>
-        <ul class="mt-2 space-y-1 text-sm" id="dup-warn-list"></ul>
-        <div class="modal-action">
-          <form method="dialog"><button class="btn btn-sm">Close</button></form>
-        </div>
-      </div>
-      <form method="dialog" class="modal-backdrop"><button>close</button></form>
-    </dialog>
-
     <!-- Main grid -->
     <div class="grid h-screen min-h-0 flex-1 gap-4 p-4 pt-0" style="grid-template-columns: minmax(15rem, 20rem) minmax(0, 3fr) minmax(24rem, 4fr)">
       <!-- Left: Pipeline list -->
       <div class="bg-base-300 rounded-box mt-4 overflow-y-auto">
-        <div class="space-y-2 p-4">
-          <div class="grid grid-cols-[5rem_auto] items-center gap-x-3 text-sm">
-            <span><span id="pipe-cnt">0</span> Inputs</span>
-            <div class="flex gap-1">
-              <div class="badge badge-sm badge-success px-2" id="pipe-oks" title="Live"></div>
-              <div
-                class="badge badge-sm badge-warning cursor-pointer px-2"
-                id="pipe-warns"
-                onclick="showProblemsOverviewBtn()"
-                title="Warnings — click to view problems"></div>
-              <div class="badge badge-sm badge-neutral px-2" id="pipe-offs" title="Offline"></div>
+        <div class="bg-base-300 sticky top-0 z-10 flex items-start justify-between gap-2 p-4">
+          <div class="min-w-0 flex-1 space-y-2">
+            <div class="grid grid-cols-[5rem_auto] items-center gap-x-3 text-sm">
+              <span><span id="pipe-cnt">0</span> Inputs</span>
+              <div class="flex gap-1">
+                <div class="badge badge-sm badge-success hidden px-2" id="pipe-oks" title="Live"></div>
+                <div
+                  class="badge badge-sm badge-warning hidden cursor-pointer px-2"
+                  id="pipe-warns"
+                  onclick="showProblemsOverviewBtn()"
+                  title="Warnings — click to view problems"></div>
+                <div class="badge badge-sm badge-neutral hidden px-2" id="pipe-offs" title="Offline"></div>
+              </div>
+            </div>
+            <div class="grid grid-cols-[5rem_auto] items-center gap-x-3 text-sm">
+              <span><span id="out-cnt">0</span> Outputs</span>
+              <div class="flex gap-1">
+                <div class="badge badge-sm badge-success hidden px-2" id="out-oks" title="Running"></div>
+                <div
+                  class="badge badge-sm badge-warning hidden cursor-pointer px-2"
+                  id="out-warns"
+                  onclick="showProblemsOverviewBtn()"
+                  title="Low bitrate — click to view problems"></div>
+                <div
+                  class="badge badge-sm badge-error hidden cursor-pointer px-2"
+                  id="out-errors"
+                  onclick="showProblemsOverviewBtn()"
+                  title="Failed — click to view problems"></div>
+                <div class="badge badge-sm badge-neutral hidden px-2" id="out-offs" title="Stopped"></div>
+              </div>
             </div>
           </div>
-          <div class="grid grid-cols-[5rem_auto] items-center gap-x-3 text-sm">
-            <span><span id="out-cnt">0</span> Outputs</span>
-            <div class="flex gap-1">
-              <div class="badge badge-sm badge-success px-2" id="out-oks" title="Running"></div>
-              <div
-                class="badge badge-sm badge-warning cursor-pointer px-2"
-                id="out-warns"
-                onclick="showProblemsOverviewBtn()"
-                title="Low bitrate — click to view problems"></div>
-              <div
-                class="badge badge-sm badge-error cursor-pointer px-2"
-                id="out-errors"
-                onclick="showProblemsOverviewBtn()"
-                title="Failed — click to view problems"></div>
-              <div class="badge badge-sm badge-neutral px-2" id="out-offs" title="Stopped"></div>
-            </div>
-          </div>
-        </div>
-
-        <ul class="menu rounded-box w-full" id="pipelines"></ul>
-
-        <div class="mt-3 w-full pb-4 text-center">
-          <button class="btn btn-sm btn-square btn-accent" onclick="addPipeBtn(this)" title="Add Pipeline" aria-label="Add Pipeline">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <button class="btn btn-xs btn-square btn-accent shrink-0" onclick="addPipeBtn(this)" title="Add Pipeline" aria-label="Add Pipeline">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14" />
             </svg>
           </button>
         </div>
+
+        <ul class="menu rounded-box w-full pb-4" id="pipelines"></ul>
       </div>
 
       <!-- Middle: Pipeline info -->
       <div class="bg-base-200 mt-4 hidden overflow-y-auto rounded-xl p-4 shadow" id="pipe-info-col">
-        <div class="mb-3 flex items-center justify-between gap-3 text-xl font-bold">
+        <div class="bg-base-200 sticky top-0 z-10 mb-3 flex items-center justify-between gap-3 text-xl font-bold">
           <div class="flex min-w-0 items-center gap-2">
             <span class="truncate" id="pipe-name"></span>
             <span class="badge badge-sm badge-outline hidden shrink-0" id="pipe-readers-badge"></span>
@@ -787,8 +750,15 @@
 
       <!-- Right: Outputs -->
       <div class="bg-base-200 mt-4 hidden overflow-y-auto rounded-xl p-4 shadow" id="outs-col">
-        <div class="mb-3 flex items-center justify-between">
-          <h2 class="text-xl font-bold">Outputs</h2>
+        <div class="bg-base-200 sticky top-0 z-10 mb-3 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <h2 class="text-xl font-bold">Outputs</h2>
+            <button class="btn btn-xs btn-square btn-accent" onclick="addOutBtn()" title="Add Output" aria-label="Add Output">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14" />
+              </svg>
+            </button>
+          </div>
           <div class="flex items-center gap-1">
             <button class="btn btn-xs btn-ghost" onclick="outputsCopyBtn()" title="Copy outputs to clipboard">
               <svg
@@ -855,14 +825,7 @@
             </button>
           </div>
         </div>
-        <div class="flex flex-col gap-2" id="outputs-list"></div>
-        <div class="mt-5 text-center">
-          <button class="btn btn-sm btn-square btn-accent" onclick="addOutBtn()" title="Add Output" aria-label="Add Output">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14" />
-            </svg>
-          </button>
-        </div>
+        <div class="flex flex-col gap-2 pb-4" id="outputs-list"></div>
       </div>
 
       <!-- Overview: all pipelines table (spans middle + right columns) -->

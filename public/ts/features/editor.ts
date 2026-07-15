@@ -246,14 +246,11 @@ function pipeModal(): HTMLDialogElement {
 
 function populateKeySelect(currentKeyId: number): void {
     const select = document.getElementById('pipe-key-select') as HTMLSelectElement;
-    const assignedIds = new Set((state.config.pipelines ?? []).map((p) => p.streamKeyId));
     const options: string[] = [];
     for (const k of state.streamKeys as StreamKey[]) {
-        if (!assignedIds.has(k.id) || k.id === currentKeyId) {
-            const label = maskStreamKey(k.key);
-            const selected = k.id === currentKeyId ? ' selected' : '';
-            options.push(`<option value="${k.id}"${selected}>${label}</option>`);
-        }
+        const label = maskStreamKey(k.key);
+        const selected = k.id === currentKeyId ? ' selected' : '';
+        options.push(`<option value="${k.id}"${selected}>${label}</option>`);
     }
     select.innerHTML = options.join('');
 }
@@ -362,31 +359,10 @@ function isRestreamIdx(idx: number): boolean {
     return idx === RESTREAM_RTMP_IDX || idx === RESTREAM_SRT_IDX;
 }
 
-function isSrtServerIdx(idx: number): boolean {
-    return idx === CUSTOM_SRT_IDX || idx === RESTREAM_SRT_IDX;
-}
-
-function outputTypeIsSrt(): boolean {
-    const select = document.getElementById('out-type-input') as HTMLSelectElement | null;
-    return select?.value === 'srt';
-}
-
-function defaultServerIdxForOutputType(): number {
-    return outputTypeIsSrt() ? CUSTOM_SRT_IDX : CUSTOM_RTMP_IDX;
-}
-
 function serverOptionsHtml(selectedIdx: number): string {
-    const selectedIsSrt = isSrtServerIdx(selectedIdx);
-    return (
-        '<option value="" disabled>Server</option>' +
-        SERVERS.map((s, i) => ({ s, i }))
-            .filter(({ i }) => isSrtServerIdx(i) === selectedIsSrt)
-            .map(
-                ({ s, i }) =>
-                    `<option value="${i}"${i === selectedIdx ? ' selected' : ''}>${s.label}</option>`,
-            )
-            .join('')
-    );
+    return SERVERS.map(
+        (s, i) => `<option value="${i}"${i === selectedIdx ? ' selected' : ''}>${s.label}</option>`,
+    ).join('');
 }
 
 function buildInstagramUrl(key: string): string {
@@ -428,7 +404,7 @@ const DEFAULT_SRT_SETTINGS: SrtFormSettings = {
     mode: 'caller',
     host: '',
     port: null,
-    latencyMs: null,
+    latencyMs: 240,
     passphrase: '',
     pbKeyLen: null,
     streamId: '',
@@ -484,37 +460,81 @@ function restreamPipelineOpts(selectedId: string): string {
     );
 }
 
+function fieldsetHtml(label: string, sizeClass: string, inputHtml: string): string {
+    return `<fieldset class="fieldset ${sizeClass}">
+        <legend class="fieldset-legend">${label}</legend>
+        ${inputHtml}
+    </fieldset>`;
+}
+
 function sinkKeyFieldHtml(idx: number, key: string): string {
     if (isRestreamIdx(idx)) {
-        return `<select class="select select-sm w-full js-sink-key" onchange="this.classList.remove('select-error')">${restreamPipelineOpts(key)}</select>`;
+        return fieldsetHtml(
+            'Pipeline',
+            'flex-1',
+            `<select class="select select-sm w-full js-sink-key" onchange="this.classList.remove('select-error')">${restreamPipelineOpts(key)}</select>`,
+        );
     }
     if (idx === CUSTOM_SRT_IDX) {
         const srt = parseSrtUrl(key);
-        return `<input type="number" min="1" step="1" class="input input-sm w-32 font-mono text-xs js-srt-latency" placeholder="Latency (ms)" value="${srt.latencyMs ?? ''}" oninput="this.classList.remove('input-error')" />
-            <input type="text" class="input input-sm w-32 font-mono text-xs js-srt-passphrase" placeholder="Passphrase" value="${escapeHtml(srt.passphrase)}" oninput="this.classList.remove('input-error')" />
-            <select class="select select-sm w-28 js-srt-keylen" title="Key length">
-                <option value="" disabled${srt.pbKeyLen === null ? ' selected' : ''}>Key Length</option>
-                <option value="16"${srt.pbKeyLen === 16 ? ' selected' : ''}>16</option>
-                <option value="24"${srt.pbKeyLen === 24 ? ' selected' : ''}>24</option>
-                <option value="32"${srt.pbKeyLen === 32 ? ' selected' : ''}>32</option>
-            </select>
-            <input type="text" class="input input-sm w-32 font-mono text-xs js-srt-streamid" placeholder="Stream ID" value="${escapeHtml(srt.streamId)}" oninput="this.classList.remove('input-error')" />`;
+        return [
+            fieldsetHtml(
+                'Hostname',
+                '',
+                `<input type="text" class="input input-sm w-40 font-mono text-xs js-srt-host" placeholder="xxx.xxx.xxx.xxx" value="${escapeHtml(srt.host)}" oninput="this.classList.remove('input-error')" />`,
+            ),
+            fieldsetHtml(
+                'Port',
+                '',
+                `<input type="number" min="1" max="65535" class="input input-sm w-20 font-mono text-xs js-srt-port" placeholder="10000" value="${srt.port ?? ''}" oninput="this.classList.remove('input-error')" />`,
+            ),
+            fieldsetHtml(
+                'Type',
+                '',
+                `<select class="select select-sm w-28 js-srt-mode">
+                    <option value="caller"${srt.mode === 'caller' ? ' selected' : ''}>Caller</option>
+                    <option value="listener"${srt.mode === 'listener' ? ' selected' : ''}>Listener</option>
+                </select>`,
+            ),
+            fieldsetHtml(
+                'Latency (ms)',
+                '',
+                `<input type="number" min="1" step="1" class="input input-sm w-28 font-mono text-xs js-srt-latency" placeholder="240" value="${srt.latencyMs ?? ''}" oninput="this.classList.remove('input-error')" />`,
+            ),
+            fieldsetHtml(
+                'Passphrase',
+                '',
+                `<input type="text" class="input input-sm w-56 font-mono text-xs js-srt-passphrase" placeholder="Passphrase" value="${escapeHtml(srt.passphrase)}" oninput="this.classList.remove('input-error')" />`,
+            ),
+            fieldsetHtml(
+                'Key Length',
+                '',
+                `<select class="select select-sm w-24 js-srt-keylen" title="Key length">
+                    <option value="" disabled${srt.pbKeyLen === null ? ' selected' : ''}>—</option>
+                    <option value="16"${srt.pbKeyLen === 16 ? ' selected' : ''}>16</option>
+                    <option value="24"${srt.pbKeyLen === 24 ? ' selected' : ''}>24</option>
+                    <option value="32"${srt.pbKeyLen === 32 ? ' selected' : ''}>32</option>
+                </select>`,
+            ),
+            fieldsetHtml(
+                'Stream ID',
+                '',
+                `<input type="text" class="input input-sm w-56 font-mono text-xs js-srt-streamid" placeholder="Stream ID" value="${escapeHtml(srt.streamId)}" oninput="this.classList.remove('input-error')" />`,
+            ),
+        ].join('');
     }
     const s = SERVERS[idx];
-    return `<input type="text" class="input input-sm w-full font-mono text-xs js-sink-key"
+    return fieldsetHtml(
+        s.keyLabel,
+        'flex-1',
+        `<input type="text" class="input input-sm w-full font-mono text-xs js-sink-key"
                placeholder="${s.placeholder}" value="${escapeHtml(key)}"
-               oninput="this.classList.remove('input-error')" />`;
+               oninput="this.classList.remove('input-error')" />`,
+    );
 }
 
 function outModal(): HTMLDialogElement {
     return document.getElementById('edit-out-modal') as HTMLDialogElement;
-}
-
-export function onOutputTypeChange(_select: HTMLSelectElement): void {
-    const row = document.querySelector('#out-sinks-container .js-sink-row');
-    const audio = (row?.querySelector('.js-sink-audio') as HTMLSelectElement | null)?.value;
-    if (row) row.outerHTML = sinkRowHtml(currentSinkTracks, '', audio ?? 'copy');
-    refreshSinkAudioMode();
 }
 
 function outVideoEncodingOptions(selected: string): string {
@@ -537,10 +557,7 @@ let currentInputIsSrt = false;
 // output doesn't silently reset its track to copy).
 function audioOptionsHtml(tracks: AudioTrackInfo[], selected: string): string {
     const seen = new Set<string>(['copy']);
-    const options = [
-        '<option value="" disabled>Audio Encoding</option>',
-        `<option value="copy"${selected === 'copy' ? ' selected' : ''}>copy</option>`,
-    ];
+    const options = [`<option value="copy"${selected === 'copy' ? ' selected' : ''}>copy</option>`];
     for (const t of tracks) {
         const val = String(t.index);
         seen.add(val);
@@ -559,64 +576,30 @@ function audioOptionsHtml(tracks: AudioTrackInfo[], selected: string): string {
     return options.join('');
 }
 
-function sinkRowHtml(tracks: AudioTrackInfo[], url = '', audioEncoding = 'copy'): string {
-    const { idx, key } = url
-        ? detectServer(url)
-        : { idx: defaultServerIdxForOutputType(), key: '' };
-    return sinkRowHtmlForServer(tracks, idx, key, audioEncoding);
+function sinkRowHtmlForServer(idx: number, key = ''): string {
+    const serverField = fieldsetHtml(
+        'Server',
+        '',
+        `<select class="select select-sm w-40" id="out-server-input" onchange="outServerChange(this)">${serverOptionsHtml(idx)}</select>`,
+    );
+    return `<div class="js-sink-row flex flex-wrap items-end gap-2 rounded-box bg-base-200 px-2 py-2">${serverField}${sinkKeyFieldHtml(idx, key)}</div>`;
 }
 
-function sinkRowHtmlForServer(
-    tracks: AudioTrackInfo[],
-    idx: number,
-    key = '',
-    audioEncoding = 'copy',
-): string {
-    const serverOpts = serverOptionsHtml(idx);
-    if (idx === CUSTOM_SRT_IDX) {
-        const srt = parseSrtUrl(key);
-        return `
-        <div class="js-sink-row rounded-box bg-base-200 px-2 py-2 space-y-2">
-          <div class="flex flex-wrap gap-1">
-            <select class="select select-sm w-36 js-sink-server" onchange="outSinkServerChange(this)">${serverOpts}</select>
-            <select class="select select-sm w-48 js-sink-audio">${audioOptionsHtml(tracks, audioEncoding)}</select>
-            <input type="text" class="input input-sm w-40 font-mono text-xs js-srt-host" placeholder="Hostname" value="${escapeHtml(srt.host)}" oninput="this.classList.remove('input-error')" />
-            <input type="number" min="1" max="65535" class="input input-sm w-18 font-mono text-xs js-srt-port" placeholder="Port" value="${srt.port ?? ''}" oninput="this.classList.remove('input-error')" />
-          </div>
-          <div class="flex flex-wrap gap-1 js-sink-key-fieldset">
-            <select class="select select-sm w-28 js-srt-mode" title="Type">
-                <option value="caller"${srt.mode === 'caller' ? ' selected' : ''}>Caller</option>
-                <option value="listener"${srt.mode === 'listener' ? ' selected' : ''}>Listener</option>
-            </select>
-            ${sinkKeyFieldHtml(idx, key)}
-          </div>
-        </div>`;
-    }
-    return `
-    <div class="js-sink-row flex items-center gap-2 rounded-box bg-base-200 px-2 py-1">
-      <select class="select select-sm w-28 shrink-0 js-sink-server" onchange="outSinkServerChange(this)">${serverOpts}</select>
-      <div class="flex-1 min-w-0 js-sink-key-fieldset">${sinkKeyFieldHtml(idx, key)}</div>
-      <select class="select select-sm w-52 shrink-0 js-sink-audio">${audioOptionsHtml(tracks, audioEncoding)}</select>
-    </div>`;
-}
-
-// Constrain each sink's audio-track selector to match the input. RTMP inputs are
+// Constrain the audio-track selector to match the input. RTMP inputs are
 // single-track, so the selector is locked to "copy"; SRT inputs expose every
 // track for selection.
 function refreshSinkAudioMode(): void {
-    document
-        .querySelectorAll<HTMLSelectElement>('#out-sinks-container .js-sink-audio')
-        .forEach((sel) => {
-            if (!currentInputIsSrt) {
-                sel.innerHTML = '<option value="copy">copy</option>';
-                sel.value = 'copy';
-                sel.disabled = true;
-            } else {
-                const prev = sel.value;
-                sel.innerHTML = audioOptionsHtml(currentSinkTracks, prev);
-                sel.disabled = false;
-            }
-        });
+    const sel = document.getElementById('out-audio-encoding-input') as HTMLSelectElement | null;
+    if (!sel) return;
+    if (!currentInputIsSrt) {
+        sel.innerHTML = '<option value="copy">copy</option>';
+        sel.value = 'copy';
+        sel.disabled = true;
+    } else {
+        const prev = sel.value;
+        sel.innerHTML = audioOptionsHtml(currentSinkTracks, prev);
+        sel.disabled = false;
+    }
 }
 
 function populateDestination(
@@ -624,24 +607,26 @@ function populateDestination(
     destination: { url: string; audioEncoding: string } | null,
 ): void {
     currentSinkTracks = tracks;
+    const { idx, key } = destination?.url
+        ? detectServer(destination.url)
+        : { idx: CUSTOM_RTMP_IDX, key: '' };
+
     const container = document.getElementById('out-sinks-container');
-    if (!container) return;
-    container.innerHTML = sinkRowHtml(
-        tracks,
-        destination?.url ?? '',
-        destination?.audioEncoding ?? 'copy',
-    );
+    if (container) container.innerHTML = sinkRowHtmlForServer(idx, key);
+
+    const audioSel = document.getElementById(
+        'out-audio-encoding-input',
+    ) as HTMLSelectElement | null;
+    if (audioSel)
+        audioSel.innerHTML = audioOptionsHtml(tracks, destination?.audioEncoding ?? 'copy');
+
     refreshSinkAudioMode();
 }
 
-export function onSinkServerChange(select: HTMLSelectElement): void {
-    select.classList.remove('select-error');
-    const row = select.closest('.js-sink-row');
-    if (!row) return;
+export function onOutServerChange(select: HTMLSelectElement): void {
     const idx = parseInt(select.value);
-    const audio = (row.querySelector('.js-sink-audio') as HTMLSelectElement | null)?.value;
-    row.outerHTML = sinkRowHtmlForServer(currentSinkTracks, idx, '', audio ?? 'copy');
-    refreshSinkAudioMode();
+    const container = document.getElementById('out-sinks-container');
+    if (container) container.innerHTML = sinkRowHtmlForServer(idx, '');
 }
 
 function pipelineTracks(pipelineId: string): AudioTrackInfo[] {
@@ -650,19 +635,25 @@ function pipelineTracks(pipelineId: string): AudioTrackInfo[] {
 
 export function openAddOutput(pipelineId: string): void {
     const modal = outModal();
-    const existingCount = (state.config.outputs ?? []).filter(
-        (o) => String(o.pipelineId) === pipelineId,
-    ).length;
+    const pipeline = state.pipelines.find((p) => p.id === pipelineId);
+    const existingCount = pipeline?.outs.length ?? 0;
     (document.getElementById('out-pipe-id-input') as HTMLInputElement).value = pipelineId;
     (document.getElementById('out-id-input') as HTMLInputElement).value = '';
     const nameEl = document.getElementById('out-name-input') as HTMLInputElement;
     nameEl.value = `Output ${existingCount + 1}`;
     nameEl.classList.remove('input-error');
-    currentInputIsSrt = state.pipelines.find((p) => p.id === pipelineId)?.input.isSrt ?? false;
+    currentInputIsSrt = pipeline?.input.isSrt ?? false;
+
+    // Prefill from the pipeline's most recently added output so repeat destinations
+    // (same server/encoding) don't have to be re-entered from scratch each time.
+    const previous = pipeline?.outs[pipeline.outs.length - 1] ?? null;
+
     (document.getElementById('out-video-encoding-input') as HTMLSelectElement).innerHTML =
-        outVideoEncodingOptions('copy');
-    (document.getElementById('out-type-input') as HTMLSelectElement).value = 'rtmp';
-    populateDestination(pipelineTracks(pipelineId), null);
+        outVideoEncodingOptions(previous?.videoEncoding ?? 'copy');
+    populateDestination(
+        pipelineTracks(pipelineId),
+        previous ? { url: previous.url, audioEncoding: previous.audioEncoding } : null,
+    );
     (document.getElementById('out-modal-title') as HTMLElement).textContent = 'Add Output';
     (document.getElementById('out-save-btn') as HTMLButtonElement).disabled = false;
     (document.getElementById('out-running-hint') as HTMLElement).classList.add('hidden');
@@ -683,11 +674,6 @@ export function openEditOutput(pipelineId: string, outId: string): void {
     currentInputIsSrt = state.pipelines.find((p) => p.id === pipelineId)?.input.isSrt ?? false;
     (document.getElementById('out-video-encoding-input') as HTMLSelectElement).innerHTML =
         outVideoEncodingOptions(output.videoEncoding);
-    (document.getElementById('out-type-input') as HTMLSelectElement).value = output.url.startsWith(
-        'srt://',
-    )
-        ? 'srt'
-        : 'rtmp';
     populateDestination(pipelineTracks(pipelineId), {
         url: output.url,
         audioEncoding: output.audioEncoding,
@@ -768,21 +754,21 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
 
     const videoEncoding = (document.getElementById('out-video-encoding-input') as HTMLSelectElement)
         .value;
+    const audioEncoding = (document.getElementById('out-audio-encoding-input') as HTMLSelectElement)
+        .value;
+    const serverIdx = parseInt(
+        (document.getElementById('out-server-input') as HTMLSelectElement).value,
+    );
 
     const row = document.querySelector('#out-sinks-container .js-sink-row');
     let url = '';
-    let audioEncoding = 'copy';
     let destinationValid = row !== null;
     if (row) {
-        const serverIdx = parseInt(
-            (row.querySelector('.js-sink-server') as HTMLSelectElement).value,
-        );
         const keyEl = row.querySelector('.js-sink-key') as
             | HTMLInputElement
             | HTMLSelectElement
             | null;
         const key = keyEl?.value.trim() ?? '';
-        audioEncoding = (row.querySelector('.js-sink-audio') as HTMLSelectElement).value;
         if (serverIdx === CUSTOM_SRT_IDX) {
             const srt = readSrtSettings(row);
             if ('error' in srt) {
