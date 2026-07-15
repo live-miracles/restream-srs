@@ -3,6 +3,15 @@ export function setInnerText(id: string, val: unknown): void {
     if (el) el.textContent = String(val ?? '');
 }
 
+// Sets a count badge's text and hides it entirely when the count is zero,
+// rather than showing an empty "0" pill.
+export function setBadgeCount(id: string, count: number): void {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = String(count);
+    el.classList.toggle('hidden', count === 0);
+}
+
 // Escape a string for interpolation into HTML built with template literals.
 // Safe for both text content and double-quoted attribute values. Must be
 // applied to every user- or publisher-controlled string (pipeline/output

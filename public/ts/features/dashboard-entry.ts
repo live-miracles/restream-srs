@@ -18,8 +18,7 @@ import {
     showSrsLogs,
     openAddOutput,
     submitOutputForm,
-    onSinkServerChange,
-    onOutputTypeChange,
+    onOutServerChange,
     copyOutputs,
     pasteOutputs,
     startAllOutputs,
@@ -51,8 +50,7 @@ declare global {
         outputsStartAllBtn: () => Promise<void>;
         outputsStopAllBtn: () => Promise<void>;
         outFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
-        outSinkServerChange: (select: HTMLSelectElement) => void;
-        outTypeChange: (select: HTMLSelectElement) => void;
+        outServerChange: (select: HTMLSelectElement) => void;
         copyText: (text: string) => Promise<void>;
         previewToggleBtn: () => Promise<void>;
         previewTrackChange: () => void;
@@ -161,8 +159,7 @@ window.outputsStopAllBtn = async () => {
 };
 
 window.outFormBtn = (btn) => submitOutputForm(btn);
-window.outSinkServerChange = (select) => onSinkServerChange(select);
-window.outTypeChange = (select) => onOutputTypeChange(select);
+window.outServerChange = (select) => onOutServerChange(select);
 
 window.copyText = copyText;
 
