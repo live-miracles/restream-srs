@@ -61,7 +61,7 @@ app.use('/api', requireAuth);
 
 registerConfigApi(app, db);
 registerPipelineApi(app, db, outputService, previewService, srtRelayService);
-registerOutputApi(app, db, outputService);
+registerOutputApi(app, db, outputService, healthService);
 registerPreviewApi(app, previewService);
 registerSettingsApi(app, db);
 registerVersionApi(app);

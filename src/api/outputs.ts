@@ -2,6 +2,7 @@ import type { Express } from 'express';
 import { validateOutputUrl, validateAudioEncoding, ENCODINGS } from '../utils/ffmpeg.js';
 import type { Db } from '../types.js';
 import type { OutputService } from '../services/outputs.js';
+import type { HealthService } from '../services/health.js';
 import { cyan } from '../utils/ansiColor.js';
 
 // Validate an output's destination from the request body. It needs a valid URL
@@ -25,7 +26,12 @@ function parseDestination(
     return { url, audioEncoding };
 }
 
-export function registerOutputApi(app: Express, db: Db, outputService: OutputService): void {
+export function registerOutputApi(
+    app: Express,
+    db: Db,
+    outputService: OutputService,
+    healthService: HealthService,
+): void {
     app.post('/api/pipelines/:pipelineId/outputs', (req, res) => {
         const pipelineId = parseInt(req.params.pipelineId);
         if (isNaN(pipelineId)) return res.status(400).json({ error: 'invalid pipelineId' });
@@ -103,6 +109,12 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
 
         db.setDesiredStateForPipeline(pipelineId, 'running');
         const scheduled = outputService.restartPipelineOutputs(pipelineId, 0, true);
+        for (const o of db.listOutputsForPipeline(pipelineId)) {
+            const manualStartAtMs = outputService.getStats(o.id).manualStartAtMs;
+            if (manualStartAtMs !== null) {
+                healthService.patchOutputManualStart(pipelineId, o.id, manualStartAtMs);
+            }
+        }
         console.log(
             cyan(
                 `[outputs] user start-all requested: pipeline=${pipelineId} scheduled=${scheduled}`,
@@ -219,7 +231,11 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
         try {
             db.setOutputDesiredState(outId, 'running');
             await outputService.start(outId);
-            return res.json({ ok: true, status: outputService.getStats(outId) });
+            const stats = outputService.getStats(outId);
+            if (stats.manualStartAtMs !== null) {
+                healthService.patchOutputManualStart(output.pipelineId, outId, stats.manualStartAtMs);
+            }
+            return res.json({ ok: true, status: stats });
         } catch (err) {
             try {
                 db.setOutputDesiredState(outId, 'stopped');
