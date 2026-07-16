@@ -222,8 +222,20 @@
 
     <!-- Logs modal -->
     <dialog id="logs-modal" class="modal">
-      <div class="modal-box flex h-[90vh] w-[80vw] max-w-none flex-col">
-        <h2 class="shrink-0 text-xl font-bold" id="logs-modal-title">Output Logs</h2>
+      <div class="modal-box flex h-[90vh] w-full max-w-[600px] flex-col">
+        <div class="flex shrink-0 items-center justify-between gap-2">
+          <h2 class="text-xl font-bold" id="logs-modal-title">Output Logs</h2>
+          <button
+            id="logs-modal-refresh"
+            type="button"
+            class="btn btn-sm btn-ghost btn-square hidden items-center justify-center leading-none"
+            title="Refresh stats">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" class="block h-4 w-4 shrink-0 fill-current" aria-hidden="true">
+              <path
+                d="M10 3a7 7 0 0 1 6.56 4.57.75.75 0 1 1-1.4.53A5.5 5.5 0 1 0 14.5 13H12a.75.75 0 0 1 0-1.5h4.25A.75.75 0 0 1 17 12.25v4.25a.75.75 0 0 1-1.5 0v-1.77A7 7 0 1 1 10 3Z" />
+            </svg>
+          </button>
+        </div>
         <div id="logs-modal-content" class="mt-4 min-h-0 flex-1 space-y-1 overflow-y-auto font-mono text-xs"></div>
         <div class="modal-action shrink-0">
           <form method="dialog">
@@ -491,6 +503,22 @@
                 <div id="srt-bonding-status-tooltip-content" class="js-tooltip-content hidden"></div>
               </div>
               <span class="text-xs font-semibold opacity-60">SRT Bonding</span>
+              <button class="btn btn-xs btn-ghost shrink-0 p-0 leading-none opacity-60" id="srt-bonding-info-btn" title="View all SRT details">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 16v-4" />
+                  <path d="M12 8h.01" />
+                </svg>
+              </button>
             </div>
             <div class="flex gap-1">
               <button class="btn btn-xs btn-ghost btn-outline" onclick="copyText(document.getElementById('srt-bonding-url').dataset.ip)">

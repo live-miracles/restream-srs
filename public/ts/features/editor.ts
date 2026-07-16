@@ -7,6 +7,8 @@ import {
     copyText,
     escapeHtml,
     flashSaveSuccess,
+    fmtMs,
+    fmtMbpsValue,
 } from '../core/utils.js';
 import { refreshAfterMutation } from './dashboard.js';
 import type { StreamKey, AudioTrackInfo, HostProbeTarget, ServerLogTail } from '../types.js';
@@ -844,6 +846,7 @@ export async function showPipelineLogs(pipelineId: string): Promise<void> {
     const titleEl = document.getElementById('logs-modal-title');
     const contentEl = document.getElementById('logs-modal-content');
     if (!modal || !contentEl) return;
+    hideLogsModalRefresh();
 
     const pipelineName = state.pipelines.find((p) => p.id === pipelineId)?.name ?? pipelineId;
     if (titleEl) titleEl.textContent = `History — ${pipelineName}`;
@@ -875,6 +878,7 @@ export async function showOutputError(pipelineId: string, outId: string): Promis
     const titleEl = document.getElementById('logs-modal-title');
     const contentEl = document.getElementById('logs-modal-content');
     if (!modal || !contentEl) return;
+    hideLogsModalRefresh();
 
     const pipeline = state.pipelines.find((p) => p.id === pipelineId);
     const output = pipeline?.outs.find((o) => o.id === outId);
@@ -926,6 +930,7 @@ export function showRelayError(pipelineId: string): void {
     const titleEl = document.getElementById('logs-modal-title');
     const contentEl = document.getElementById('logs-modal-content');
     if (!modal || !contentEl) return;
+    hideLogsModalRefresh();
 
     const pipeline = state.pipelines.find((p) => p.id === pipelineId);
     if (titleEl) titleEl.textContent = `SRT Bonding Relay Error — ${pipeline?.name ?? pipelineId}`;
@@ -945,6 +950,130 @@ export function showRelayError(pipelineId: string): void {
         <div class="text-xs opacity-50 mb-2">${ts}</div>
         <pre class="text-xs text-error opacity-80 whitespace-pre-wrap break-all overflow-x-auto">${esc(message)}</pre>
     `;
+    modal.showModal();
+}
+
+function hideLogsModalRefresh(): void {
+    const refreshBtn = document.getElementById('logs-modal-refresh');
+    if (!refreshBtn) return;
+    refreshBtn.classList.add('hidden');
+    refreshBtn.classList.remove('inline-flex');
+    refreshBtn.onclick = null;
+}
+
+function srtDetailRow(label: string, value: string): string {
+    return `<div class="flex items-center justify-between gap-4 py-1 border-b border-base-content/10 last:border-b-0">
+        <span class="opacity-60">${label}</span>
+        <span class="text-right">${value}</span>
+    </div>`;
+}
+
+function srtDetailSection(title: string, rowsHtml: string): string {
+    return `<div class="mb-4">
+        <div class="text-xs font-semibold uppercase opacity-50 mb-1">${escapeHtml(title)}</div>
+        <div class="text-xs">${rowsHtml}</div>
+    </div>`;
+}
+
+function fmtRawCount(n: number | null | undefined): string {
+    return n != null ? n.toLocaleString() : '—';
+}
+
+// Full, unabbreviated dump of every field the relay reports for a stream's
+// input/output/legs — the compact stats row and bonded-legs table only
+// surface a curated subset, this is the "show me everything" escape hatch.
+// Split from showSrtBondingDetails so the modal's refresh button can re-pull
+// the latest polled state.pipelines snapshot without reopening the dialog.
+function renderSrtBondingDetailsContent(pipelineId: string): void {
+    const titleEl = document.getElementById('logs-modal-title');
+    const contentEl = document.getElementById('logs-modal-content');
+    if (!contentEl) return;
+
+    const pipeline = state.pipelines.find((p) => p.id === pipelineId);
+    if (titleEl) titleEl.textContent = `SRT Bonding Details — ${pipeline?.name ?? pipelineId}`;
+    if (!pipeline) {
+        contentEl.innerHTML = '<p class="opacity-50 text-sm">No SRT bonding data.</p>';
+        return;
+    }
+
+    const { input, output } = pipeline.srtBonding;
+
+    const inputRows = [
+        srtDetailRow('Recv Packets Total', fmtRawCount(input.recvPacketsTotal)),
+        srtDetailRow('Recv Unique Packets Total', fmtRawCount(input.recvUniquePacketsTotal)),
+        srtDetailRow('Recv Loss Total', fmtRawCount(input.recvLossTotal)),
+        srtDetailRow('Recv Drop Total', fmtRawCount(input.recvDropTotal)),
+        srtDetailRow('Retransmit Total', fmtRawCount(input.retransTotal)),
+        srtDetailRow('RTT', fmtMs(input.rttMs)),
+        srtDetailRow('Latency', fmtMs(input.latencyMs)),
+        srtDetailRow('Bandwidth', fmtMbpsValue(input.bandwidthMbps)),
+        srtDetailRow('Recv Rate', fmtMbpsValue(input.recvRateMbps)),
+        srtDetailRow('Belated Total', fmtRawCount(input.belatedTotal)),
+        srtDetailRow('Belated Avg', fmtMs(input.belatedAvgMs)),
+        srtDetailRow('Undecrypt Total', fmtRawCount(input.undecryptTotal)),
+        srtDetailRow('Reorder Distance', fmtRawCount(input.reorderDistance)),
+        srtDetailRow('Recv Buffer', fmtMs(input.rcvBufMs)),
+    ].join('');
+
+    const outputRows = [
+        srtDetailRow('Sent Packets Total', fmtRawCount(output.sentPacketsTotal)),
+        srtDetailRow('Send Loss Total', fmtRawCount(output.sendLossTotal)),
+        srtDetailRow('Send Drop Total', fmtRawCount(output.sendDropTotal)),
+        srtDetailRow('Retransmit Total', fmtRawCount(output.retransTotal)),
+        srtDetailRow('RTT', fmtMs(output.rttMs)),
+        srtDetailRow('Latency', fmtMs(output.latencyMs)),
+        srtDetailRow('Bandwidth', fmtMbpsValue(output.bandwidthMbps)),
+        srtDetailRow('Send Rate', fmtMbpsValue(output.sendRateMbps)),
+        srtDetailRow('Undecrypt Total', fmtRawCount(output.undecryptTotal)),
+        srtDetailRow('Send Buffer', fmtMs(output.sndBufMs)),
+    ].join('');
+
+    const legsHtml =
+        input.legs.length === 0
+            ? '<p class="opacity-50 text-sm">No bonded legs.</p>'
+            : input.legs
+                  .map((leg, idx) => {
+                      const legRows = [
+                          srtDetailRow('IP', escapeHtml(leg.ip)),
+                          srtDetailRow('Port', String(leg.port)),
+                          srtDetailRow('State', escapeHtml(leg.state)),
+                          srtDetailRow('RTT', fmtMs(leg.rttMs)),
+                          srtDetailRow('Latency', fmtMs(leg.latencyMs)),
+                          srtDetailRow('Recv Packets Total', fmtRawCount(leg.recvPacketsTotal)),
+                          srtDetailRow(
+                              'Recv Unique Packets Total',
+                              fmtRawCount(leg.recvUniquePacketsTotal),
+                          ),
+                          srtDetailRow('Recv Loss Total', fmtRawCount(leg.recvLossTotal)),
+                          srtDetailRow('Recv Drop Total', fmtRawCount(leg.recvDropTotal)),
+                          srtDetailRow('Retransmit Total', fmtRawCount(leg.retransTotal)),
+                          srtDetailRow('Bandwidth', fmtMbpsValue(leg.bandwidthMbps)),
+                          srtDetailRow('Recv Rate', fmtMbpsValue(leg.recvRateMbps)),
+                          srtDetailRow('Belated Total', fmtRawCount(leg.belatedTotal)),
+                          srtDetailRow('Belated Avg', fmtMs(leg.belatedAvgMs)),
+                          srtDetailRow('Undecrypt Total', fmtRawCount(leg.undecryptTotal)),
+                          srtDetailRow('Reorder Distance', fmtRawCount(leg.reorderDistance)),
+                          srtDetailRow('Recv Buffer', fmtMs(leg.rcvBufMs)),
+                      ].join('');
+                      return srtDetailSection(`Leg ${idx + 1} — ${escapeHtml(leg.ip)}`, legRows);
+                  })
+                  .join('');
+
+    contentEl.innerHTML =
+        srtDetailSection('Input', inputRows) + srtDetailSection('Output', outputRows) + legsHtml;
+}
+
+export function showSrtBondingDetails(pipelineId: string): void {
+    const modal = document.getElementById('logs-modal') as HTMLDialogElement | null;
+    const refreshBtn = document.getElementById('logs-modal-refresh');
+    if (!modal) return;
+
+    renderSrtBondingDetailsContent(pipelineId);
+    if (refreshBtn) {
+        refreshBtn.classList.remove('hidden');
+        refreshBtn.classList.add('inline-flex');
+        refreshBtn.onclick = () => renderSrtBondingDetailsContent(pipelineId);
+    }
     modal.showModal();
 }
 

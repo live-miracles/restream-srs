@@ -7,6 +7,8 @@ import {
     getUrlParam,
     maskStreamKey,
     maskSecret,
+    fmtMs,
+    fmtMbpsValue,
     LOW_BITRATE_KBPS,
     STATUS_COLOR_GOOD,
     STATUS_COLOR_WARN,
@@ -110,12 +112,12 @@ function formatCompactCount(n: number): string {
     return String(Math.round(n));
 }
 
-function fmtLossDropRexmit(
+function fmtLossRexmitDrop(
     loss: number | null | undefined,
-    drop: number | null | undefined,
     rexmit: number | null | undefined,
+    drop: number | null | undefined,
 ): string {
-    return `${loss != null ? formatCompactCount(loss) : '—'} / ${drop != null ? formatCompactCount(drop) : '—'} / ${rexmit != null ? formatCompactCount(rexmit) : '—'}`;
+    return `${loss != null ? formatCompactCount(loss) : '—'} / ${rexmit != null ? formatCompactCount(rexmit) : '—'} / ${drop != null ? formatCompactCount(drop) : '—'}`;
 }
 
 function setMetricSeverity(id: string, percent: number | null): void {
@@ -457,7 +459,7 @@ function deriveOutputMedia(
 }
 
 function brokenLegCount(pipeline: PipelineView): number {
-    return pipeline.srtBonding.legs.filter((leg) => leg.state === 'broken').length;
+    return pipeline.srtBonding.input.legs.filter((leg) => leg.state === 'broken').length;
 }
 
 // True only when every configured leg is down — a total input failure, not
@@ -465,7 +467,7 @@ function brokenLegCount(pipeline: PipelineView): number {
 // input side; anything less (some legs down, or only one leg configured to
 // begin with) is a 'warn', not an 'error'.
 function allLegsBroken(pipeline: PipelineView): boolean {
-    const legs = pipeline.srtBonding.legs;
+    const legs = pipeline.srtBonding.input.legs;
     return legs.length > 0 && brokenLegCount(pipeline) === legs.length;
 }
 
@@ -482,7 +484,7 @@ function flowStatusColor(status: RelayFlowStatus): string {
 // tooltip instead of one hiding the other.
 function relayInputReasons(pipeline: PipelineView, relayProcessRunning: boolean): string[] {
     if (!relayProcessRunning || !pipeline.srtBonding.inputActive) return [];
-    const legs = pipeline.srtBonding.legs;
+    const legs = pipeline.srtBonding.input.legs;
     const broken = brokenLegCount(pipeline);
     const reasons: string[] = [];
 
@@ -613,7 +615,7 @@ function relayInputStatus(pipeline: PipelineView, relayProcessRunning: boolean):
     if (allLegsBroken(pipeline)) return 'error';
     if (!relayHasRecentInputFlow(pipeline)) return 'warn';
     if (brokenLegCount(pipeline) > 0) return 'warn';
-    if (pipeline.srtBonding.legs.length <= 1) return 'warn';
+    if (pipeline.srtBonding.input.legs.length <= 1) return 'warn';
     return 'good';
 }
 
@@ -1168,11 +1170,11 @@ function renderOverview(): void {
             p.srtBonding.inputActive ||
             p.srtBonding.outputConnected ||
             p.srtBonding.forwardedPackets > 0 ||
-            p.srtBonding.recvPacketsTotal > 0 ||
-            p.srtBonding.recvUniquePacketsTotal > 0 ||
-            p.srtBonding.retransTotal > 0 ||
-            p.srtBonding.recvLossTotal > 0 ||
-            p.srtBonding.recvDropTotal > 0,
+            (p.srtBonding.input.recvPacketsTotal ?? 0) > 0 ||
+            p.srtBonding.input.recvUniquePacketsTotal > 0 ||
+            p.srtBonding.input.retransTotal > 0 ||
+            p.srtBonding.input.recvLossTotal > 0 ||
+            p.srtBonding.input.recvDropTotal > 0,
     );
     const relayProblemCount = activeRelayPipelines.filter(
         (p) =>
@@ -1184,18 +1186,16 @@ function renderOverview(): void {
             !isOffline(relayInputStatus(p, relayProcessRunning)) ||
             !isOffline(relayOutputStatus(p, relayProcessRunning)),
     ).length;
-    const fmtRtt = (ms: number | null): string =>
-        ms != null ? `${ms.toFixed(ms >= 10 ? 0 : 1)} ms` : '—';
     const legCells = (leg: SrtBondingLeg | null): string => {
-        if (!leg) return `${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}`;
+        if (!leg) return `${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}`;
         const color = legStateDotColor(leg.state);
-        const rx = leg.recvUniquePacketsTotal ?? leg.recvPacketsTotal;
         return `
             <td><span class="inline-flex items-center gap-1"><span class="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style="background:${color}"></span>${escapeHtml(leg.state)}</span></td>
             <td class="font-mono text-xs">${escapeHtml(leg.ip)}</td>
-            <td class="font-mono text-xs">${fmtRtt(leg.rttMs)}</td>
-            <td class="font-mono text-xs">${rx != null ? formatCompactCount(rx) : '—'}</td>
-            <td class="font-mono text-xs" title="Loss / Drop / Rexmit">${fmtLossDropRexmit(leg.recvLossTotal, leg.recvDropTotal, leg.retransTotal)}</td>`;
+            <td class="font-mono text-xs">${fmtMs(leg.latencyMs)}</td>
+            <td class="font-mono text-xs">${fmtMs(leg.rttMs)}</td>
+            <td class="font-mono text-xs">${fmtMbpsValue(leg.recvRateMbps)}</td>
+            <td class="font-mono text-xs" title="Loss / Rexmit / Drop">${fmtLossRexmitDrop(leg.recvLossTotal, leg.retransTotal, leg.recvDropTotal)}</td>`;
     };
 
     let relayRows = '';
@@ -1209,9 +1209,8 @@ function renderOverview(): void {
             const rowError = inputSt === 'error' || outputSt === 'error';
             if (problemsOnly && !rowWarn && !rowError) continue;
             if (activeOnly && isOffline(inputSt) && isOffline(outputSt)) continue;
-            const rxPackets = p.srtBonding.recvUniquePacketsTotal || p.srtBonding.recvPacketsTotal;
 
-            const legs = p.srtBonding.legs;
+            const legs = p.srtBonding.input.legs;
             const rowspan = legs.length > 1 ? ` rowspan="${legs.length}"` : '';
             const rowAttr = `class="hover" ${statusBg(rowError, rowWarn)}`;
             const sharedCells = `
@@ -1220,18 +1219,17 @@ function renderOverview(): void {
                 <td${rowspan}>${overviewStatusBadge(outputSt)}</td>
                 <td${rowspan}>${renderOverviewIssues(relayIssues(p, relayProcessRunning, inputSt, outputSt))}</td>`;
             const totalsCells = `
-                <td class="font-mono text-xs"${rowspan}>${formatCompactCount(rxPackets)} / ${formatCompactCount(p.srtBonding.forwardedPackets)}</td>
-                <td class="font-mono text-xs" title="Loss / Drop / Rexmit"${rowspan}>${fmtLossDropRexmit(p.srtBonding.recvLossTotal, p.srtBonding.recvDropTotal, p.srtBonding.retransTotal)}</td>`;
+                <td class="font-mono text-xs" title="Loss / Rexmit / Drop"${rowspan}>${fmtLossRexmitDrop(p.srtBonding.input.recvLossTotal, p.srtBonding.input.retransTotal, p.srtBonding.input.recvDropTotal)}</td>`;
 
             if (legs.length > 1) {
                 relayRows += legs
                     .map(
                         (leg, i) =>
-                            `<tr ${rowAttr}>${i === 0 ? sharedCells : ''}${legCells(leg)}${i === 0 ? totalsCells : ''}</tr>`,
+                            `<tr ${rowAttr}>${i === 0 ? sharedCells : ''}${i === 0 ? totalsCells : ''}${legCells(leg)}</tr>`,
                     )
                     .join('');
             } else {
-                relayRows += `<tr ${rowAttr}>${sharedCells}${legCells(legs[0] ?? null)}${totalsCells}</tr>`;
+                relayRows += `<tr ${rowAttr}>${sharedCells}${totalsCells}${legCells(legs[0] ?? null)}</tr>`;
             }
         }
         if (problemsOnly && relayRows === '') {
@@ -1394,7 +1392,7 @@ function renderOverview(): void {
         <h2 class="mb-2 text-lg font-bold">SRT Bonding Relay <span class="badge badge-neutral badge-sm ml-1">${activeRelayPipelines.length}</span></h2>
         <div class="overflow-x-auto mb-6">
             <table class="table table-sm table-relay">
-                ${thead(['Pipeline', 'Input', 'Output', 'Issues', 'State', 'Leg IP', 'RTT', 'Rx', '<span title="Loss / Drop / Rexmit">L / D / R</span>', 'Rx / Fwd', '<span title="Loss / Drop / Rexmit">L / D / R</span>'])}
+                ${thead(['Pipeline', 'Input', 'Output', 'Issues', '<span title="Loss / Rexmit / Drop">L / R / D</span>', 'State', 'Leg IP', 'Latency', 'RTT', 'Rate', '<span title="Loss / Rexmit / Drop">L / R / D</span>'])}
                 <tbody>${relayRows}</tbody>
             </table>
         </div>
@@ -1882,6 +1880,7 @@ function renderPipelineInfo(selectedId: string | null): void {
     const bondingDotFill = document.getElementById('srt-bonding-status-fill');
     const bondingTooltipContent = document.getElementById('srt-bonding-status-tooltip-content');
     const bondingUrl = document.getElementById('srt-bonding-url');
+    const bondingInfoBtn = document.getElementById('srt-bonding-info-btn');
     const bondingStats = document.getElementById('srt-bonding-stats');
     const bondingLegs = document.getElementById('srt-bonding-legs');
     const bondingErrWrap = document.getElementById('srt-bonding-last-error-wrap');
@@ -1931,26 +1930,23 @@ function renderPipelineInfo(selectedId: string | null): void {
         bondingUrl.dataset.streamId = bondingStreamId;
         bondingUrl.dataset.passphrase = state.config.srtPassphrase || '';
     }
+    if (bondingInfoBtn) {
+        (bondingInfoBtn as HTMLButtonElement).onclick = () => {
+            void import('../features/editor.js').then((ed) =>
+                ed.showSrtBondingDetails(pipeline.id),
+            );
+        };
+    }
     if (bondingStats) {
         const b = pipeline.srtBonding;
-        const rxPkts = b.recvUniquePacketsTotal || b.recvPacketsTotal;
+        const rxPkts = b.input.recvUniquePacketsTotal || b.input.recvPacketsTotal || 0;
         const hasSessionStats =
-            relayProcessRunning && (bondingInputActive || rxPkts > 0 || b.retransTotal > 0);
+            relayProcessRunning && (bondingInputActive || rxPkts > 0 || b.input.retransTotal > 0);
         const hasOutputStats =
-            relayProcessRunning && (bondingOutputConnected || b.outputSentPacketsTotal > 0);
+            relayProcessRunning && (bondingOutputConnected || b.output.sentPacketsTotal > 0);
         const items = [
             ...(hasSessionStats
                 ? [
-                      {
-                          label: 'SRS Pub',
-                          labelTitle:
-                              'The publisher SRS reports as active for this stream key. "local output" means another pipeline output is occupying the stream locally.',
-                          value: b.localSrtPublisherConflict
-                              ? 'local output'
-                              : b.srsPublisher
-                                ? `${b.srsPublisher.ip ?? 'unknown'} ${b.srsPublisher.type ?? ''}`.trim()
-                                : '—',
-                      },
                       {
                           label: 'Rx',
                           labelTitle:
@@ -1958,46 +1954,33 @@ function renderPipelineInfo(selectedId: string | null): void {
                           value: formatCompactCount(rxPkts),
                       },
                       {
-                          label: 'Loss',
+                          label: 'Latency',
                           labelTitle:
-                              'Packets detected as missing on the upstream bonded SRT input receiver.',
-                          value: formatCompactCount(b.recvLossTotal),
+                              'Negotiated SRT buffering latency for the input. For a bonded group this is the max latency negotiated across legs.',
+                          value: fmtMs(b.input.latencyMs),
                       },
                       {
-                          label: 'Rexmit',
+                          label: 'L / R / D',
                           labelTitle:
-                              'Receive-side retransmission metric from the upstream bonded SRT input. Depending on the SRT library build, this may behave like a local/windowed stat rather than a lifetime total.',
-                          value: formatCompactCount(b.retransTotal),
-                      },
-                      {
-                          label: 'Drop',
-                          value: formatCompactCount(b.recvDropTotal),
+                              'Loss / Rexmit / Drop packets on the upstream bonded SRT input receiver.',
+                          value: fmtLossRexmitDrop(
+                              b.input.recvLossTotal,
+                              b.input.retransTotal,
+                              b.input.recvDropTotal,
+                          ),
                       },
                   ]
                 : []),
             ...(hasOutputStats
                 ? [
                       {
-                          label: 'Out Sent',
-                          labelTitle: 'Packets sent on the downstream output connection.',
-                          value: formatCompactCount(b.outputSentPacketsTotal),
-                      },
-                      {
-                          label: 'Out Loss',
-                          labelTitle:
-                              'Send-side loss reported by SRT on the downstream output connection.',
-                          value: formatCompactCount(b.outputSendLossTotal),
-                      },
-                      {
-                          label: 'Out Rexmit',
-                          labelTitle: 'Retransmissions on the downstream output connection.',
-                          value: formatCompactCount(b.outputRetransTotal),
-                      },
-                      {
-                          label: 'Out Drop',
-                          labelTitle:
-                              'Send-side drops reported by SRT on the downstream output connection.',
-                          value: formatCompactCount(b.outputSendDropTotal),
+                          label: 'Out L / R / D',
+                          labelTitle: 'Loss / Rexmit / Drop on the downstream output connection.',
+                          value: fmtLossRexmitDrop(
+                              b.output.sendLossTotal,
+                              b.output.retransTotal,
+                              b.output.sendDropTotal,
+                          ),
                       },
                   ]
                 : []),
@@ -2006,7 +1989,7 @@ function renderPipelineInfo(selectedId: string | null): void {
             items.length > 0 ? renderCompactMetaRow(items, 'input-meta-row-sm') : '';
     }
     if (bondingLegs) {
-        const legs = pipeline.srtBonding.legs;
+        const legs = pipeline.srtBonding.input.legs;
         bondingLegs.innerHTML =
             legs.length === 0
                 ? ''
@@ -2014,20 +1997,20 @@ function renderPipelineInfo(selectedId: string | null): void {
                    <div class="overflow-x-auto">
                    <table class="table table-xs">
                        <thead><tr>
-                           <th>State</th><th>Leg IP</th><th>Port</th><th>RTT</th>
-                           <th>Rx</th><th><span title="Loss / Drop / Rexmit">L / D / R</span></th>
+                           <th>State</th><th>Leg IP</th><th>RTT</th>
+                           <th>Rate</th><th>Buffer</th>
+                           <th><span title="Loss / Rexmit / Drop">L / R / D</span></th>
                        </tr></thead>
                        <tbody>${legs
                            .map((leg) => {
                                const color = legStateDotColor(leg.state);
-                               const rx = leg.recvUniquePacketsTotal ?? leg.recvPacketsTotal;
                                return `<tr>
                                    <td><span class="inline-flex items-center gap-1"><span class="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style="background:${color}"></span>${leg.state}</span></td>
                                    <td class="font-mono text-xs">${leg.ip}</td>
-                                   <td class="font-mono text-xs">${leg.port}</td>
-                                   <td class="font-mono text-xs">${leg.rttMs != null ? `${leg.rttMs.toFixed(leg.rttMs >= 10 ? 0 : 1)}ms` : '—'}</td>
-                                   <td class="font-mono text-xs">${rx != null ? formatCompactCount(rx) : '—'}</td>
-                                   <td class="font-mono text-xs" title="Loss / Drop / Rexmit">${fmtLossDropRexmit(leg.recvLossTotal, leg.recvDropTotal, leg.retransTotal)}</td>
+                                   <td class="font-mono text-xs">${fmtMs(leg.rttMs)}</td>
+                                   <td class="font-mono text-xs">${fmtMbpsValue(leg.recvRateMbps)}</td>
+                                   <td class="font-mono text-xs">${fmtMs(leg.rcvBufMs)}</td>
+                                   <td class="font-mono text-xs" title="Loss / Rexmit / Drop">${fmtLossRexmitDrop(leg.recvLossTotal, leg.retransTotal, leg.recvDropTotal)}</td>
                                </tr>`;
                            })
                            .join('')}</tbody>
@@ -2154,14 +2137,16 @@ function renderOutputCard(
         inlineSink = `<code class="${codeClass}" title="${escapeHtml(o.url)}">${display}</code>${dupWarnBtn}${trackBadge}`;
     }
 
-    const showCurrentError = hasCurrentOutputError(o);
-    const lastErrorLine =
-        showCurrentError && o.lastError
-            ? (o.lastError
-                  .split('\n')
-                  .filter((l) => l.trim())
-                  .slice(-1)[0] ?? '')
-            : '';
+    // Unlike outStatus/outputIssues (which use hasCurrentOutputError to reflect
+    // live health), this line is a persistent "last error" notice: it stays up
+    // even after a successful restart, and only clears when the user stops the
+    // output — see lastErrorHtml's `!isStopped` gate below.
+    const lastErrorLine = o.lastError
+        ? (o.lastError
+              .split('\n')
+              .filter((l) => l.trim())
+              .slice(-1)[0] ?? '')
+        : '';
     const lastErrorTs = o.lastErrorAt
         ? new Date(o.lastErrorAt).toLocaleTimeString(undefined, { hour12: false })
         : '';

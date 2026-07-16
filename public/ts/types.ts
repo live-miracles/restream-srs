@@ -121,11 +121,50 @@ export interface SrtBondingLeg {
     port: number;
     state: SrtBondingLegState;
     rttMs: number | null;
+    latencyMs: number | null;
     recvPacketsTotal: number | null;
     recvUniquePacketsTotal: number | null;
     recvLossTotal: number | null;
     recvDropTotal: number | null;
     retransTotal: number | null;
+    bandwidthMbps: number | null;
+    recvRateMbps: number | null;
+    belatedTotal: number | null;
+    belatedAvgMs: number | null;
+    undecryptTotal: number | null;
+    reorderDistance: number | null;
+    rcvBufMs: number | null;
+}
+
+export interface SrtBondingInputStatus {
+    recvPacketsTotal: number | null;
+    recvUniquePacketsTotal: number;
+    recvLossTotal: number;
+    recvDropTotal: number;
+    retransTotal: number;
+    rttMs: number | null;
+    latencyMs: number | null;
+    bandwidthMbps: number | null;
+    recvRateMbps: number | null;
+    belatedTotal: number | null;
+    belatedAvgMs: number | null;
+    undecryptTotal: number | null;
+    reorderDistance: number | null;
+    rcvBufMs: number | null;
+    legs: SrtBondingLeg[];
+}
+
+export interface SrtBondingOutputStatus {
+    sentPacketsTotal: number;
+    sendLossTotal: number;
+    sendDropTotal: number;
+    retransTotal: number;
+    rttMs: number | null;
+    latencyMs: number | null;
+    bandwidthMbps: number | null;
+    sendRateMbps: number | null;
+    undecryptTotal: number | null;
+    sndBufMs: number | null;
 }
 
 export interface SrtBondingStatus {
@@ -144,18 +183,8 @@ export interface SrtBondingStatus {
     forwardedBytes: number;
     lastPacketAt: number | null;
     lastInputPacketAt: number | null;
-    recvPacketsTotal: number;
-    recvUniquePacketsTotal: number;
-    recvLossTotal: number;
-    recvDropTotal: number;
-    retransTotal: number;
-    inputRttMs: number | null;
-    outputRttMs: number | null;
-    outputSentPacketsTotal: number;
-    outputSendLossTotal: number;
-    outputSendDropTotal: number;
-    outputRetransTotal: number;
-    legs: SrtBondingLeg[];
+    input: SrtBondingInputStatus;
+    output: SrtBondingOutputStatus;
     lastErrorAt: number | null;
     lastError: string | null;
 }

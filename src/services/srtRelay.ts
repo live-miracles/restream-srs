@@ -18,11 +18,55 @@ export interface SrtRelayLegStatus {
     port: number;
     state: SrtRelayLegState;
     rttMs: number | null;
+    latencyMs: number | null;
     recvPacketsTotal: number | null;
     recvUniquePacketsTotal: number | null;
     recvLossTotal: number | null;
     recvDropTotal: number | null;
     retransTotal: number | null;
+    bandwidthMbps: number | null;
+    recvRateMbps: number | null;
+    belatedTotal: number | null;
+    belatedAvgMs: number | null;
+    undecryptTotal: number | null;
+    reorderDistance: number | null;
+    rcvBufMs: number | null;
+}
+
+export interface SrtRelayInputStatus {
+    recvPacketsTotal: number | null;
+    recvUniquePacketsTotal: number;
+    recvLossTotal: number;
+    recvDropTotal: number;
+    retransTotal: number;
+    rttMs: number | null;
+    // Negotiated SRT buffering latency. For a bonded group this is derived as
+    // the max latencyMs across legs (see SrtRelayLegStatus) since the group
+    // socket's own srt_bstats never fills this in.
+    latencyMs: number | null;
+    // bandwidthMbps..rcvBufMs are only populated for a non-bonded input; a
+    // real bonded group leaves these null (check legs[] instead).
+    bandwidthMbps: number | null;
+    recvRateMbps: number | null;
+    belatedTotal: number | null;
+    belatedAvgMs: number | null;
+    undecryptTotal: number | null;
+    reorderDistance: number | null;
+    rcvBufMs: number | null;
+    legs: SrtRelayLegStatus[];
+}
+
+export interface SrtRelayOutputStatus {
+    sentPacketsTotal: number;
+    sendLossTotal: number;
+    sendDropTotal: number;
+    retransTotal: number;
+    rttMs: number | null;
+    latencyMs: number | null;
+    bandwidthMbps: number | null;
+    sendRateMbps: number | null;
+    undecryptTotal: number | null;
+    sndBufMs: number | null;
 }
 
 export interface SrtRelayStreamStatus {
@@ -33,18 +77,8 @@ export interface SrtRelayStreamStatus {
     forwardedBytes: number;
     lastPacketAt: number | null;
     lastInputPacketAt: number | null;
-    recvPacketsTotal: number;
-    recvUniquePacketsTotal: number;
-    recvLossTotal: number;
-    recvDropTotal: number;
-    retransTotal: number;
-    inputRttMs: number | null;
-    outputRttMs: number | null;
-    outputSentPacketsTotal: number;
-    outputSendLossTotal: number;
-    outputSendDropTotal: number;
-    outputRetransTotal: number;
-    legs: SrtRelayLegStatus[];
+    input: SrtRelayInputStatus;
+    output: SrtRelayOutputStatus;
     lastErrorAt: number | null;
     lastError: string | null;
 }
@@ -61,11 +95,50 @@ interface RelayStatusResponseLeg {
     port?: number;
     state?: string;
     rttMs?: number | null;
+    latencyMs?: number | null;
     recvPacketsTotal?: number | null;
     recvUniquePacketsTotal?: number | null;
     recvLossTotal?: number | null;
     recvDropTotal?: number | null;
     retransTotal?: number | null;
+    bandwidthMbps?: number | null;
+    recvRateMbps?: number | null;
+    belatedTotal?: number | null;
+    belatedAvgMs?: number | null;
+    undecryptTotal?: number | null;
+    reorderDistance?: number | null;
+    rcvBufMs?: number | null;
+}
+
+interface RelayStatusResponseInput {
+    recvPacketsTotal?: number | null;
+    recvUniquePacketsTotal?: number;
+    recvLossTotal?: number;
+    recvDropTotal?: number;
+    retransTotal?: number;
+    rttMs?: number | null;
+    latencyMs?: number | null;
+    bandwidthMbps?: number | null;
+    recvRateMbps?: number | null;
+    belatedTotal?: number | null;
+    belatedAvgMs?: number | null;
+    undecryptTotal?: number | null;
+    reorderDistance?: number | null;
+    rcvBufMs?: number | null;
+    legs?: RelayStatusResponseLeg[];
+}
+
+interface RelayStatusResponseOutput {
+    sentPacketsTotal?: number;
+    sendLossTotal?: number;
+    sendDropTotal?: number;
+    retransTotal?: number;
+    rttMs?: number | null;
+    latencyMs?: number | null;
+    bandwidthMbps?: number | null;
+    sendRateMbps?: number | null;
+    undecryptTotal?: number | null;
+    sndBufMs?: number | null;
 }
 
 interface RelayStatusResponse {
@@ -83,24 +156,18 @@ interface RelayStatusResponse {
         forwardedBytes?: number;
         lastPacketAt?: number;
         lastInputPacketAt?: number;
-        recvPacketsTotal?: number | null;
-        recvUniquePacketsTotal?: number;
-        recvLossTotal?: number;
-        recvDropTotal?: number;
-        retransTotal?: number;
-        inputRttMs?: number | null;
-        outputRttMs?: number | null;
-        outputSentPacketsTotal?: number;
-        outputSendLossTotal?: number;
-        outputSendDropTotal?: number;
-        outputRetransTotal?: number;
-        legs?: RelayStatusResponseLeg[];
+        input?: RelayStatusResponseInput;
+        output?: RelayStatusResponseOutput;
         lastErrorAt?: number;
         lastError?: string | null;
     }>;
 }
 
 const VALID_LEG_STATES: readonly SrtRelayLegState[] = ['pending', 'idle', 'running', 'broken'];
+
+function numOrNull(v: unknown): number | null {
+    return typeof v === 'number' ? v : null;
+}
 
 function parseLegState(state: string | undefined): SrtRelayLegState {
     return (VALID_LEG_STATES as readonly string[]).includes(state ?? '')
@@ -113,13 +180,20 @@ function parseLeg(leg: RelayStatusResponseLeg): SrtRelayLegStatus {
         ip: leg.ip ?? '',
         port: typeof leg.port === 'number' ? leg.port : 0,
         state: parseLegState(leg.state),
-        rttMs: typeof leg.rttMs === 'number' ? leg.rttMs : null,
-        recvPacketsTotal: typeof leg.recvPacketsTotal === 'number' ? leg.recvPacketsTotal : null,
-        recvUniquePacketsTotal:
-            typeof leg.recvUniquePacketsTotal === 'number' ? leg.recvUniquePacketsTotal : null,
-        recvLossTotal: typeof leg.recvLossTotal === 'number' ? leg.recvLossTotal : null,
-        recvDropTotal: typeof leg.recvDropTotal === 'number' ? leg.recvDropTotal : null,
-        retransTotal: typeof leg.retransTotal === 'number' ? leg.retransTotal : null,
+        rttMs: numOrNull(leg.rttMs),
+        latencyMs: numOrNull(leg.latencyMs),
+        recvPacketsTotal: numOrNull(leg.recvPacketsTotal),
+        recvUniquePacketsTotal: numOrNull(leg.recvUniquePacketsTotal),
+        recvLossTotal: numOrNull(leg.recvLossTotal),
+        recvDropTotal: numOrNull(leg.recvDropTotal),
+        retransTotal: numOrNull(leg.retransTotal),
+        bandwidthMbps: numOrNull(leg.bandwidthMbps),
+        recvRateMbps: numOrNull(leg.recvRateMbps),
+        belatedTotal: numOrNull(leg.belatedTotal),
+        belatedAvgMs: numOrNull(leg.belatedAvgMs),
+        undecryptTotal: numOrNull(leg.undecryptTotal),
+        reorderDistance: numOrNull(leg.reorderDistance),
+        rcvBufMs: numOrNull(leg.rcvBufMs),
     };
 }
 
@@ -129,6 +203,37 @@ function extractStreamResource(streamId: string): string | null {
     return match[1].replace(/^\/+/, '');
 }
 
+const EMPTY_INPUT_STATUS: SrtRelayInputStatus = {
+    recvPacketsTotal: null,
+    recvUniquePacketsTotal: 0,
+    recvLossTotal: 0,
+    recvDropTotal: 0,
+    retransTotal: 0,
+    rttMs: null,
+    latencyMs: null,
+    bandwidthMbps: null,
+    recvRateMbps: null,
+    belatedTotal: null,
+    belatedAvgMs: null,
+    undecryptTotal: null,
+    reorderDistance: null,
+    rcvBufMs: null,
+    legs: [],
+};
+
+const EMPTY_OUTPUT_STATUS: SrtRelayOutputStatus = {
+    sentPacketsTotal: 0,
+    sendLossTotal: 0,
+    sendDropTotal: 0,
+    retransTotal: 0,
+    rttMs: null,
+    latencyMs: null,
+    bandwidthMbps: null,
+    sendRateMbps: null,
+    undecryptTotal: null,
+    sndBufMs: null,
+};
+
 const EMPTY_STREAM_STATUS: SrtRelayStreamStatus = {
     inputActive: false,
     outputConnected: false,
@@ -137,21 +242,49 @@ const EMPTY_STREAM_STATUS: SrtRelayStreamStatus = {
     forwardedBytes: 0,
     lastPacketAt: null,
     lastInputPacketAt: null,
-    recvPacketsTotal: 0,
-    recvUniquePacketsTotal: 0,
-    recvLossTotal: 0,
-    recvDropTotal: 0,
-    retransTotal: 0,
-    inputRttMs: null,
-    outputRttMs: null,
-    outputSentPacketsTotal: 0,
-    outputSendLossTotal: 0,
-    outputSendDropTotal: 0,
-    outputRetransTotal: 0,
-    legs: [],
+    input: EMPTY_INPUT_STATUS,
+    output: EMPTY_OUTPUT_STATUS,
     lastErrorAt: null,
     lastError: null,
 };
+
+function parseInputStatus(input: RelayStatusResponseInput | undefined): SrtRelayInputStatus {
+    if (!input) return { ...EMPTY_INPUT_STATUS };
+    return {
+        recvPacketsTotal: numOrNull(input.recvPacketsTotal),
+        recvUniquePacketsTotal:
+            typeof input.recvUniquePacketsTotal === 'number' ? input.recvUniquePacketsTotal : 0,
+        recvLossTotal: typeof input.recvLossTotal === 'number' ? input.recvLossTotal : 0,
+        recvDropTotal: typeof input.recvDropTotal === 'number' ? input.recvDropTotal : 0,
+        retransTotal: typeof input.retransTotal === 'number' ? input.retransTotal : 0,
+        rttMs: numOrNull(input.rttMs),
+        latencyMs: numOrNull(input.latencyMs),
+        bandwidthMbps: numOrNull(input.bandwidthMbps),
+        recvRateMbps: numOrNull(input.recvRateMbps),
+        belatedTotal: numOrNull(input.belatedTotal),
+        belatedAvgMs: numOrNull(input.belatedAvgMs),
+        undecryptTotal: numOrNull(input.undecryptTotal),
+        reorderDistance: numOrNull(input.reorderDistance),
+        rcvBufMs: numOrNull(input.rcvBufMs),
+        legs: Array.isArray(input.legs) ? input.legs.map(parseLeg) : [],
+    };
+}
+
+function parseOutputStatus(output: RelayStatusResponseOutput | undefined): SrtRelayOutputStatus {
+    if (!output) return { ...EMPTY_OUTPUT_STATUS };
+    return {
+        sentPacketsTotal: typeof output.sentPacketsTotal === 'number' ? output.sentPacketsTotal : 0,
+        sendLossTotal: typeof output.sendLossTotal === 'number' ? output.sendLossTotal : 0,
+        sendDropTotal: typeof output.sendDropTotal === 'number' ? output.sendDropTotal : 0,
+        retransTotal: typeof output.retransTotal === 'number' ? output.retransTotal : 0,
+        rttMs: numOrNull(output.rttMs),
+        latencyMs: numOrNull(output.latencyMs),
+        bandwidthMbps: numOrNull(output.bandwidthMbps),
+        sendRateMbps: numOrNull(output.sendRateMbps),
+        undecryptTotal: numOrNull(output.undecryptTotal),
+        sndBufMs: numOrNull(output.sndBufMs),
+    };
+}
 
 function parseStreamStatus(
     s: NonNullable<RelayStatusResponse['streamStates']>[number],
@@ -164,20 +297,8 @@ function parseStreamStatus(
         forwardedBytes: typeof s.forwardedBytes === 'number' ? s.forwardedBytes : 0,
         lastPacketAt: typeof s.lastPacketAt === 'number' ? s.lastPacketAt : null,
         lastInputPacketAt: typeof s.lastInputPacketAt === 'number' ? s.lastInputPacketAt : null,
-        recvPacketsTotal: typeof s.recvPacketsTotal === 'number' ? s.recvPacketsTotal : 0,
-        recvUniquePacketsTotal:
-            typeof s.recvUniquePacketsTotal === 'number' ? s.recvUniquePacketsTotal : 0,
-        recvLossTotal: typeof s.recvLossTotal === 'number' ? s.recvLossTotal : 0,
-        recvDropTotal: typeof s.recvDropTotal === 'number' ? s.recvDropTotal : 0,
-        retransTotal: typeof s.retransTotal === 'number' ? s.retransTotal : 0,
-        inputRttMs: typeof s.inputRttMs === 'number' ? s.inputRttMs : null,
-        outputRttMs: typeof s.outputRttMs === 'number' ? s.outputRttMs : null,
-        outputSentPacketsTotal:
-            typeof s.outputSentPacketsTotal === 'number' ? s.outputSentPacketsTotal : 0,
-        outputSendLossTotal: typeof s.outputSendLossTotal === 'number' ? s.outputSendLossTotal : 0,
-        outputSendDropTotal: typeof s.outputSendDropTotal === 'number' ? s.outputSendDropTotal : 0,
-        outputRetransTotal: typeof s.outputRetransTotal === 'number' ? s.outputRetransTotal : 0,
-        legs: Array.isArray(s.legs) ? s.legs.map(parseLeg) : [],
+        input: parseInputStatus(s.input),
+        output: parseOutputStatus(s.output),
         lastErrorAt: typeof s.lastErrorAt === 'number' ? s.lastErrorAt : null,
         lastError: s.lastError ?? null,
     };
