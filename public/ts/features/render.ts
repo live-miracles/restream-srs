@@ -2014,10 +2014,7 @@ function renderPipelineInfo(selectedId: string | null): void {
         }
         bondingUrl.textContent = bondingDisplayUrl;
         bondingUrl.dataset.copy = bondingUrlValue;
-        bondingUrl.dataset.ip = bondingHost;
         bondingUrl.dataset.port = String(bondingPortValue);
-        bondingUrl.dataset.streamId = bondingStreamId;
-        bondingUrl.dataset.passphrase = state.config.srtPassphrase || '';
     }
     if (bondingInfoBtn) {
         (bondingInfoBtn as HTMLButtonElement).onclick = () => {
