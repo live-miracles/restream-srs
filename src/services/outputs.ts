@@ -67,6 +67,13 @@ interface OutputStats {
     warningReason: string | null;
     memoryUsageBytes: number | null;
     memoryLimitBytes: number | null;
+    // When the user last explicitly asked this output to start (start button /
+    // start-all), as opposed to startedAtMs which also moves on every silent
+    // auto-retry restart. The UI uses this to decide whether a persisted
+    // lastError is stale (from before this explicit start) or still relevant
+    // (recorded during/after it, including from auto-retries since) — see
+    // hasCurrentOutputError vs the lastErrorHtml gate in render.ts.
+    manualStartAtMs: number | null;
 }
 
 interface OutputProgress {
@@ -94,7 +101,7 @@ export interface OutputService {
     start(outputId: string): Promise<void>;
     stop(outputId: string): void;
     stopAndWait(outputId: string): Promise<void>;
-    restartPipelineOutputs(pipelineId: number, staggerBase?: number): number;
+    restartPipelineOutputs(pipelineId: number, staggerBase?: number, manual?: boolean): number;
     clearRetryState(outputId: string): void;
     shutdown(): void;
 }
@@ -106,6 +113,7 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
         { status: 'running' | 'stopped' | 'failed'; pid: number | null }
     >();
     const startTimes = new Map<string, number>();
+    const manualStartAt = new Map<string, number>();
     const progress = new Map<string, OutputProgress>();
     const socketWarnings = new Map<string, SocketWarning>();
     const memoryWarnings = new Map<string, string>();
@@ -134,6 +142,7 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
                 socketWarnings.get(outputId)?.reason ?? memoryWarnings.get(outputId) ?? null,
             memoryUsageBytes: usage?.rssBytes ?? null,
             memoryLimitBytes: usage?.limitBytes ?? null,
+            manualStartAtMs: manualStartAt.get(outputId) ?? null,
         };
     }
 
@@ -746,6 +755,7 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
             const output = db.getOutput(outputId);
             if (!output) throw new Error('Output not found');
             if (!validateOutputUrl(output.url)) throw new Error('Invalid output URL');
+            manualStartAt.set(outputId, Date.now());
             clearRetry(outputId);
             getRetry(outputId).failures = 0;
             // Input not live yet — keep the output "running" (desiredState) but
@@ -778,7 +788,7 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
             await killProcess(outputId, proc);
         },
 
-        restartPipelineOutputs(pipelineId: number, staggerBase = 0): number {
+        restartPipelineOutputs(pipelineId: number, staggerBase = 0, manual = false): number {
             const outputs = db.listOutputsForPipeline(pipelineId);
             let scheduled = 0;
             for (const output of outputs) {
@@ -786,6 +796,10 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
                 if (statuses.get(output.id)?.status === 'running') {
                     continue;
                 }
+                // manual=true means this came from an explicit user "start all"
+                // click, not the automatic restart on input reconnect — mark it the
+                // same as a single-output start() so stale pre-start errors hide.
+                if (manual) manualStartAt.set(output.id, Date.now());
                 const r = getRetry(output.id);
                 r.failures = 0;
                 if (r.timer) clearTimeout(r.timer);

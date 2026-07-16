@@ -64,6 +64,7 @@ interface OutputHealth {
     hasErrorHistory: boolean;
     memoryUsageBytes: number | null;
     memoryLimitBytes: number | null;
+    manualStartAtMs: number | null;
 }
 
 interface PipelineHealth {

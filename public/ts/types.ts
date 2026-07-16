@@ -113,6 +113,7 @@ export interface OutputStatus {
     hasErrorHistory: boolean;
     memoryUsageBytes: number | null;
     memoryLimitBytes: number | null;
+    manualStartAtMs: number | null;
 }
 
 export interface SrtRelayStatus {
@@ -320,4 +321,5 @@ export interface OutputView extends Output {
     lastErrorAt: number | null;
     memoryUsageBytes: number | null;
     memoryLimitBytes: number | null;
+    manualStartAtMs: number | null;
 }
