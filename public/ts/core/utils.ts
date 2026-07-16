@@ -61,6 +61,19 @@ export function formatBytesCompact(bytes: number): string {
     return `${(bytes / 1024).toFixed(0)}K`;
 }
 
+// Shared formatter for millisecond durations (RTT, negotiated latency,
+// receive/send buffer occupancy) — same rounding rule everywhere: sub-10ms
+// values keep one decimal, anything else rounds to a whole ms.
+export function fmtMs(ms: number | null | undefined): string {
+    return ms != null ? `${ms.toFixed(ms >= 10 ? 0 : 1)} ms` : '—';
+}
+
+// For a value already expressed in Mb/s (relay bandwidth/rate fields), as
+// opposed to formatBitrate above which takes raw kb/s.
+export function fmtMbpsValue(v: number | null | undefined): string {
+    return v != null ? `${v.toFixed(v >= 10 ? 0 : 1)} Mb/s` : '—';
+}
+
 export function maskStreamKey(key: string | null | undefined): string {
     const k = String(key ?? '');
     const idx = k.indexOf('_');
