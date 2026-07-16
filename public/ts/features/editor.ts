@@ -17,9 +17,9 @@ const MAX_HOST_PROBE_TARGETS = 10;
 
 function hostProbeRowHtml(slot: number, target?: HostProbeTarget): string {
     return `<tr data-host-probe-row="${slot}">
-        <td><input type="text" class="input input-sm w-full" data-host-probe-slot="${slot}" data-host-probe-field="label" placeholder="YouTube" value="${escapeHtml(target?.label ?? '')}" /></td>
-        <td><input type="text" class="input input-sm w-full font-mono text-sm" data-host-probe-slot="${slot}" data-host-probe-field="host" placeholder="a.rtmp.youtube.com" value="${escapeHtml(target?.host ?? '')}" /></td>
-        <td><input type="number" min="1" max="65535" class="input input-sm w-full font-mono text-sm" data-host-probe-slot="${slot}" data-host-probe-field="port" placeholder="1935" value="${target?.port ?? ''}" /></td>
+        <td><input type="text" id="host-probe-${slot}-label" name="hostProbeLabel${slot}" class="input input-sm w-full" data-host-probe-slot="${slot}" data-host-probe-field="label" placeholder="YouTube" value="${escapeHtml(target?.label ?? '')}" /></td>
+        <td><input type="text" id="host-probe-${slot}-host" name="hostProbeHost${slot}" class="input input-sm w-full font-mono text-sm" data-host-probe-slot="${slot}" data-host-probe-field="host" placeholder="a.rtmp.youtube.com" value="${escapeHtml(target?.host ?? '')}" /></td>
+        <td><input type="number" min="1" max="65535" id="host-probe-${slot}-port" name="hostProbePort${slot}" class="input input-sm w-full font-mono text-sm" data-host-probe-slot="${slot}" data-host-probe-field="port" placeholder="1935" value="${target?.port ?? ''}" /></td>
         <td class="text-right">
             <button type="button" class="btn btn-xs btn-error btn-outline" onclick="removeHostProbeRowBtn(${slot})" aria-label="Remove host probe" title="Remove host probe">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -474,7 +474,7 @@ function sinkKeyFieldHtml(idx: number, key: string): string {
         return fieldsetHtml(
             'Pipeline',
             'flex-1',
-            `<select class="select select-sm w-full js-sink-key" onchange="this.classList.remove('select-error')">${restreamPipelineOpts(key)}</select>`,
+            `<select id="out-sink-key-input" name="sinkKey" class="select select-sm w-full js-sink-key" onchange="this.classList.remove('select-error')">${restreamPipelineOpts(key)}</select>`,
         );
     }
     if (idx === CUSTOM_SRT_IDX) {
@@ -483,17 +483,17 @@ function sinkKeyFieldHtml(idx: number, key: string): string {
             fieldsetHtml(
                 'Hostname',
                 '',
-                `<input type="text" class="input input-sm w-40 font-mono text-xs js-srt-host" placeholder="xxx.xxx.xxx.xxx" value="${escapeHtml(srt.host)}" oninput="this.classList.remove('input-error')" />`,
+                `<input type="text" id="out-srt-host-input" name="srtHost" class="input input-sm w-40 font-mono text-xs js-srt-host" placeholder="xxx.xxx.xxx.xxx" value="${escapeHtml(srt.host)}" oninput="this.classList.remove('input-error')" />`,
             ),
             fieldsetHtml(
                 'Port',
                 '',
-                `<input type="number" min="1" max="65535" class="input input-sm w-20 font-mono text-xs js-srt-port" placeholder="10000" value="${srt.port ?? ''}" oninput="this.classList.remove('input-error')" />`,
+                `<input type="number" min="1" max="65535" id="out-srt-port-input" name="srtPort" class="input input-sm w-20 font-mono text-xs js-srt-port" placeholder="10000" value="${srt.port ?? ''}" oninput="this.classList.remove('input-error')" />`,
             ),
             fieldsetHtml(
                 'Type',
                 '',
-                `<select class="select select-sm w-28 js-srt-mode">
+                `<select id="out-srt-mode-input" name="srtMode" class="select select-sm w-28 js-srt-mode">
                     <option value="caller"${srt.mode === 'caller' ? ' selected' : ''}>Caller</option>
                     <option value="listener"${srt.mode === 'listener' ? ' selected' : ''}>Listener</option>
                 </select>`,
@@ -501,17 +501,17 @@ function sinkKeyFieldHtml(idx: number, key: string): string {
             fieldsetHtml(
                 'Latency (ms)',
                 '',
-                `<input type="number" min="1" step="1" class="input input-sm w-28 font-mono text-xs js-srt-latency" placeholder="240" value="${srt.latencyMs ?? ''}" oninput="this.classList.remove('input-error')" />`,
+                `<input type="number" min="1" step="1" id="out-srt-latency-input" name="srtLatency" class="input input-sm w-28 font-mono text-xs js-srt-latency" placeholder="240" value="${srt.latencyMs ?? ''}" oninput="this.classList.remove('input-error')" />`,
             ),
             fieldsetHtml(
                 'Passphrase',
                 '',
-                `<input type="text" class="input input-sm w-56 font-mono text-xs js-srt-passphrase" placeholder="Passphrase" value="${escapeHtml(srt.passphrase)}" oninput="this.classList.remove('input-error')" />`,
+                `<input type="text" id="out-srt-passphrase-input" name="srtPassphrase" class="input input-sm w-56 font-mono text-xs js-srt-passphrase" placeholder="Passphrase" value="${escapeHtml(srt.passphrase)}" oninput="this.classList.remove('input-error')" />`,
             ),
             fieldsetHtml(
                 'Key Length',
                 '',
-                `<select class="select select-sm w-24 js-srt-keylen" title="Key length">
+                `<select id="out-srt-keylen-input" name="srtKeylen" class="select select-sm w-24 js-srt-keylen" title="Key length">
                     <option value="" disabled${srt.pbKeyLen === null ? ' selected' : ''}>—</option>
                     <option value="16"${srt.pbKeyLen === 16 ? ' selected' : ''}>16</option>
                     <option value="24"${srt.pbKeyLen === 24 ? ' selected' : ''}>24</option>
@@ -521,7 +521,7 @@ function sinkKeyFieldHtml(idx: number, key: string): string {
             fieldsetHtml(
                 'Stream ID',
                 '',
-                `<input type="text" class="input input-sm w-80 font-mono text-xs js-srt-streamid" placeholder="Stream ID" value="${escapeHtml(srt.streamId)}" oninput="this.classList.remove('input-error')" />`,
+                `<input type="text" id="out-srt-streamid-input" name="srtStreamId" class="input input-sm w-80 font-mono text-xs js-srt-streamid" placeholder="Stream ID" value="${escapeHtml(srt.streamId)}" oninput="this.classList.remove('input-error')" />`,
             ),
         ].join('');
     }
@@ -529,7 +529,7 @@ function sinkKeyFieldHtml(idx: number, key: string): string {
     return fieldsetHtml(
         s.keyLabel,
         'flex-1',
-        `<input type="text" class="input input-sm w-full font-mono text-xs js-sink-key"
+        `<input type="text" id="out-sink-key-input" name="sinkKey" class="input input-sm w-full font-mono text-xs js-sink-key"
                placeholder="${s.placeholder}" value="${escapeHtml(key)}"
                oninput="this.classList.remove('input-error')" />`,
     );
@@ -589,7 +589,7 @@ function sinkRowHtmlForServer(idx: number, key = ''): string {
 // Constrain the audio-track selector to match the input. RTMP inputs are
 // single-track, so the selector is locked to "copy"; SRT inputs expose every
 // track for selection.
-function refreshSinkAudioMode(): void {
+function refreshSinkAudioMode(selected: string): void {
     const sel = document.getElementById('out-audio-encoding-input') as HTMLSelectElement | null;
     if (!sel) return;
     if (!currentInputIsSrt) {
@@ -597,8 +597,7 @@ function refreshSinkAudioMode(): void {
         sel.value = 'copy';
         sel.disabled = true;
     } else {
-        const prev = sel.value;
-        sel.innerHTML = audioOptionsHtml(currentSinkTracks, prev);
+        sel.innerHTML = audioOptionsHtml(currentSinkTracks, selected);
         sel.disabled = false;
     }
 }
@@ -615,13 +614,7 @@ function populateDestination(
     const container = document.getElementById('out-sinks-container');
     if (container) container.innerHTML = sinkRowHtmlForServer(idx, key);
 
-    const audioSel = document.getElementById(
-        'out-audio-encoding-input',
-    ) as HTMLSelectElement | null;
-    if (audioSel)
-        audioSel.innerHTML = audioOptionsHtml(tracks, destination?.audioEncoding ?? 'copy');
-
-    refreshSinkAudioMode();
+    refreshSinkAudioMode(destination?.audioEncoding ?? 'copy');
 }
 
 export function onOutServerChange(select: HTMLSelectElement): void {

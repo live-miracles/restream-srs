@@ -919,6 +919,7 @@ function renderInputStats(input: InputHealth): string {
             v
                 ? `
         <div class="input-meta-row input-meta-row-sm my-0.5">
+            ${compactStat('IP', input.publisherIp)}
             ${compactStat('In', formatBitrate(input.recvBitrateKbps))}
             ${compactStat('Codec', v.codec)}
             ${compactStat('Size', v.width && v.height ? `${v.width}×${v.height}` : null)}
@@ -1909,14 +1910,6 @@ function renderPipelineInfo(selectedId: string | null): void {
         readersBadge.textContent = `${pipeline.input.readers} reader${pipeline.input.readers === 1 ? '' : 's'}`;
         readersBadge.classList.toggle('hidden', !pipeline.input.connected);
     }
-    const publisherIpBadge = document.getElementById('pipe-publisher-ip-badge');
-    if (publisherIpBadge) {
-        const ip = pipeline.input.publisherIp;
-        const showIp = pipeline.input.connected && ip != null;
-        publisherIpBadge.textContent = showIp ? ip : '';
-        publisherIpBadge.classList.toggle('hidden', !showIp);
-    }
-
     const hasActiveOutputs = pipeline.outs.some((o) => o.desiredState !== 'stopped');
     const deleteBtn = document.getElementById('pipe-delete-btn');
     deleteBtn?.classList.toggle('btn-disabled', hasActiveOutputs);
