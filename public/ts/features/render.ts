@@ -2200,8 +2200,9 @@ function renderOutputCard(
                 : memPercent !== null && memPercent >= METRIC_WARN_PERCENT
                   ? 'badge-warning'
                   : '';
+        const memLabel = formatOutputMemory(o)?.replace(/([GMK])$/, ' $1b') ?? '—';
         badges.push(
-            `<span class="badge badge-sm whitespace-nowrap ${memCls}" title="ffmpeg RSS vs watchdog memory limit">${formatOutputMemory(o)} RAM</span>`,
+            `<span class="badge badge-sm whitespace-nowrap ${memCls}" title="ffmpeg RSS">${memLabel}</span>`,
         );
     }
     let inlineSink = '';
@@ -2269,29 +2270,27 @@ function renderOutputCard(
 
     const isPending = pendingOutputs.has(o.id);
     return `
-    <div class="bg-base-100 px-3 py-2 border border-base-content/10 rounded-xl w-full flex gap-2 items-start" data-output-card="${o.id}">
-        <div class="min-w-0 flex-1 space-y-0.5">
-            <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <div class="flex items-center gap-2 shrink-0 font-semibold">
-                    <div aria-label="status" class="status status-lg mx-1" style="background-color: ${statusHex}"></div>
-                    <button class="btn btn-xs ${isStopped ? 'btn-accent' : 'btn-accent btn-outline'}"
-                        data-action="${isStopped ? 'start' : 'stop'}" data-out-id="${o.id}"${isPending ? ' disabled' : ''}>
-                        ${isStopped ? 'Start' : 'Stop'}
-                    </button>
-                    <span class="js-output-drag-handle cursor-grab" draggable="true" title="Drag to reorder">${escapeHtml(o.name)}</span>
-                </div>
-                ${badges.join('')}
-                ${inlineSink}
+    <div class="bg-base-100 px-3 py-2 border border-base-content/10 rounded-xl w-full min-w-0 space-y-0.5" data-output-card="${o.id}">
+        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <div class="flex items-center gap-2 shrink-0 font-semibold">
+                <div aria-label="status" class="status status-lg mx-1" style="background-color: ${statusHex}"></div>
+                <button class="btn btn-xs ${isStopped ? 'btn-accent' : 'btn-accent btn-outline'}"
+                    data-action="${isStopped ? 'start' : 'stop'}" data-out-id="${o.id}"${isPending ? ' disabled' : ''}>
+                    ${isStopped ? 'Start' : 'Stop'}
+                </button>
+                <span class="js-output-drag-handle cursor-grab" draggable="true" title="Drag to reorder">${escapeHtml(o.name)}</span>
             </div>
-            ${warningHtml}
-            ${lastErrorHtml}
+            ${badges.join('')}
+            ${inlineSink}
+            <div class="flex items-center gap-1 ml-auto shrink-0">
+                ${historyBtn}
+                <button class="btn btn-xs btn-ghost" data-action="edit" data-out-id="${o.id}">${ICON_PENCIL}</button>
+                <button class="btn btn-xs btn-ghost text-error ${isStopped ? '' : 'btn-disabled opacity-40'}"
+                    data-action="delete" data-out-id="${o.id}">${ICON_TRASH}</button>
+            </div>
         </div>
-        <div class="flex items-center gap-1 shrink-0">
-            ${historyBtn}
-            <button class="btn btn-xs btn-ghost" data-action="edit" data-out-id="${o.id}">${ICON_PENCIL}</button>
-            <button class="btn btn-xs btn-ghost text-error ${isStopped ? '' : 'btn-disabled opacity-40'}"
-                data-action="delete" data-out-id="${o.id}">${ICON_TRASH}</button>
-        </div>
+        ${warningHtml}
+        ${lastErrorHtml}
     </div>`;
 }
 

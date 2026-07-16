@@ -233,7 +233,11 @@ export function registerOutputApi(
             await outputService.start(outId);
             const stats = outputService.getStats(outId);
             if (stats.manualStartAtMs !== null) {
-                healthService.patchOutputManualStart(output.pipelineId, outId, stats.manualStartAtMs);
+                healthService.patchOutputManualStart(
+                    output.pipelineId,
+                    outId,
+                    stats.manualStartAtMs,
+                );
             }
             return res.json({ ok: true, status: stats });
         } catch (err) {
