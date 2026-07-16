@@ -102,7 +102,7 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
             return res.status(404).json({ error: 'Pipeline not found' });
 
         db.setDesiredStateForPipeline(pipelineId, 'running');
-        const scheduled = outputService.restartPipelineOutputs(pipelineId);
+        const scheduled = outputService.restartPipelineOutputs(pipelineId, 0, true);
         console.log(
             cyan(
                 `[outputs] user start-all requested: pipeline=${pipelineId} scheduled=${scheduled}`,

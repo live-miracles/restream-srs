@@ -2230,16 +2230,25 @@ function renderOutputCard(
         inlineSink = `<code class="${codeClass}" title="${escapeHtml(o.url)}">${display}</code>${dupWarnBtn}`;
     }
 
-    // Unlike outStatus/outputIssues (which use hasCurrentOutputError to reflect
-    // live health), this line is a persistent "last error" notice: it stays up
-    // even after a successful restart, and only clears when the user stops the
-    // output — see lastErrorHtml's `!isStopped` gate below.
-    const lastErrorLine = o.lastError
-        ? (o.lastError
-              .split('\n')
-              .filter((l) => l.trim())
-              .slice(-1)[0] ?? '')
-        : '';
+    // Persistent "last error" notice, distinct from outStatus/outputIssues'
+    // hasCurrentOutputError (which is about live dot color and resets on any
+    // restart, including silent auto-retries). This line should hide stale
+    // errors from before the user's last explicit start click, but keep
+    // showing errors recorded during/after that start — including ones from
+    // auto-retries in between — until the user clicks Stop. manualStartAtMs
+    // only moves on an explicit start()/start-all, not on auto-retry, so it's
+    // the right anchor for that comparison (see OutputStats.manualStartAtMs).
+    const lastErrorIsCurrent =
+        o.lastError !== null &&
+        o.lastErrorAt !== null &&
+        (o.manualStartAtMs === null || o.lastErrorAt >= o.manualStartAtMs);
+    const lastErrorLine =
+        o.lastError && lastErrorIsCurrent
+            ? (o.lastError
+                  .split('\n')
+                  .filter((l) => l.trim())
+                  .slice(-1)[0] ?? '')
+            : '';
     const lastErrorTs = o.lastErrorAt
         ? new Date(o.lastErrorAt).toLocaleTimeString(undefined, { hour12: false })
         : '';
