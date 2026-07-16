@@ -2234,7 +2234,9 @@ function renderOutputCard(
     // showing errors recorded during/after that start — including ones from
     // auto-retries in between — until the user clicks Stop. manualStartAtMs
     // only moves on an explicit start()/start-all, not on auto-retry, so it's
-    // the right anchor for that comparison (see OutputStats.manualStartAtMs).
+    // the right anchor for that comparison (see OutputStats.manualStartAtMs;
+    // health.ts's patchOutputManualStart keeps it from lagging a click by a
+    // full poll cycle).
     const lastErrorIsCurrent =
         o.lastError !== null &&
         o.lastErrorAt !== null &&
