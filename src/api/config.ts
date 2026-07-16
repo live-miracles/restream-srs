@@ -5,6 +5,31 @@ import { readSrsConfigValues } from '../utils/srsConfig.js';
 import type { Db } from '../types.js';
 import { readRelayConfig } from '../utils/relayConfig.js';
 
+// Defensive parse for a value the UI wrote via /api/settings/layout-order —
+// never throws, since a blank/corrupt value should just mean "no custom
+// order yet", not a broken config load.
+function parseLayoutOrder(raw: string | null): { id: number; outs: string[] }[] {
+    if (!raw) return [];
+    try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (!Array.isArray(parsed)) return [];
+
+        const order: { id: number; outs: string[] }[] = [];
+        for (const item of parsed) {
+            if (!item || typeof item !== 'object') return [];
+            const row = item as Record<string, unknown>;
+            if (!Number.isInteger(row.id)) return [];
+            if (!Array.isArray(row.outs) || !row.outs.every((o) => typeof o === 'string')) {
+                return [];
+            }
+            order.push({ id: row.id as number, outs: row.outs as string[] });
+        }
+        return order;
+    } catch {
+        return [];
+    }
+}
+
 export function registerConfigApi(app: Express, db: Db): void {
     app.get('/api/config', (_req, res) => {
         // srtPassphrase feeds the bonding-relay URL (relay listener, port 10081);
@@ -33,6 +58,7 @@ export function registerConfigApi(app: Express, db: Db): void {
             serverName: db.getSetting('serverName') ?? 'Restream SRS',
             srtPassphrase,
             publicHost: host,
+            layoutOrder: parseLayoutOrder(db.getSetting('layoutOrder')),
         });
     });
 }

@@ -80,11 +80,42 @@ function parseLastError(raw: string | null): { message: string; ts: number } | n
     return { message: raw.slice(nl + 1), ts: isNaN(ts) ? 0 : ts };
 }
 
+// Reorders `items` to match `orderIds` (drag-and-drop order, saved server-side
+// as an opaque blob — the server never applies it itself). Ids in `orderIds`
+// that no longer correspond to an item are ignored; items missing from
+// `orderIds` (never dragged, or created after the order was last saved) keep
+// their original relative order, appended after the explicitly ordered ones.
+function reconcileOrder<T>(
+    items: T[],
+    orderIds: string[] | undefined,
+    keyOf: (item: T) => string,
+): T[] {
+    if (!orderIds || orderIds.length === 0) return items;
+    const byKey = new Map(items.map((item) => [keyOf(item), item]));
+    const remaining = new Set(byKey.keys());
+    const ordered: T[] = [];
+    for (const id of orderIds) {
+        if (!remaining.has(id)) continue;
+        ordered.push(byKey.get(id)!);
+        remaining.delete(id);
+    }
+    for (const item of items) {
+        if (remaining.has(keyOf(item))) ordered.push(item);
+    }
+    return ordered;
+}
+
 export function parsePipelines(
     config: Partial<ConfigData>,
     health: Partial<HealthData>,
 ): PipelineView[] {
-    const pipelines = config.pipelines ?? [];
+    const layoutOrder = config.layoutOrder ?? [];
+    const outsOrderByPipeline = new Map(layoutOrder.map((e) => [String(e.id), e.outs]));
+    const pipelines = reconcileOrder(
+        config.pipelines ?? [],
+        layoutOrder.map((e) => String(e.id)),
+        (p) => String(p.id),
+    );
     const outputs = config.outputs ?? [];
     const pipelinesHealth = health.pipelines ?? {};
 
@@ -92,7 +123,11 @@ export function parsePipelines(
         const ph = pipelinesHealth[String(p.id)];
         const input: InputHealth = ph?.input ?? EMPTY_INPUT;
 
-        const pipelineOutputs = outputs.filter((o) => String(o.pipelineId) === String(p.id));
+        const pipelineOutputs = reconcileOrder(
+            outputs.filter((o) => String(o.pipelineId) === String(p.id)),
+            outsOrderByPipeline.get(String(p.id)),
+            (o) => o.id,
+        );
         const outs: OutputView[] = pipelineOutputs.map((o) => {
             const oh = ph?.outputs?.[o.id];
             // Health carries the live lastError (polled every 5s); fall back to

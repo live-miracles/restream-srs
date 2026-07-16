@@ -21,12 +21,14 @@ import type {
     AudioTrackInfo,
     HostProbeOverviewTarget,
     InputHealth,
+    LayoutOrderEntry,
     MetricSample,
     OutputView,
     PipelineView,
     SrtBondingLeg,
     VideoInfo,
 } from '../types.js';
+import { updateLayoutOrder } from '../core/api.js';
 import {
     stopCurrentPreview,
     populatePreviewTrackSelect,
@@ -88,6 +90,45 @@ const pendingOutputs = new Map<string, 'start' | 'stop'>();
 const RELAY_FLOW_STALE_MS = 15000;
 const METRIC_WARN_PERCENT = 70;
 const METRIC_ERROR_PERCENT = 90;
+
+// ── Drag-and-drop reordering ───────────────────────────
+//
+// The pipeline list and outputs list are rebuilt (innerHTML) on every 5s
+// poll tick regardless of whether anything changed, which would yank a
+// dragged element out from under the user mid-gesture. While a drag is in
+// progress, renderPipelineList/renderOutputsList skip rebuilding entirely —
+// the module-level element refs below double as that "don't touch the DOM
+// right now" flag, and are always cleared by the drag's `dragend`, which
+// the browser guarantees fires whether the drop succeeded or was cancelled.
+let draggingPipelineEl: HTMLElement | null = null;
+let draggingOutputEl: HTMLElement | null = null;
+
+// The order actually being displayed right now (post drag-and-drop, or as
+// last loaded from the server) — the baseline `persist*Order` helpers below
+// patch one dimension of before writing back, so an in-flight drag on one
+// pipeline's outputs doesn't clobber another pipeline's already-saved order.
+function currentLayoutOrder(): LayoutOrderEntry[] {
+    return state.pipelines.map((p) => ({ id: Number(p.id), outs: p.outs.map((o) => o.id) }));
+}
+
+async function persistPipelineOrder(newPipelineOrder: string[]): Promise<void> {
+    const byId = new Map(currentLayoutOrder().map((e) => [String(e.id), e]));
+    const order = newPipelineOrder
+        .map((id) => byId.get(id))
+        .filter((e): e is LayoutOrderEntry => !!e);
+    await updateLayoutOrder(order);
+    const { refreshAfterMutation } = await import('./dashboard.js');
+    await refreshAfterMutation();
+}
+
+async function persistOutputOrder(pipelineId: string, newOutputOrder: string[]): Promise<void> {
+    const order = currentLayoutOrder().map((e) =>
+        String(e.id) === pipelineId ? { ...e, outs: newOutputOrder } : e,
+    );
+    await updateLayoutOrder(order);
+    const { refreshAfterMutation } = await import('./dashboard.js');
+    await refreshAfterMutation();
+}
 
 function outputMemoryPercent(o: OutputView): number | null {
     if (o.memoryUsageBytes == null || !o.memoryLimitBytes) return null;
@@ -661,6 +702,7 @@ function relayInputSeverityColor(
 function renderPipelineList(): void {
     const listEl = document.getElementById('pipelines');
     if (!listEl) return;
+    if (draggingPipelineEl) return; // preserve the DOM while a drag is in progress
 
     const inputsOn = state.pipelines.filter((p) => inputStatus(p.input) === 'good').length;
     const inputsWarn = state.pipelines.filter((p) => inputStatus(p.input) === 'warn').length;
@@ -762,7 +804,7 @@ function renderPipelineList(): void {
                 ? `<span class="js-tooltip text-warning shrink-0 inline-flex" tabindex="0">${ICON_WARN}<div class="js-tooltip-content hidden">${dupTooltip('Duplicate stream key — also used by:', dupKeyRefs)}</div></span>`
                 : '';
 
-            return `<li>
+            return `<li data-pipeline-id="${p.id}">
             <div class="flex items-center gap-2 ${selected} cursor-pointer js-select-pipeline" data-id="${p.id}">
                 <div class="js-tooltip shrink-0">
                     <div class="rounded-box h-5 w-5" style="background:linear-gradient(90deg,${inColor},${inColor} 45%,#242933 45%,#242933 55%,${outColor} 55%)"></div>
@@ -772,7 +814,7 @@ function renderPipelineList(): void {
                 ${badge(outWarn, 'badge-warning')}
                 ${badge(outFailed, 'badge-error')}
                 ${badge(outOff, 'badge-ghost')}
-                <a class="${nameClass}">${escapeHtml(p.name)}</a>
+                <a class="js-pipeline-drag-handle cursor-grab ${nameClass}" draggable="true" title="Drag to reorder">${escapeHtml(p.name)}</a>
                 ${dupKeyWarn}
                 ${uptimeSpan}
                 ${inputTypeBadge}
@@ -784,6 +826,46 @@ function renderPipelineList(): void {
     listEl.onclick = (e) => {
         const row = (e.target as Element).closest('.js-select-pipeline') as HTMLElement | null;
         if (row?.dataset.id) window.selectPipeline(row.dataset.id);
+    };
+
+    listEl.ondragstart = (e) => {
+        const target = e.target as Element;
+        const li = target.closest('li[data-pipeline-id]') as HTMLElement | null;
+        if (!target.closest('.js-pipeline-drag-handle') || !li) {
+            e.preventDefault();
+            return;
+        }
+        draggingPipelineEl = li;
+        li.classList.add('opacity-40');
+        e.dataTransfer!.effectAllowed = 'move';
+        e.dataTransfer!.setData('text/plain', li.dataset.pipelineId!);
+        e.dataTransfer!.setDragImage(li, 12, 12);
+    };
+
+    listEl.ondragover = (e) => {
+        if (!draggingPipelineEl) return;
+        e.preventDefault();
+        e.dataTransfer!.dropEffect = 'move';
+        const overLi = (e.target as Element).closest('li[data-pipeline-id]') as HTMLElement | null;
+        if (!overLi || overLi === draggingPipelineEl) return;
+        const rect = overLi.getBoundingClientRect();
+        const before = e.clientY < rect.top + rect.height / 2;
+        overLi.parentElement?.insertBefore(
+            draggingPipelineEl,
+            before ? overLi : overLi.nextElementSibling,
+        );
+    };
+
+    listEl.ondrop = (e) => e.preventDefault();
+
+    listEl.ondragend = () => {
+        if (!draggingPipelineEl) return;
+        draggingPipelineEl.classList.remove('opacity-40');
+        draggingPipelineEl = null;
+        const order = Array.from(listEl.querySelectorAll('li[data-pipeline-id]')).map(
+            (li) => (li as HTMLElement).dataset.pipelineId!,
+        );
+        void persistPipelineOrder(order);
     };
 }
 
@@ -1214,7 +1296,7 @@ function renderOverview(): void {
             const rowspan = legs.length > 1 ? ` rowspan="${legs.length}"` : '';
             const rowAttr = `class="hover" ${statusBg(rowError, rowWarn)}`;
             const sharedCells = `
-                <td class="font-semibold"${rowspan}>${escapeHtml(p.name)}</td>
+                <td class="font-semibold cursor-pointer hover:underline js-select-pipeline" data-id="${p.id}"${rowspan}>${escapeHtml(p.name)}</td>
                 <td${rowspan}>${overviewStatusBadge(inputSt)}</td>
                 <td${rowspan}>${overviewStatusBadge(outputSt)}</td>
                 <td${rowspan}>${renderOverviewIssues(relayIssues(p, relayProcessRunning, inputSt, outputSt))}</td>`;
@@ -1263,7 +1345,7 @@ function renderOverview(): void {
             const audioTracks = inp.audioTracks.length > 0 ? inp.audioTracks : null;
             const spec = streamSpec(inp.video, audioTracks, inp.audio);
             inputRows += `<tr class="hover" ${statusBg(isError, isWarn)}>
-                <td class="overview-name-col font-semibold">${escapeHtml(p.name)}</td>
+                <td class="overview-name-col font-semibold cursor-pointer hover:underline js-select-pipeline" data-id="${p.id}">${escapeHtml(p.name)}</td>
                 <td>${overviewStatusBadge(st)}</td>
                 <td>${renderOverviewIssues(inputIssues(inp))}</td>
                 <td class="font-mono text-xs">${inp.live ? formatUptime(inp.uptimeMs) : '—'}</td>
@@ -1309,7 +1391,7 @@ function renderOverview(): void {
                 const protocolLabel = o.url ? (o.url.startsWith('srt://') ? 'SRT' : 'RTMP') : null;
                 const spec = streamSpec(media?.video ?? null, null, media?.audio ?? null);
                 outputRows += `<tr class="hover" ${statusBg(st === 'error', st === 'warn')}>
-                    <td class="overview-name-col"><span class="opacity-40 text-xs">${escapeHtml(p.name)} ·</span> ${escapeHtml(o.name)} ${errorBadge}</td>
+                    <td class="overview-name-col cursor-pointer hover:underline js-select-pipeline" data-id="${p.id}"><span class="opacity-40 text-xs">${escapeHtml(p.name)} ·</span> ${escapeHtml(o.name)} ${errorBadge}</td>
                     <td>${badge}</td>
                     <td>${renderOverviewIssues(outputIssues(o, p.input))}</td>
                     <td class="font-mono text-xs">${outUptimeMs !== null ? formatUptime(outUptimeMs) : '—'}</td>
@@ -1445,6 +1527,13 @@ function renderOverview(): void {
         state.overviewFilter = 'problems';
         renderOverview();
     });
+    // Assignment (not addEventListener) since overviewEl itself persists across
+    // renders while its contents are fully replaced above — addEventListener
+    // would stack a new listener on every render.
+    overviewEl.onclick = (e) => {
+        const cell = (e.target as Element).closest('.js-select-pipeline') as HTMLElement | null;
+        if (cell?.dataset.id) window.selectPipeline(cell.dataset.id);
+    };
 }
 
 function drawProbeChart(
@@ -2089,9 +2178,20 @@ function renderOutputCard(
                 ? STATUS_COLOR_ERROR
                 : STATUS_COLOR_OFF;
     const uptimeMs = o.startedAtMs !== null ? Date.now() - o.startedAtMs : null;
-    const badges = [
-        `<span class="badge badge-sm badge-accent badge-soft whitespace-nowrap">${o.videoEncoding}</span>`,
-    ];
+    const badges: string[] = [];
+    if (o.videoEncoding !== 'copy') {
+        badges.push(
+            `<span class="badge badge-sm badge-accent badge-soft whitespace-nowrap">${o.videoEncoding}</span>`,
+        );
+    }
+    if (o.audioEncoding !== 'copy') {
+        badges.push(
+            `<span class="badge badge-xs badge-accent badge-soft whitespace-nowrap">${o.audioEncoding
+                .split(',')
+                .map((t) => `T${parseInt(t) + 1}`)
+                .join('+')}</span>`,
+        );
+    }
     if (uptimeMs !== null) {
         badges.push(
             `<span class="font-mono text-xs opacity-60 whitespace-nowrap">${formatUptime(uptimeMs)}</span>`,
@@ -2116,13 +2216,6 @@ function renderOutputCard(
     }
     let inlineSink = '';
     if (o.url) {
-        const trackBadge =
-            o.audioEncoding !== 'copy'
-                ? ` <span class="badge badge-xs badge-accent badge-soft whitespace-nowrap">${o.audioEncoding
-                      .split(',')
-                      .map((t) => `T${parseInt(t) + 1}`)
-                      .join('+')}</span>`
-                : '';
         const restreamLabel = restreamSinkLabel(o.url);
         const display =
             restreamLabel ??
@@ -2134,7 +2227,7 @@ function renderOutputCard(
         const codeClass = dupRefs
             ? 'text-xs font-normal text-warning whitespace-nowrap'
             : 'text-xs font-normal opacity-60 whitespace-nowrap';
-        inlineSink = `<code class="${codeClass}" title="${escapeHtml(o.url)}">${display}</code>${dupWarnBtn}${trackBadge}`;
+        inlineSink = `<code class="${codeClass}" title="${escapeHtml(o.url)}">${display}</code>${dupWarnBtn}`;
     }
 
     // Unlike outStatus/outputIssues (which use hasCurrentOutputError to reflect
@@ -2175,7 +2268,7 @@ function renderOutputCard(
 
     const isPending = pendingOutputs.has(o.id);
     return `
-    <div class="bg-base-100 px-3 py-2 border border-base-content/10 rounded-xl w-full flex gap-2 items-start">
+    <div class="bg-base-100 px-3 py-2 border border-base-content/10 rounded-xl w-full flex gap-2 items-start" data-output-card="${o.id}">
         <div class="min-w-0 flex-1 space-y-0.5">
             <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <div class="flex items-center gap-2 shrink-0 font-semibold">
@@ -2184,7 +2277,7 @@ function renderOutputCard(
                         data-action="${isStopped ? 'start' : 'stop'}" data-out-id="${o.id}"${isPending ? ' disabled' : ''}>
                         ${isStopped ? 'Start' : 'Stop'}
                     </button>
-                    <span>${escapeHtml(o.name)}</span>
+                    <span class="js-output-drag-handle cursor-grab" draggable="true" title="Drag to reorder">${escapeHtml(o.name)}</span>
                 </div>
                 ${badges.join('')}
                 ${inlineSink}
@@ -2204,6 +2297,7 @@ function renderOutputCard(
 function renderOutputsList(pipeline: PipelineView): void {
     const listEl = document.getElementById('outputs-list');
     if (!listEl) return;
+    if (draggingOutputEl) return; // preserve the DOM while a drag is in progress
 
     const hasActive = pipeline.outs.some((o) => o.desiredState !== 'stopped');
     const noStopped =
@@ -2289,6 +2383,46 @@ function renderOutputsList(pipeline: PipelineView): void {
             else if (action === 'delete') ed.confirmDeleteOutput(pipeline.id, outId);
             else if (action === 'error-info') ed.showOutputError(pipeline.id, outId);
         });
+    };
+
+    listEl.ondragstart = (e) => {
+        const target = e.target as Element;
+        const card = target.closest('[data-output-card]') as HTMLElement | null;
+        if (!target.closest('.js-output-drag-handle') || !card) {
+            e.preventDefault();
+            return;
+        }
+        draggingOutputEl = card;
+        card.classList.add('opacity-40');
+        e.dataTransfer!.effectAllowed = 'move';
+        e.dataTransfer!.setData('text/plain', card.dataset.outputCard!);
+        e.dataTransfer!.setDragImage(card, 12, 12);
+    };
+
+    listEl.ondragover = (e) => {
+        if (!draggingOutputEl) return;
+        e.preventDefault();
+        e.dataTransfer!.dropEffect = 'move';
+        const overCard = (e.target as Element).closest('[data-output-card]') as HTMLElement | null;
+        if (!overCard || overCard === draggingOutputEl) return;
+        const rect = overCard.getBoundingClientRect();
+        const before = e.clientY < rect.top + rect.height / 2;
+        overCard.parentElement?.insertBefore(
+            draggingOutputEl,
+            before ? overCard : overCard.nextElementSibling,
+        );
+    };
+
+    listEl.ondrop = (e) => e.preventDefault();
+
+    listEl.ondragend = () => {
+        if (!draggingOutputEl) return;
+        draggingOutputEl.classList.remove('opacity-40');
+        draggingOutputEl = null;
+        const order = Array.from(listEl.querySelectorAll('[data-output-card]')).map(
+            (el) => (el as HTMLElement).dataset.outputCard!,
+        );
+        void persistOutputOrder(pipeline.id, order);
     };
 }
 

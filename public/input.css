@@ -8,6 +8,16 @@
     min-width: 11rem;
 }
 
+/* daisyUI's .menu sets flex-wrap: wrap on both the <ul> and each <li>,
+   which (combined with flex-direction: column and an unbounded height)
+   stops Chromium from stretching li/row down to the list's width — the
+   pipeline name never gets clamped, so it overflows into a horizontal
+   scrollbar instead of being truncated with an ellipsis. */
+#pipelines,
+#pipelines > li {
+    flex-wrap: nowrap;
+}
+
 .input-meta-row {
     display: flex;
     flex-wrap: wrap;
