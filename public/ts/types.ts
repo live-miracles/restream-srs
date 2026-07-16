@@ -58,6 +58,15 @@ export interface Output {
     hasErrorHistory: boolean;
 }
 
+// Custom pipeline/output display order, verbatim from the server — see
+// registerSettingsApi's normalizeLayoutOrder for the write-side contract.
+// The backend never reorders anything itself; parsePipelines() reconciles
+// this against the actual pipeline/output lists to produce display order.
+export interface LayoutOrderEntry {
+    id: number;
+    outs: string[];
+}
+
 export interface OutputPayload {
     name: string;
     videoEncoding: string;
@@ -267,6 +276,7 @@ export interface ConfigData {
     serverName: string;
     srtPassphrase: string | null;
     publicHost: string;
+    layoutOrder: LayoutOrderEntry[];
 }
 
 export interface SystemMetrics {

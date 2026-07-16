@@ -8,6 +8,7 @@ import type {
     SystemMetrics,
     MetricSample,
     SrsLogsData,
+    LayoutOrderEntry,
 } from '../types.js';
 
 let loadingCount = 0;
@@ -100,6 +101,12 @@ export const updateHostProbes = (hostProbeTargets: ConfigData['hostProbeTargets'
     apiRequest<{ hostProbeTargets: ConfigData['hostProbeTargets'] }>('/api/settings/host-probes', {
         method: 'POST',
         body: { hostProbeTargets },
+    });
+
+export const updateLayoutOrder = (order: LayoutOrderEntry[]) =>
+    apiRequest<{ layoutOrder: LayoutOrderEntry[] }>('/api/settings/layout-order', {
+        method: 'POST',
+        body: { order },
     });
 
 export const createPipeline = () => apiRequest('/api/pipelines', { method: 'POST' });

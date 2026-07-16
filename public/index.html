@@ -247,7 +247,9 @@
     </dialog>
 
     <!-- Main grid -->
-    <div class="grid h-screen min-h-0 flex-1 gap-4 p-4 pt-0" style="grid-template-columns: minmax(15rem, 20rem) minmax(0, 3fr) minmax(24rem, 4fr)">
+    <div
+      class="grid h-screen min-h-0 flex-1 gap-4 p-4 pt-0"
+      style="grid-template-columns: minmax(17rem, 23rem) minmax(500px, 3fr) minmax(24rem, 4fr)">
       <!-- Left: Pipeline list -->
       <div class="bg-base-300 rounded-box mt-4 overflow-y-auto">
         <div class="bg-base-300 sticky top-0 z-10 flex items-start justify-between gap-2 p-4">
@@ -293,8 +295,8 @@
       </div>
 
       <!-- Middle: Pipeline info -->
-      <div class="bg-base-200 mt-4 hidden overflow-y-auto rounded-xl p-4 shadow" id="pipe-info-col">
-        <div class="bg-base-200 sticky top-0 z-10 mb-3 flex items-center justify-between gap-3 text-xl font-bold">
+      <div class="bg-base-200 mt-4 hidden overflow-y-auto rounded-xl px-4 pb-4 shadow" id="pipe-info-col">
+        <div class="bg-base-200 sticky top-0 z-10 -mx-4 -mt-4 flex items-center justify-between gap-3 rounded-t-xl px-4 pt-4 pb-3 text-xl font-bold">
           <div class="flex min-w-0 items-center gap-2">
             <span class="truncate" id="pipe-name"></span>
             <span class="badge badge-sm badge-outline hidden shrink-0" id="pipe-readers-badge"></span>
@@ -777,8 +779,8 @@
       </div>
 
       <!-- Right: Outputs -->
-      <div class="bg-base-200 mt-4 hidden overflow-y-auto rounded-xl p-4 shadow" id="outs-col">
-        <div class="bg-base-200 sticky top-0 z-10 mb-3 flex items-center justify-between">
+      <div class="bg-base-200 mt-4 hidden overflow-y-auto rounded-xl px-4 pb-4 shadow" id="outs-col">
+        <div class="bg-base-200 sticky top-0 z-10 -mx-4 -mt-4 flex items-center justify-between rounded-t-xl px-4 pt-4 pb-3">
           <div class="flex items-center gap-2">
             <h2 class="text-xl font-bold">Outputs</h2>
             <button class="btn btn-xs btn-square btn-accent" onclick="addOutBtn()" title="Add Output" aria-label="Add Output">

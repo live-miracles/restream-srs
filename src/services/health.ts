@@ -198,6 +198,17 @@ function formatTimeOfDay(ts: number): string {
     return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
 }
 
+function formatDuration(totalSeconds: number): string {
+    const h = Math.floor(totalSeconds / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+    const parts: string[] = [];
+    if (h > 0) parts.push(`${h}h`);
+    if (h > 0 || m > 0) parts.push(`${m}m`);
+    parts.push(`${s}s`);
+    return parts.join(' ');
+}
+
 function probeError(result: ProbeResult | null, checkedAt: number): string {
     const prefix = formatTimeOfDay(checkedAt);
     if (!result) return `${prefix} ffprobe did not detect a readable media stream`;
@@ -577,7 +588,7 @@ export function createHealthService(
                         db.appendPipelineLog(
                             pipeline.id,
                             'media_lost',
-                            `Input media lost (was valid for ${uptimeSec}s)`,
+                            `Input media lost (was valid for ${formatDuration(uptimeSec)})`,
                         );
                     } catch {
                         /* non-critical */
@@ -599,7 +610,7 @@ export function createHealthService(
                             'offline',
                             uptimeSec == null
                                 ? 'Input disconnected'
-                                : `Input disconnected (was live for ${uptimeSec}s)`,
+                                : `Input disconnected (was live for ${formatDuration(uptimeSec)})`,
                         );
                     } catch {
                         /* non-critical */

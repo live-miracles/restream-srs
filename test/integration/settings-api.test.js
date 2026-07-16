@@ -197,4 +197,34 @@ describe('Settings API integration', () => {
             assert.equal(harness.db.getSetting('serverName'), 'Control Room');
         });
     });
+
+    describe('POST /api/settings/layout-order', () => {
+        test('saves custom pipeline and output order', async () => {
+            const harness = createHarness();
+            const order = [
+                { id: 2, outs: ['2-2', '2-1'] },
+                { id: 1, outs: ['1-1'] },
+            ];
+
+            const res = await harness.request('POST', '/api/settings/layout-order', { order });
+
+            assert.equal(res.status, 200);
+            assert.deepEqual(res.body, { layoutOrder: order });
+            assert.deepEqual(JSON.parse(harness.db.getSetting('layoutOrder')), order);
+        });
+
+        test('rejects invalid layout order', async () => {
+            const harness = createHarness();
+            harness.db.setSetting('layoutOrder', JSON.stringify([{ id: 1, outs: ['1-1'] }]));
+
+            const res = await harness.request('POST', '/api/settings/layout-order', {
+                order: [{ id: '1', outs: ['1-1'] }],
+            });
+
+            assert.equal(res.status, 400);
+            assert.deepEqual(JSON.parse(harness.db.getSetting('layoutOrder')), [
+                { id: 1, outs: ['1-1'] },
+            ]);
+        });
+    });
 });
