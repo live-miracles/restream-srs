@@ -1,8 +1,12 @@
 import { execFile, spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
-import fs from 'fs';
-import { buildFfmpegArgs, validateOutputUrl } from '../utils/ffmpeg.js';
+import { INPUT_TIMEOUT_US, buildFfmpegArgs, validateOutputUrl } from '../utils/ffmpeg.js';
 import { readAppConfig } from '../utils/appConfig.js';
+import {
+    readProcRssBytes,
+    createProcCpuTracker,
+    findPidsByExecutable,
+} from '../utils/procStats.js';
 import { red, yellow, green } from '../utils/ansiColor.js';
 import type { Db, Output } from '../types.js';
 import type { InputState } from './inputState.js';
@@ -67,6 +71,7 @@ interface OutputStats {
     warningReason: string | null;
     memoryUsageBytes: number | null;
     memoryLimitBytes: number | null;
+    cpuPercent: number | null;
 }
 
 interface OutputProgress {
@@ -99,6 +104,33 @@ export interface OutputService {
     shutdown(): void;
 }
 
+// A fresh instance owns no ffmpeg processes yet, so anything already running
+// our ffmpeg binary at construction time must be an orphan left behind by a
+// previous instance. Give it a chance to exit cleanly; no need to wait or
+// escalate to SIGKILL — an orphan that ignores SIGTERM is no worse off than
+// before this ran, and the next restart will sweep it again.
+function killOrphanedFfmpeg(): void {
+    for (const pid of findPidsByExecutable(FFMPEG_CMD, (args) => {
+        const progressIdx = args.indexOf('-progress');
+        const timeoutIdx = args.indexOf('-rw_timeout');
+        return (
+            progressIdx >= 0 &&
+            args[progressIdx + 1] === 'pipe:1' &&
+            timeoutIdx >= 0 &&
+            args[timeoutIdx + 1] === String(INPUT_TIMEOUT_US)
+        );
+    })) {
+        console.warn(
+            yellow(`[outputs] killing orphaned ffmpeg pid=${pid} left by a previous instance`),
+        );
+        try {
+            process.kill(pid, 'SIGTERM');
+        } catch {
+            /* already gone */
+        }
+    }
+}
+
 export function createOutputService(db: Db, inputState: InputState): OutputService {
     const processes = new Map<string, ChildProcess>();
     const statuses = new Map<
@@ -110,6 +142,8 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
     const socketWarnings = new Map<string, SocketWarning>();
     const memoryWarnings = new Map<string, string>();
     const memoryUsage = new Map<string, { rssBytes: number; limitBytes: number }>();
+    const cpuUsage = new Map<string, number>();
+    const cpuTracker = createProcCpuTracker();
     let tcpSocketsByPid = new Map<number, TcpSocket[]>();
     let tcpSocketSnapshotUsable = false;
     let socketSnapshotInProgress = false;
@@ -121,6 +155,7 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
     const watchdogTimer = setInterval(checkOutputWatchdog, OUTPUT_WATCHDOG_INTERVAL_MS);
     watchdogTimer.unref?.();
     refreshTcpSocketSnapshot();
+    killOrphanedFfmpeg();
 
     function getStats(outputId: string): OutputStats {
         const s = statuses.get(outputId) ?? { status: 'stopped' as const, pid: null };
@@ -134,6 +169,7 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
                 socketWarnings.get(outputId)?.reason ?? memoryWarnings.get(outputId) ?? null,
             memoryUsageBytes: usage?.rssBytes ?? null,
             memoryLimitBytes: usage?.limitBytes ?? null,
+            cpuPercent: cpuUsage.get(outputId) ?? null,
         };
     }
 
@@ -151,6 +187,8 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
             socketWarnings.delete(outputId);
             memoryWarnings.delete(outputId);
             memoryUsage.delete(outputId);
+            cpuUsage.delete(outputId);
+            cpuTracker.delete(outputId);
         }
     }
 
@@ -307,19 +345,6 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
                 : 'ffmpeg stderr tail: <empty>',
             `Restarting output: ${reason}`,
         ].join('\n');
-    }
-
-    // procfs read of a single small file; cheap enough to do synchronously per
-    // output on every watchdog tick (page-cache hit, no real disk I/O). Returns
-    // null on non-Linux dev machines (no /proc) or if the pid has already exited.
-    function readProcessRssBytes(pid: number): number | null {
-        try {
-            const status = fs.readFileSync(`/proc/${pid}/status`, 'utf8');
-            const match = /^VmRSS:\s+(\d+)\s+kB$/m.exec(status);
-            return match ? parseInt(match[1], 10) * 1024 : null;
-        } catch {
-            return null;
-        }
     }
 
     function buildMemoryWatchdogError(
@@ -512,7 +537,7 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
             if (!startedAtMs || !p) continue;
             if (!inputState.isReady(output.pipelineId)) continue;
 
-            const rssBytes = proc.pid == null ? null : readProcessRssBytes(proc.pid);
+            const rssBytes = proc.pid == null ? null : readProcRssBytes(proc.pid);
             const limitBytes = memoryLimitBytesFor(
                 output.videoEncoding,
                 inputState.isHighRes(output.pipelineId),
@@ -521,6 +546,13 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
                 memoryUsage.set(outputId, { rssBytes, limitBytes });
             } else {
                 memoryUsage.delete(outputId);
+            }
+
+            const cpuPercent = proc.pid == null ? null : cpuTracker.sample(outputId, proc.pid);
+            if (cpuPercent != null) {
+                cpuUsage.set(outputId, cpuPercent);
+            } else {
+                cpuUsage.delete(outputId);
             }
 
             if (now - startedAtMs >= OUTPUT_SOCKET_WARMUP_MS) {

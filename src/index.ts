@@ -65,7 +65,7 @@ registerOutputApi(app, db, outputService);
 registerPreviewApi(app, previewService);
 registerSettingsApi(app, db);
 registerVersionApi(app);
-registerMetricsApi(app);
+registerMetricsApi(app, srtRelayService);
 healthService.registerRoutes(app);
 hostProbeService.registerRoutes(app);
 registerSrsLogsApi(app, healthService.getSrsEvents);

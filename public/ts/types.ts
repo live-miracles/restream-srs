@@ -113,6 +113,7 @@ export interface OutputStatus {
     hasErrorHistory: boolean;
     memoryUsageBytes: number | null;
     memoryLimitBytes: number | null;
+    cpuPercent: number | null;
 }
 
 export interface SrtRelayStatus {
@@ -279,12 +280,20 @@ export interface ConfigData {
     layoutOrder: LayoutOrderEntry[];
 }
 
+export interface ProcUsage {
+    cpuPercent: number | null;
+    ramBytes: number | null;
+}
+
 export interface SystemMetrics {
     cpu: { cores: number; percent: number };
     ram: { usedBytes: number; totalBytes: number };
     disk: { totalBytes: number; usedBytes: number } | null;
     net: { rxBytesPerSec: number; txBytesPerSec: number };
     uptimeSeconds?: number;
+    node: ProcUsage;
+    srs: ProcUsage;
+    relay: ProcUsage;
 }
 
 export interface MetricSample {
@@ -320,4 +329,5 @@ export interface OutputView extends Output {
     lastErrorAt: number | null;
     memoryUsageBytes: number | null;
     memoryLimitBytes: number | null;
+    cpuPercent: number | null;
 }
