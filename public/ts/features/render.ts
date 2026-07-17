@@ -907,7 +907,13 @@ function renderMediaProbeNotice(input: InputHealth): string {
 
 function renderInputStats(input: InputHealth): string {
     if (!input.connected) return '';
-    if (!input.live) {
+    // mediaError takes priority over `!live` below: for RTMP inputs, SRS keeps
+    // reporting its own (stale) demuxed video/audio metadata even while our
+    // ffprobe re-check is actively failing, so falling through to the stats
+    // row below on video-truthy would silently hide a live ffprobe failure.
+    // SRT inputs never populate that fallback (srt_to_rtmp is off), which is
+    // why this only ever masked errors on RTMP-sourced pipelines.
+    if (!input.live || input.mediaError) {
         return renderMediaProbeNotice(input);
     }
 
