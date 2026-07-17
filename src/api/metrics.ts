@@ -132,7 +132,7 @@ async function updateSrsUsage(): Promise<void> {
         };
         const self = data.data?.self;
         srsUsage = {
-            cpuPercent: typeof self?.cpu_percent === 'number' ? self.cpu_percent : null,
+            cpuPercent: typeof self?.cpu_percent === 'number' ? self.cpu_percent * 100 : null,
             ramBytes: typeof self?.mem_kbyte === 'number' ? self.mem_kbyte * 1024 : null,
         };
     } catch {
