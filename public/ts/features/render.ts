@@ -2235,18 +2235,13 @@ function renderOutputCard(
 
     // Persistent "last error" notice, distinct from outStatus/outputIssues'
     // hasCurrentOutputError (which is about live dot color and resets on any
-    // restart, including silent auto-retries). This line should hide stale
-    // errors from before the user's last explicit start click, but keep
-    // showing errors recorded during/after that start — including ones from
-    // auto-retries in between — until the user clicks Stop. manualStartAtMs
-    // only moves on an explicit start()/start-all, not on auto-retry, so it's
-    // the right anchor for that comparison (see OutputStats.manualStartAtMs;
-    // health.ts's patchOutputManualStart keeps it from lagging a click by a
-    // full poll cycle).
-    const lastErrorIsCurrent =
-        o.lastError !== null &&
-        o.lastErrorAt !== null &&
-        (o.manualStartAtMs === null || o.lastErrorAt >= o.manualStartAtMs);
+    // restart, including silent auto-retries). o.lastError is only ever
+    // non-null when the most recent event for this output was a crash — a
+    // deliberate stop always writes a 'stopped' marker (server-side) that
+    // immediately supersedes it, so this line naturally persists through
+    // auto-retries (which don't touch history) but clears as soon as the
+    // output is stopped, with no separate timestamp to compare against.
+    const lastErrorIsCurrent = o.lastError !== null && o.lastErrorAt !== null;
     const lastErrorLine =
         o.lastError && lastErrorIsCurrent
             ? (o.lastError

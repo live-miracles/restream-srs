@@ -577,6 +577,38 @@ describe('output stop/start race', () => {
         service.shutdown();
     });
 
+    test('stopping during a retry backoff (no live process) still records a stopped marker', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const output = db.getOutput('out1');
+        const createOutputService = loadOutputService(t, proc, { progressStallMs: 60_000 });
+        const service = createOutputService(db, makeReadyInputState());
+
+        await service.start('out1');
+        // Simulate ffmpeg crashing on its own (not via kill()) — the close
+        // handler records a 'crash' entry, clears `processes`, and schedules
+        // a retry a second or two out. No SIGTERM was sent, so this differs
+        // from the SIGTERM-in-flight race covered above.
+        proc.emit('close', 1, null);
+
+        assert.equal(db.lastErrorKind, 'crash');
+        assert.equal(service.getStats('out1').status, 'failed');
+
+        // Operator clicks Stop while the output sits in that retry-backoff
+        // gap — there's no live process for service.stop() to kill, so the
+        // close handler (which normally writes the 'stopped' marker) never
+        // runs. stop() must record it directly, or the crash above stays
+        // the newest history entry forever and keeps showing as current.
+        output.desiredState = 'stopped';
+        service.stop('out1');
+
+        assert.equal(service.getStats('out1').status, 'stopped');
+        assert.equal(db.lastErrorKind, 'stopped');
+        assert.match(db.lastError, /\n$/);
+
+        service.shutdown();
+    });
+
     test('stopping an output with pending stderr records it as a stopped-kind diagnostic entry', async (t) => {
         const proc = new FakeFfmpeg();
         const db = makeDb();
@@ -599,7 +631,7 @@ describe('output stop/start race', () => {
         service.shutdown();
     });
 
-    test('stopping a clean output does not record a diagnostic entry', async (t) => {
+    test('stopping a clean output still records an empty stopped-kind marker', async (t) => {
         const proc = new FakeFfmpeg();
         const db = makeDb();
         const output = db.getOutput('out1');
@@ -613,8 +645,12 @@ describe('output stop/start race', () => {
         service.stop('out1');
         await sleep(15);
 
+        // Written unconditionally (even with no stderr) so it becomes the
+        // newest history entry and immediately supersedes any earlier crash,
+        // instead of leaving a stale crash as the "current" error.
         assert.equal(service.getStats('out1').status, 'stopped');
-        assert.equal(db.lastError, null);
+        assert.equal(db.lastErrorKind, 'stopped');
+        assert.match(db.lastError, /\n$/);
 
         service.shutdown();
     });

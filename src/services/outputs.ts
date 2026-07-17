@@ -67,13 +67,6 @@ interface OutputStats {
     warningReason: string | null;
     memoryUsageBytes: number | null;
     memoryLimitBytes: number | null;
-    // When the user last explicitly asked this output to start (start button /
-    // start-all), as opposed to startedAtMs which also moves on every silent
-    // auto-retry restart. The UI uses this to decide whether a persisted
-    // lastError is stale (from before this explicit start) or still relevant
-    // (recorded during/after it, including from auto-retries since) — see
-    // hasCurrentOutputError vs the lastErrorHtml gate in render.ts.
-    manualStartAtMs: number | null;
 }
 
 interface OutputProgress {
@@ -101,7 +94,7 @@ export interface OutputService {
     start(outputId: string): Promise<void>;
     stop(outputId: string): void;
     stopAndWait(outputId: string): Promise<void>;
-    restartPipelineOutputs(pipelineId: number, staggerBase?: number, manual?: boolean): number;
+    restartPipelineOutputs(pipelineId: number, staggerBase?: number): number;
     clearRetryState(outputId: string): void;
     shutdown(): void;
 }
@@ -113,7 +106,6 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
         { status: 'running' | 'stopped' | 'failed'; pid: number | null }
     >();
     const startTimes = new Map<string, number>();
-    const manualStartAt = new Map<string, number>();
     const progress = new Map<string, OutputProgress>();
     const socketWarnings = new Map<string, SocketWarning>();
     const memoryWarnings = new Map<string, string>();
@@ -142,7 +134,6 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
                 socketWarnings.get(outputId)?.reason ?? memoryWarnings.get(outputId) ?? null,
             memoryUsageBytes: usage?.rssBytes ?? null,
             memoryLimitBytes: usage?.limitBytes ?? null,
-            manualStartAtMs: manualStartAt.get(outputId) ?? null,
         };
     }
 
@@ -706,20 +697,21 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
                     /* non-critical */
                 }
             } else if (!shuttingDown) {
-                // Deliberate stop, not a failure — but if ffmpeg had printed
-                // anything, it's worth keeping as a diagnostic breadcrumb (e.g.
-                // a run that never crashed but also never made progress, and
-                // got stopped by hand before any watchdog would have caught
-                // it). Skip during app shutdown, which stops every running
-                // output at once and would otherwise flood each one's history
-                // with routine stderr chatter on every restart/deploy.
-                const detail = stderrTail.trim();
-                if (detail) {
-                    try {
-                        db.setOutputLastError(output.id, detail, 'stopped');
-                    } catch {
-                        /* non-critical */
-                    }
+                // Deliberate stop, not a failure. Always record a 'stopped'
+                // marker — even with empty stderr — so it becomes the newest
+                // history entry and immediately supersedes any earlier crash
+                // (db.rowToOutput only surfaces lastError when the *latest*
+                // entry is a crash). When ffmpeg did print something, it's
+                // also worth keeping as a diagnostic breadcrumb (e.g. a run
+                // that never crashed but also never made progress, and got
+                // stopped by hand before any watchdog would have caught it).
+                // Skip during app shutdown, which stops every running output
+                // at once and would otherwise flood each one's history with
+                // routine stop markers on every restart/deploy.
+                try {
+                    db.setOutputLastError(output.id, stderrTail.trim(), 'stopped');
+                } catch {
+                    /* non-critical */
                 }
             }
 
@@ -755,7 +747,6 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
             const output = db.getOutput(outputId);
             if (!output) throw new Error('Output not found');
             if (!validateOutputUrl(output.url)) throw new Error('Invalid output URL');
-            manualStartAt.set(outputId, Date.now());
             clearRetry(outputId);
             getRetry(outputId).failures = 0;
             // Input not live yet — keep the output "running" (desiredState) but
@@ -775,6 +766,17 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
                 void killProcess(outputId, proc);
             } else {
                 setStatus(outputId, 'stopped', null);
+                // No live process to kill — e.g. stopped mid retry-backoff,
+                // between one crash and the next scheduled attempt. The
+                // close handler (which normally records the 'stopped'
+                // marker) never fires in that case, so record it here
+                // instead — otherwise an earlier crash stays the newest
+                // history entry forever and keeps showing as current.
+                try {
+                    db.setOutputLastError(outputId, '', 'stopped');
+                } catch {
+                    /* non-critical */
+                }
             }
         },
 
@@ -788,7 +790,7 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
             await killProcess(outputId, proc);
         },
 
-        restartPipelineOutputs(pipelineId: number, staggerBase = 0, manual = false): number {
+        restartPipelineOutputs(pipelineId: number, staggerBase = 0): number {
             const outputs = db.listOutputsForPipeline(pipelineId);
             let scheduled = 0;
             for (const output of outputs) {
@@ -796,10 +798,6 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
                 if (statuses.get(output.id)?.status === 'running') {
                     continue;
                 }
-                // manual=true means this came from an explicit user "start all"
-                // click, not the automatic restart on input reconnect — mark it the
-                // same as a single-output start() so stale pre-start errors hide.
-                if (manual) manualStartAt.set(output.id, Date.now());
                 const r = getRetry(output.id);
                 r.failures = 0;
                 if (r.timer) clearTimeout(r.timer);

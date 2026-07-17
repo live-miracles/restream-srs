@@ -25,20 +25,29 @@ const LOG_RETENTION_LIMIT = 100;
 const OUTPUT_ERROR_HISTORY_LIMIT = 5;
 
 // Output.lastError's wire format predates the history array and stays
-// "<ts_ms>\n<message>" so existing frontend parsing keeps working. It reflects
-// the latest *crash* record specifically (not just the latest history entry)
-// since it feeds "reason this output isn't running" logic (hasCurrentOutputError,
-// retry state) — a diagnostic stderr tail saved from a deliberate stop is not
-// that reason and must not masquerade as one.
+// "<ts_ms>\n<message>" so existing frontend parsing keeps working. It only
+// surfaces a crash when that crash is also the *most recent* history entry.
+// Every deliberate stop appends a 'stopped' marker (see outputs.ts), even
+// with an empty message, specifically so it immediately supersedes any
+// earlier crash here — "is this error still current" then falls out of
+// history order alone, with no separate timestamp/marker to keep in sync.
 function toLastErrorString(error: OutputErrorRecord | null): string | null {
     return error ? `${error.ts}\n${error.message}` : null;
 }
 
-function latestCrashRecord(history: OutputErrorRecord[]): OutputErrorRecord | null {
-    for (let i = history.length - 1; i >= 0; i--) {
-        if (history[i].kind === 'crash') return history[i];
-    }
-    return null;
+function currentCrashRecord(history: OutputErrorRecord[]): OutputErrorRecord | null {
+    const latest = history[history.length - 1];
+    return latest && latest.kind === 'crash' ? latest : null;
+}
+
+function deriveOutputErrorFields(history: OutputErrorRecord[]): {
+    lastError: string | null;
+    hasErrorHistory: boolean;
+} {
+    return {
+        lastError: toLastErrorString(currentCrashRecord(history)),
+        hasErrorHistory: history.length > 0,
+    };
 }
 
 function parseOutputErrorHistory(raw: string | null): OutputErrorRecord[] {
@@ -194,8 +203,7 @@ export function createDb(dbPath?: string): Db {
             videoEncoding: (row.encoding as string) || 'copy',
             url: row.url as string,
             audioEncoding: (row.audio_encoding as string) || 'copy',
-            lastError: toLastErrorString(latestCrashRecord(errorHistory)),
-            hasErrorHistory: errorHistory.length > 0,
+            ...deriveOutputErrorFields(errorHistory),
         };
     }
 
@@ -417,8 +425,7 @@ export function createDb(dbPath?: string): Db {
                 return {
                     id: r.id as string,
                     pipelineId: r.pipeline_id as number,
-                    lastError: toLastErrorString(latestCrashRecord(errorHistory)),
-                    hasErrorHistory: errorHistory.length > 0,
+                    ...deriveOutputErrorFields(errorHistory),
                 };
             });
         },

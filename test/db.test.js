@@ -258,7 +258,7 @@ describe('Output CRUD', () => {
         assert.match(got?.lastError ?? '', /error 6$/);
     });
 
-    test('setOutputLastError records kind, and stopped entries do not become the current error', () => {
+    test('a stopped entry after a crash supersedes it as the current error', () => {
         const db = makeDb();
         const p = db.createPipeline();
         const o = db.createOutput({ pipelineId: p.id, name: 'X', url: 'rtmp://x' });
@@ -275,10 +275,12 @@ describe('Output CRUD', () => {
             ],
         );
 
-        // The single "current error" string still points at the last crash,
-        // not the more recent (but non-failure) stopped entry.
+        // A deliberate stop always writes a 'stopped' marker (even with an
+        // empty message), so it becomes the newest history entry and clears
+        // the "current error" — the crash is still visible in history, just
+        // no longer surfaced as current.
         const got = db.getOutput(o.id);
-        assert.match(got?.lastError ?? '', /ffmpeg crashed$/);
+        assert.equal(got?.lastError, null);
         assert.equal(got?.hasErrorHistory, true);
     });
 

@@ -896,23 +896,29 @@ export async function showOutputError(pipelineId: string, outId: string): Promis
             const ts = entry.ts
                 ? new Date(entry.ts).toLocaleString(undefined, { hour12: false })
                 : '';
-            // 'stopped' entries are leftover stderr captured at a deliberate
-            // stop, not a failure — badge and text stay neutral so they read
-            // as diagnostic info rather than an error.
+            // 'stopped' entries mark a deliberate stop, not a failure — badge
+            // and text stay neutral so they read as diagnostic info rather
+            // than an error. They're written on every stop, so the message
+            // is often empty (nothing to add beyond "stopped here").
             const isCrash = entry.kind !== 'stopped';
             const badgeClass = isCrash ? 'badge-error' : 'badge-neutral';
             const badgeLabel = isCrash
                 ? idx === 0
                     ? 'latest crash'
                     : 'crash'
-                : 'stopped (stderr)';
+                : entry.message
+                  ? 'stopped (stderr)'
+                  : 'stopped';
             const textClass = isCrash ? 'text-error opacity-80' : 'opacity-60';
+            const body = entry.message
+                ? `<pre class="text-xs ${textClass} whitespace-pre-wrap break-all overflow-x-auto">${esc(entry.message)}</pre>`
+                : '';
             return `<div class="${idx === 0 ? '' : 'mt-4 pt-4 border-t border-base-200'}">
                 <div class="flex items-center gap-2 mb-2">
                     <span class="badge badge-xs ${badgeClass} uppercase">${badgeLabel}</span>
                     <span class="text-xs opacity-50">${ts}</span>
                 </div>
-                <pre class="text-xs ${textClass} whitespace-pre-wrap break-all overflow-x-auto">${esc(entry.message)}</pre>
+                ${body}
             </div>`;
         })
         .join('');
