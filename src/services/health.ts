@@ -64,7 +64,6 @@ interface OutputHealth {
     hasErrorHistory: boolean;
     memoryUsageBytes: number | null;
     memoryLimitBytes: number | null;
-    manualStartAtMs: number | null;
 }
 
 interface PipelineHealth {
@@ -719,20 +718,6 @@ export function createHealthService(
         });
     }
 
-    // /api/health serves this cached snapshot rather than computing fresh per
-    // request (poll() does real SRS/ffprobe I/O across every pipeline, too
-    // costly to redo per click) — so it normally lags a live change by up to
-    // POLL_INTERVAL_MS. manualStartAtMs is compared against lastErrorAt to
-    // decide whether to keep showing a persisted error, so serving a stale
-    // (pre-start) value here made a just-cleared error flash back up for a
-    // few seconds after the user clicked Start. Called from the /start and
-    // /start-all routes right after outputService reports the real value, so
-    // the very next health poll any client makes already reflects it.
-    function patchOutputManualStart(pipelineId: number, outputId: string, ts: number): void {
-        const oh = snapshot.pipelines[String(pipelineId)]?.outputs[outputId];
-        if (oh) oh.manualStartAtMs = ts;
-    }
-
     function shutdown(): void {
         for (const timer of ffprobeTimers.values()) {
             clearTimeout(timer);
@@ -753,7 +738,6 @@ export function createHealthService(
         registerRoutes,
         shutdown,
         getSrsEvents: (): SrsEvent[] => [...srsEvents],
-        patchOutputManualStart,
     };
 }
 

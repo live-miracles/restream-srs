@@ -45,9 +45,12 @@ export interface PipelineLog {
 // 'crash' covers anything that forced ffmpeg to stop unexpectedly (unhandled
 // exit, or the app's own watchdogs killing a stalled/stuck/OOM process) —
 // these are genuine failures and drive retry/error-status logic. 'stopped' is
-// diagnostic only: whatever ffmpeg had printed to stderr at the moment of a
-// deliberate stop, kept so a stall that never crashed (just sat there doing
-// nothing until someone stopped it) still leaves a trace.
+// recorded on every deliberate stop, even with an empty message: whatever
+// ffmpeg had printed to stderr at that moment (if anything) is kept as a
+// diagnostic breadcrumb, but the marker itself exists so it becomes the
+// newest history entry and supersedes any earlier crash — a stop always
+// clears "is there a current error", regardless of whether stderr had
+// anything to say.
 export type OutputErrorKind = 'crash' | 'stopped';
 
 export interface OutputErrorRecord {
