@@ -24,28 +24,30 @@ export const ENCODINGS: Record<string, VideoEncodingPreset> = {
     },
 };
 
-// SRT input is raw MPEG-TS whose audio timestamps jitter (PCR rounding, SRT
-// packet-loss gaps); aresample=async=1 tracks the real clock by adding/dropping
-// samples to absorb drift without inventing new PTS. A native RTMP input has
-// well-behaved timestamps, so asetpts simply recomputes a contiguous PTS from the
-// decoded sample count — a near no-op that keeps the FLV audio clean.
-function flvAudioArgs(inputUrl: string): string[] {
-    const af = inputUrl.startsWith('srt://')
-        ? 'aresample=async=1:first_pts=0'
-        : 'asetpts=STARTPTS+N/SR/TB';
-    return ['-af', af, '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '48000'];
+// 'aac' is the explicit opt-in for a real audio transcode — the only reason to
+// ever pick it is SRT-origin jitter (raw MPEG-TS PCR rounding / packet-loss
+// gaps): aresample=async=1 tracks the real clock by adding/dropping samples to
+// absorb that drift without inventing new PTS, which needs a real decode. A
+// native RTMP origin has well-behaved timestamps (srt_to_rtmp is disabled —
+// see srs.conf — so RTMP-origin pulls never pass through its jittery remux),
+// so 'aac' on an RTMP origin just normalizes the codec/format with no filter.
+function encodeAudioArgs(isSrtOrigin: boolean): string[] {
+    const filterArgs = isSrtOrigin ? ['-af', 'aresample=async=1:first_pts=0'] : [];
+    return [...filterArgs, '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '48000'];
 }
 
 // Explicit map for FLV: ffmpeg's default picks the highest-channel stream, which
-// can be an unwanted program mix. 'copy' defaults to track 0.
+// can be an unwanted program mix. 'copy'/'aac' both mean "default track" (0);
+// only an explicit numeric selection picks a specific one.
 function buildSinkMapArgs(audioTrack: string, isSrt: boolean): string[] {
     if (isSrt) return buildAudioMapArgs(audioTrack);
-    const idx = audioTrack === 'copy' ? '0' : audioTrack.split(',')[0].trim();
+    const idx =
+        audioTrack === 'copy' || audioTrack === 'aac' ? '0' : audioTrack.split(',')[0].trim();
     return ['-map', '0:v:0?', '-map', `0:a:${idx}?`];
 }
 
 function buildAudioMapArgs(audioTrack: string): string[] {
-    if (audioTrack === 'copy') return [];
+    if (audioTrack === 'copy' || audioTrack === 'aac') return [];
     const indices = audioTrack
         .split(',')
         .map((s) => s.trim())
@@ -112,8 +114,13 @@ export function buildFfmpegArgs(
     ];
 
     const isSrt = url.startsWith('srt://');
+    const isSrtOrigin = inputUrl.startsWith('srt://');
     const mapArgs = buildSinkMapArgs(audioEncoding, isSrt);
-    const audioArgs = isSrt ? (['-c:a', 'copy'] as const) : flvAudioArgs(inputUrl);
+    // 'copy' always means a literal stream copy, regardless of origin/destination
+    // protocol. Anything else (the 'aac' opt-in, or an explicit track index/list)
+    // forces a real transcode — see encodeAudioArgs for when that adds a filter.
+    const audioArgs =
+        audioEncoding === 'copy' ? (['-c:a', 'copy'] as const) : encodeAudioArgs(isSrtOrigin);
     const fmt = isSrt ? ['-f', 'mpegts'] : ['-f', 'flv'];
     args.push(...mapArgs, ...encArgs, ...audioArgs, ...fmt, url);
     return args;
@@ -125,6 +132,7 @@ export function validateOutputUrl(url: string): boolean {
 
 export function validateAudioEncoding(value: unknown): string | null {
     if (!value || value === 'copy') return 'copy';
+    if (value === 'aac') return 'aac';
     if (typeof value !== 'string') return null;
     const parts = value.split(',').map((s) => s.trim());
     if (!parts.every((p) => /^\d+$/.test(p))) return null;

@@ -550,16 +550,22 @@ function outVideoEncodingOptions(selected: string): string {
 // modal opens so the global add-sink handler can build new rows with the same list.
 let currentSinkTracks: AudioTrackInfo[] = [];
 // Whether that pipeline's input is published over SRT. An RTMP input carries a
-// single audio track, so its sinks are locked to "copy"; an SRT input exposes
-// every track for per-sink selection. Captured when the modal opens.
+// single audio track, so its sinks only choose between "copy" and "aac"; an SRT
+// input additionally exposes every track for per-sink selection. Captured when
+// the modal opens.
 let currentInputIsSrt = false;
 
-// Build the audio-track <option>s for one sink. Always preserves the currently
-// selected track even when the input is offline / unprobed (so editing a saved
-// output doesn't silently reset its track to copy).
+// Build the audio-track <option>s for one sink. "copy" is a literal stream copy;
+// "aac" force-transcodes the default track (the only reason to pick it is to fix
+// SRT-origin timestamp jitter — see encodeAudioArgs in ffmpeg.ts). Always
+// preserves the currently selected track even when the input is offline /
+// unprobed (so editing a saved output doesn't silently reset its track to copy).
 function audioOptionsHtml(tracks: AudioTrackInfo[], selected: string): string {
-    const seen = new Set<string>(['copy']);
-    const options = [`<option value="copy"${selected === 'copy' ? ' selected' : ''}>copy</option>`];
+    const seen = new Set<string>(['copy', 'aac']);
+    const options = [
+        `<option value="copy"${selected === 'copy' ? ' selected' : ''}>copy</option>`,
+        `<option value="aac"${selected === 'aac' ? ' selected' : ''}>aac</option>`,
+    ];
     for (const t of tracks) {
         const val = String(t.index);
         seen.add(val);
@@ -587,19 +593,16 @@ function sinkRowHtmlForServer(idx: number, key = ''): string {
 }
 
 // Constrain the audio-track selector to match the input. RTMP inputs are
-// single-track, so the selector is locked to "copy"; SRT inputs expose every
-// track for selection.
+// single-track, so they only choose between "copy" and "aac"; SRT inputs
+// additionally expose every track for selection.
 function refreshSinkAudioMode(selected: string): void {
     const sel = document.getElementById('out-audio-encoding-input') as HTMLSelectElement | null;
     if (!sel) return;
-    if (!currentInputIsSrt) {
-        sel.innerHTML = '<option value="copy">copy</option>';
-        sel.value = 'copy';
-        sel.disabled = true;
-    } else {
-        sel.innerHTML = audioOptionsHtml(currentSinkTracks, selected);
-        sel.disabled = false;
-    }
+    // Empty track list for RTMP-origin inputs collapses audioOptionsHtml to just
+    // "copy"/"aac" while still preserving a stale track selection (see its own
+    // doc comment) instead of silently discarding it.
+    sel.innerHTML = audioOptionsHtml(currentInputIsSrt ? currentSinkTracks : [], selected);
+    sel.disabled = false;
 }
 
 function populateDestination(

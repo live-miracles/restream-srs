@@ -401,6 +401,8 @@ function selectedAudioTrack(
     if (tracks.length === 0) return null;
     if (!audioEncoding || audioEncoding === 'copy') return tracks[0];
 
+    // 'aac' (transcode, default track) falls through here too: Number('aac') is
+    // NaN, which .find() below skips, so it resolves to tracks[0] same as 'copy'.
     const firstTrack = audioEncoding
         .split(',')
         .map((part) => Number(part.trim()))
@@ -2175,11 +2177,15 @@ function renderOutputCard(
         );
     }
     if (o.audioEncoding !== 'copy') {
+        const label =
+            o.audioEncoding === 'aac'
+                ? 'AAC'
+                : o.audioEncoding
+                      .split(',')
+                      .map((t) => `T${parseInt(t) + 1}`)
+                      .join('+');
         badges.push(
-            `<span class="badge badge-xs badge-accent badge-soft whitespace-nowrap">${o.audioEncoding
-                .split(',')
-                .map((t) => `T${parseInt(t) + 1}`)
-                .join('+')}</span>`,
+            `<span class="badge badge-xs badge-accent badge-soft whitespace-nowrap">${label}</span>`,
         );
     }
     if (uptimeMs !== null) {
