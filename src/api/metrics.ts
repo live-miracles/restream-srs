@@ -2,10 +2,15 @@ import os from 'os';
 import fs from 'fs';
 import { execFile } from 'child_process';
 import type { Express } from 'express';
+import { readSrsConfigValues } from '../utils/srsConfig.js';
+import { readProcRssBytes, createProcCpuTracker } from '../utils/procStats.js';
+import type { SrtRelayService } from '../services/srtRelay.js';
 
 const DISK_STATS_INTERVAL_MS = 30_000;
 const NET_STATS_INTERVAL_MS = 3_000;
 const SAMPLE_INTERVAL_MS = 10_000;
+const PROC_STATS_INTERVAL_MS = 10_000;
+const PROC_STATS_FETCH_TIMEOUT_MS = 2000;
 const HISTORY_MAX = 720; // 2 hours at 10 s — client trims to desired window
 
 let prevCpu = os.cpus().map((c) => c.times);
@@ -91,6 +96,62 @@ function updateNetStats(): void {
     }
 }
 
+export interface ProcUsage {
+    cpuPercent: number | null;
+    ramBytes: number | null;
+}
+
+const relayCpuTracker = createProcCpuTracker();
+const nodeCpuTracker = createProcCpuTracker();
+
+let nodeUsage: ProcUsage = { cpuPercent: null, ramBytes: null };
+let srsUsage: ProcUsage = { cpuPercent: null, ramBytes: null };
+let relayUsage: ProcUsage = { cpuPercent: null, ramBytes: null };
+
+// This app's own Node.js process — same procfs technique as SRS/relay below,
+// just pointed at our own pid, so all three "process" columns are measured
+// the same way (and match the ps/top single-core-relative convention).
+function updateNodeUsage(): void {
+    const pid = process.pid;
+    nodeUsage = {
+        cpuPercent: nodeCpuTracker.sample(pid, pid),
+        ramBytes: readProcRssBytes(pid),
+    };
+}
+
+async function updateSrsUsage(): Promise<void> {
+    try {
+        const srsApiUrl = readSrsConfigValues().apiUrl;
+        const res = await fetch(`${srsApiUrl}/api/v1/summaries`, {
+            signal: AbortSignal.timeout(PROC_STATS_FETCH_TIMEOUT_MS),
+            headers: { Connection: 'close' },
+        });
+        if (!res.ok) throw new Error(`SRS summaries HTTP ${res.status}`);
+        const data = (await res.json()) as {
+            data?: { self?: { cpu_percent?: number; mem_kbyte?: number } };
+        };
+        const self = data.data?.self;
+        srsUsage = {
+            cpuPercent: typeof self?.cpu_percent === 'number' ? self.cpu_percent : null,
+            ramBytes: typeof self?.mem_kbyte === 'number' ? self.mem_kbyte * 1024 : null,
+        };
+    } catch {
+        srsUsage = { cpuPercent: null, ramBytes: null };
+    }
+}
+
+function updateRelayUsage(srtRelayService: SrtRelayService): void {
+    const pid = srtRelayService.getStats().pid;
+    if (pid == null) {
+        relayUsage = { cpuPercent: null, ramBytes: null };
+        return;
+    }
+    relayUsage = {
+        cpuPercent: relayCpuTracker.sample(pid, pid),
+        ramBytes: readProcRssBytes(pid),
+    };
+}
+
 export interface MetricSample {
     ts: number;
     cpu: number;
@@ -117,7 +178,7 @@ function sampleMetrics(): void {
     if (metricsHistory.length > HISTORY_MAX) metricsHistory.shift();
 }
 
-function startMetricsSampling(): void {
+function startMetricsSampling(srtRelayService: SrtRelayService): void {
     if (metricsStarted) return;
     metricsStarted = true;
     updateDiskStats();
@@ -126,10 +187,18 @@ function startMetricsSampling(): void {
     setInterval(updateNetStats, NET_STATS_INTERVAL_MS).unref();
     sampleMetrics();
     setInterval(sampleMetrics, SAMPLE_INTERVAL_MS).unref();
+    updateNodeUsage();
+    void updateSrsUsage();
+    updateRelayUsage(srtRelayService);
+    setInterval(() => {
+        updateNodeUsage();
+        void updateSrsUsage();
+        updateRelayUsage(srtRelayService);
+    }, PROC_STATS_INTERVAL_MS).unref();
 }
 
-export function registerMetricsApi(app: Express): void {
-    startMetricsSampling();
+export function registerMetricsApi(app: Express, srtRelayService: SrtRelayService): void {
+    startMetricsSampling(srtRelayService);
 
     app.get('/api/metrics/system', (_req, res) => {
         const s = metricsHistory[metricsHistory.length - 1];
@@ -146,6 +215,9 @@ export function registerMetricsApi(app: Express): void {
                 rxBytesPerSec: s?.rxBps ?? 0,
                 txBytesPerSec: s?.txBps ?? 0,
             },
+            node: nodeUsage,
+            srs: srsUsage,
+            relay: relayUsage,
             uptimeSeconds: process.uptime(),
         });
     });

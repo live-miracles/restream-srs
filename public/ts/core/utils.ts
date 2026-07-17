@@ -45,8 +45,8 @@ export const STATUS_COLOR_OFF = '#6b7280';
 
 export function formatBitrate(kbps: number | null): string {
     if (kbps === null) return '—';
-    if (kbps >= 1000) return `${(kbps / 1000).toFixed(1)} Mb/s`;
-    return `${kbps} kb/s`;
+    if (kbps >= 1000) return `${(kbps / 1000).toFixed(1)}Mbps`;
+    return `${kbps}kbps`;
 }
 
 export function formatBytes(bytes: number): string {

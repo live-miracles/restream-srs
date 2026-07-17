@@ -64,6 +64,7 @@ interface OutputHealth {
     hasErrorHistory: boolean;
     memoryUsageBytes: number | null;
     memoryLimitBytes: number | null;
+    cpuPercent: number | null;
 }
 
 interface PipelineHealth {

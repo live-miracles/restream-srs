@@ -1381,7 +1381,7 @@ function renderOverview(): void {
     );
     let outputRows = '';
     if (totalOuts === 0) {
-        outputRows = `<tr><td colspan="8" class="py-4 text-center opacity-50">No outputs yet.</td></tr>`;
+        outputRows = `<tr><td colspan="9" class="py-4 text-center opacity-50">No outputs yet.</td></tr>`;
     } else {
         for (const p of state.pipelines) {
             for (const o of p.outs) {
@@ -1405,6 +1405,7 @@ function renderOverview(): void {
                     <td>${renderOverviewIssues(outputIssues(o, p.input))}</td>
                     <td class="font-mono text-xs">${outUptimeMs !== null ? formatUptime(outUptimeMs) : '—'}</td>
                     ${td(formatBitrate(o.bitrateKbps))}
+                    <td class="font-mono text-xs">${o.cpuPercent != null ? `${o.cpuPercent}%` : '—'}</td>
                     <td class="font-mono text-xs ${memorySeverityClass(outputMemoryPercent(o))}">${formatOutputMemory(o) ?? '—'}</td>
                     <td>${typeBadge(protocolLabel)}</td>
                     <td class="font-mono text-xs">${spec}</td>
@@ -1412,9 +1413,9 @@ function renderOverview(): void {
             }
         }
         if (problemsOnly && outputRows === '') {
-            outputRows = `<tr><td colspan="8" class="py-4 text-center opacity-50">No output issues.</td></tr>`;
+            outputRows = `<tr><td colspan="9" class="py-4 text-center opacity-50">No output issues.</td></tr>`;
         } else if (activeOnly && outputRows === '') {
-            outputRows = `<tr><td colspan="8" class="py-4 text-center opacity-50">No active outputs.</td></tr>`;
+            outputRows = `<tr><td colspan="9" class="py-4 text-center opacity-50">No active outputs.</td></tr>`;
         }
     }
 
@@ -1458,6 +1459,29 @@ function renderOverview(): void {
         ${chartCard('chart-tx', 'Uplink', last ? fmtMbps(last.txBps) : '—')}
     </div>`;
 
+    const m = state.metrics;
+    const fmtProcCpu = (percent: number | null | undefined): string =>
+        percent != null ? `${Math.round(percent)}%` : '—';
+    const fmtProcRam = (bytes: number | null | undefined): string =>
+        bytes != null ? formatBytesCompact(bytes) : '—';
+    const systemUsageHtml = `
+    <h2 class="mb-2 text-lg font-bold">System Usage</h2>
+    <div class="overflow-x-auto mb-6">
+        <table class="table table-sm">
+            ${thead(['Node CPU', 'Node RAM', 'SRS CPU', 'SRS RAM', 'Relay CPU', 'Relay RAM'])}
+            <tbody>
+                <tr>
+                    <td class="font-mono text-xs">${fmtProcCpu(m.node?.cpuPercent)}</td>
+                    <td class="font-mono text-xs">${fmtProcRam(m.node?.ramBytes)}</td>
+                    <td class="font-mono text-xs">${fmtProcCpu(m.srs?.cpuPercent)}</td>
+                    <td class="font-mono text-xs">${fmtProcRam(m.srs?.ramBytes)}</td>
+                    <td class="font-mono text-xs">${fmtProcCpu(m.relay?.cpuPercent)}</td>
+                    <td class="font-mono text-xs">${fmtProcRam(m.relay?.ramBytes)}</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>`;
+
     const totalAll = activeRelayPipelines.length + state.pipelines.length + totalOuts;
     const totalActive = relayActiveCount + inputActiveCount + outputActiveCount;
     const totalProblems = relayProblemCount + inputProblemCount + outputProblemCount;
@@ -1479,6 +1503,7 @@ function renderOverview(): void {
 
     overviewEl.innerHTML = `
         ${chartsHtml}
+        ${systemUsageHtml}
         ${filterChips}
         <h2 class="mb-2 text-lg font-bold">SRT Bonding Relay <span class="badge badge-neutral badge-sm ml-1">${activeRelayPipelines.length}</span></h2>
         <div class="overflow-x-auto mb-6">
@@ -1497,7 +1522,7 @@ function renderOverview(): void {
         <h2 class="mb-2 text-lg font-bold">Outputs <span class="badge badge-neutral badge-sm ml-1">${totalOuts}</span></h2>
         <div class="overflow-x-auto">
             <table class="table table-sm">
-                ${thead(['Pipeline · Output', 'Status', 'Issues', 'Uptime', 'Bitrate', 'RAM', 'Type', 'Stream Specification'])}
+                ${thead(['Pipeline · Output', 'Status', 'Issues', 'Uptime', 'Bitrate', 'CPU', 'RAM', 'Type', 'Stream Specification'])}
                 <tbody>${outputRows}</tbody>
             </table>
         </div>`;
@@ -2199,12 +2224,10 @@ function renderOutputCard(
             `<span class="font-mono text-xs opacity-60 whitespace-nowrap">${formatUptime(uptimeMs)}</span>`,
         );
     }
-    if (isRunning && o.bitrateKbps !== null) {
-        badges.push(
-            `<span class="badge badge-sm whitespace-nowrap">${formatBitrate(o.bitrateKbps)}</span>`,
-        );
-    }
-    if (isRunning && o.memoryUsageBytes !== null) {
+    if (
+        isRunning &&
+        (o.bitrateKbps !== null || o.cpuPercent !== null || o.memoryUsageBytes !== null)
+    ) {
         const memPercent = outputMemoryPercent(o);
         const memCls =
             memPercent !== null && memPercent >= METRIC_ERROR_PERCENT
@@ -2212,9 +2235,13 @@ function renderOutputCard(
                 : memPercent !== null && memPercent >= METRIC_WARN_PERCENT
                   ? 'badge-warning'
                   : '';
-        const memLabel = formatOutputMemory(o)?.replace(/([GMK])$/, ' $1b') ?? '—';
+        const parts = [
+            o.bitrateKbps !== null ? formatBitrate(o.bitrateKbps) : null,
+            o.cpuPercent !== null ? `${o.cpuPercent}%` : null,
+            o.memoryUsageBytes !== null ? formatOutputMemory(o) : null,
+        ].filter((v): v is string => v !== null);
         badges.push(
-            `<span class="badge badge-sm whitespace-nowrap ${memCls}" title="ffmpeg RSS">${memLabel}</span>`,
+            `<span class="badge badge-sm whitespace-nowrap ${memCls}" title="Bitrate / ffmpeg CPU (% of one core) / ffmpeg RSS">${parts.join(' | ')}</span>`,
         );
     }
     let inlineSink = '';
