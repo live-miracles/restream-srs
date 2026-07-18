@@ -1429,7 +1429,7 @@ function renderOverview(): void {
         (s) => s.ts >= windowStart && s.ts <= windowEnd,
     );
     const last = chartSamples[chartSamples.length - 1];
-    const fmtMbps = (bps: number) => `${((bps * 8) / 1_000_000).toFixed(1)} Mb/s`;
+    const fmtBps = (bps: number) => formatBitrate((bps * 8) / 1000);
 
     const oldest = state.metricsHistory[0];
     const maxOffset = oldest ? Math.max(0, Date.now() - oldest.ts - CHART_WINDOW_MS) : 0;
@@ -1455,28 +1455,170 @@ function renderOverview(): void {
     <div class="mb-6 grid grid-cols-2 gap-4">
         ${chartCard('chart-cpu', 'CPU', last ? `${last.cpu}%` : '—')}
         ${chartCard('chart-ram', 'RAM', last ? `${Math.round((last.ramUsed / last.ramTotal) * 100)}%` : '—')}
-        ${chartCard('chart-rx', 'Downlink', last ? fmtMbps(last.rxBps) : '—')}
-        ${chartCard('chart-tx', 'Uplink', last ? fmtMbps(last.txBps) : '—')}
+        ${chartCard('chart-rx', 'Downlink', last ? fmtBps(last.rxBps) : '—')}
+        ${chartCard('chart-tx', 'Uplink', last ? fmtBps(last.txBps) : '—')}
     </div>`;
 
     const m = state.metrics;
-    const fmtProcCpu = (percent: number | null | undefined): string =>
-        percent != null ? `${Math.round(percent)}%` : '—';
+    const fmtProcCpu = (percent: number | null | undefined): string => {
+        if (percent == null) return '—';
+        const r = Math.round(percent);
+        // Above 99% (i.e. more than one core's worth), add a space before
+        // the last two digits so wide numbers don't crowd the % sign.
+        if (r > 99) {
+            const s = String(r);
+            return `${s.slice(0, -2)} ${s.slice(-2)}%`;
+        }
+        return `${r}%`;
+    };
     const fmtProcRam = (bytes: number | null | undefined): string =>
         bytes != null ? formatBytesCompact(bytes) : '—';
+    const isLoopbackHost = (host: string | null | undefined): boolean =>
+        host === 'localhost' || host === '127.0.0.1';
+    const outputHost = (url: string): string | null => {
+        try {
+            return new URL(url).hostname;
+        } catch {
+            return null;
+        }
+    };
+
+    // Sum of every tracked process's own %CPU (single-core-relative — see
+    // ProcCpuTracker) and RSS: node + SRS + relay + every running ffmpeg
+    // output. Independent of the Issues/Active row filter below — this is
+    // whole-system resource usage, not a count of displayed rows.
+    let totalCpuPercent = 0;
+    let totalCpuKnown = false;
+    let totalRamBytes = 0;
+    let totalRamKnown = false;
+    let outsCpuPercent = 0;
+    let outsCpuKnown = false;
+    let outsRamBytes = 0;
+    let outsRamKnown = false;
+    const addCpu = (v: number | null | undefined): void => {
+        if (v != null) {
+            totalCpuPercent += v;
+            totalCpuKnown = true;
+        }
+    };
+    const addRam = (v: number | null | undefined): void => {
+        if (v != null) {
+            totalRamBytes += v;
+            totalRamKnown = true;
+        }
+    };
+    addCpu(m.node?.cpuPercent);
+    addRam(m.node?.ramBytes);
+    addCpu(m.srs?.cpuPercent);
+    addRam(m.srs?.ramBytes);
+    addCpu(m.relay?.cpuPercent);
+    addRam(m.relay?.ramBytes);
+    // Downlink is what SRS receives directly from publishers (excluding
+    // loopback — those are locally fed by the relay or a chained pipeline
+    // output) plus what the SRT bonding relay pulls in across its bonded
+    // legs. Uplink is what the ffmpeg outputs push out (excluding loopback
+    // chaining into another pipeline).
+    let srsDownlinkKbps = 0;
+    let srsDownlinkKnown = false;
+    let relayDownlinkKbps = 0;
+    let relayDownlinkKnown = false;
+    let outsUplinkKbps = 0;
+    let outsUplinkKnown = false;
+    for (const p of state.pipelines) {
+        if (p.input.recvBitrateKbps != null && !isLoopbackHost(p.input.publisherIp)) {
+            srsDownlinkKbps += p.input.recvBitrateKbps;
+            srsDownlinkKnown = true;
+        }
+        for (const o of p.outs) {
+            addCpu(o.cpuPercent);
+            addRam(o.memoryUsageBytes);
+            if (o.cpuPercent != null) {
+                outsCpuPercent += o.cpuPercent;
+                outsCpuKnown = true;
+            }
+            if (o.memoryUsageBytes != null) {
+                outsRamBytes += o.memoryUsageBytes;
+                outsRamKnown = true;
+            }
+            if (o.bitrateKbps != null && o.url && !isLoopbackHost(outputHost(o.url))) {
+                outsUplinkKbps += o.bitrateKbps;
+                outsUplinkKnown = true;
+            }
+        }
+    }
+    for (const p of activeRelayPipelines) {
+        for (const leg of p.srtBonding.input.legs) {
+            if (leg.recvRateMbps != null) {
+                relayDownlinkKbps += leg.recvRateMbps * 1000;
+                relayDownlinkKnown = true;
+            }
+        }
+    }
+    const totalDownlinkKbps = srsDownlinkKbps + relayDownlinkKbps;
+    const totalDownlinkKnown = srsDownlinkKnown || relayDownlinkKnown;
+    const totalUplinkKbps = outsUplinkKbps;
+    const totalUplinkKnown = outsUplinkKnown;
+
+    // m.cpu.percent is already normalized across all cores (0–100 = whole
+    // machine). Scale it up to the same single-core-relative basis as the
+    // per-process percentages above (100% = one core) so App and Total are
+    // comparable.
+    const sysCpuPercent = m.cpu ? m.cpu.percent * m.cpu.cores : null;
+    const sysRamUsedBytes = m.ram?.usedBytes ?? null;
+    const sysDownlinkKbps = m.net ? (m.net.rxBytesPerSec * 8) / 1000 : null;
+    const sysUplinkKbps = m.net ? (m.net.txBytesPerSec * 8) / 1000 : null;
+    const appTotalTitle =
+        'App = node + SRS + relay + every running ffmpeg output. System = whole-system usage.';
+    const downlinkTotalTitle =
+        'App = SRS direct inputs + SRT bonding relay legs. System = whole-system downlink.';
+    const uplinkTotalTitle = 'App = every running ffmpeg output. System = whole-system uplink.';
+
     const systemUsageHtml = `
-    <h2 class="mb-2 text-lg font-bold">System Usage</h2>
+    <h2 class="mb-2 text-lg font-bold">Restream Usage</h2>
     <div class="overflow-x-auto mb-6">
         <table class="table table-sm">
-            ${thead(['Node CPU', 'Node RAM', 'SRS CPU', 'SRS RAM', 'Relay CPU', 'Relay RAM'])}
+            <thead>
+                <tr>
+                    <th></th>
+                    <th>Node</th>
+                    <th>SRS</th>
+                    <th>Relay</th>
+                    <th>Outs</th>
+                    <th>App / System</th>
+                </tr>
+            </thead>
             <tbody>
                 <tr>
+                    <td class="text-xs opacity-60">CPU</td>
                     <td class="font-mono text-xs">${fmtProcCpu(m.node?.cpuPercent)}</td>
-                    <td class="font-mono text-xs">${fmtProcRam(m.node?.ramBytes)}</td>
                     <td class="font-mono text-xs">${fmtProcCpu(m.srs?.cpuPercent)}</td>
-                    <td class="font-mono text-xs">${fmtProcRam(m.srs?.ramBytes)}</td>
                     <td class="font-mono text-xs">${fmtProcCpu(m.relay?.cpuPercent)}</td>
+                    <td class="font-mono text-xs">${outsCpuKnown ? fmtProcCpu(outsCpuPercent) : '—'}</td>
+                    <td class="font-mono text-xs" title="${appTotalTitle}">${totalCpuKnown ? fmtProcCpu(totalCpuPercent) : '—'} / ${fmtProcCpu(sysCpuPercent)}</td>
+                </tr>
+                <tr>
+                    <td class="text-xs opacity-60">RAM</td>
+                    <td class="font-mono text-xs">${fmtProcRam(m.node?.ramBytes)}</td>
+                    <td class="font-mono text-xs">${fmtProcRam(m.srs?.ramBytes)}</td>
                     <td class="font-mono text-xs">${fmtProcRam(m.relay?.ramBytes)}</td>
+                    <td class="font-mono text-xs">${outsRamKnown ? fmtProcRam(outsRamBytes) : '—'}</td>
+                    <td class="font-mono text-xs" title="${appTotalTitle}">${totalRamKnown ? formatBytesCompact(totalRamBytes) : '—'} / ${fmtProcRam(sysRamUsedBytes)}</td>
+                </tr>
+                <tr>
+                    <td class="text-xs opacity-60">Downlink</td>
+                    <td class="font-mono text-xs">—</td>
+                    <td class="font-mono text-xs">${srsDownlinkKnown ? formatBitrate(srsDownlinkKbps) : '—'}</td>
+                    <td class="font-mono text-xs">${relayDownlinkKnown ? formatBitrate(relayDownlinkKbps) : '—'}</td>
+                    <td class="font-mono text-xs">—</td>
+                    <td class="font-mono text-xs" title="${downlinkTotalTitle}">${totalDownlinkKnown ? formatBitrate(totalDownlinkKbps) : '—'} / ${formatBitrate(sysDownlinkKbps)}</td>
+                </tr>
+                <tr>
+                    <td class="text-xs opacity-60">Uplink</td>
+                    <td class="font-mono text-xs">—</td>
+                    <td class="font-mono text-xs">—</td>
+                    <td class="font-mono text-xs">—</td>
+                    <td class="font-mono text-xs">${outsUplinkKnown ? formatBitrate(outsUplinkKbps) : '—'}</td>
+                    <td class="font-mono text-xs" title="${uplinkTotalTitle}">${totalUplinkKnown ? formatBitrate(totalUplinkKbps) : '—'} / ${formatBitrate(sysUplinkKbps)}</td>
                 </tr>
             </tbody>
         </table>
@@ -2513,11 +2655,11 @@ export function renderMetrics(): void {
     setMetricSeverity('navbar-disk-value', diskPercent);
     setInnerText(
         'navbar-net-rx',
-        net ? `↓ ${((net.rxBytesPerSec * 8) / 1_000_000).toFixed(1)} Mb/s` : '↓ —',
+        net ? `↓ ${formatBitrate((net.rxBytesPerSec * 8) / 1000)}` : '↓ —',
     );
     setInnerText(
         'navbar-net-tx',
-        net ? `↑ ${((net.txBytesPerSec * 8) / 1_000_000).toFixed(1)} Mb/s` : '↑ —',
+        net ? `↑ ${formatBitrate((net.txBytesPerSec * 8) / 1000)}` : '↑ —',
     );
 }
 
