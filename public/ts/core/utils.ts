@@ -45,9 +45,9 @@ export const STATUS_COLOR_OFF = '#6b7280';
 
 export function formatBitrate(kbps: number | null): string {
     if (kbps === null) return '—';
-    if (kbps >= 1_000_000) return `${(kbps / 1_000_000).toFixed(1)}gbps`;
-    if (kbps >= 1000) return `${(kbps / 1000).toFixed(1)}mbps`;
-    return `${Math.round(kbps * 10) / 10}kbps`;
+    if (kbps >= 1_000_000) return `${(kbps / 1_000_000).toFixed(1)} gbps`;
+    if (kbps >= 1000) return `${(kbps / 1000).toFixed(1)} mbps`;
+    return `${Math.round(kbps * 10) / 10} kbps`;
 }
 
 export function formatBytes(bytes: number): string {
@@ -57,9 +57,9 @@ export function formatBytes(bytes: number): string {
 }
 
 export function formatBytesCompact(bytes: number): string {
-    if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)}gb`;
-    if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(0)}mb`;
-    return `${(bytes / 1024).toFixed(0)}kb`;
+    if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} gb`;
+    if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(0)} mb`;
+    return `${(bytes / 1024).toFixed(0)} kb`;
 }
 
 // Shared formatter for millisecond durations (RTT, negotiated latency,
@@ -72,7 +72,7 @@ export function fmtMs(ms: number | null | undefined): string {
 // For a value already expressed in Mb/s (relay bandwidth/rate fields), as
 // opposed to formatBitrate above which takes raw kb/s.
 export function fmtMbpsValue(v: number | null | undefined): string {
-    return v != null ? `${v.toFixed(v >= 10 ? 0 : 1)} Mb/s` : '—';
+    return v != null ? formatBitrate(v * 1000) : '—';
 }
 
 export function maskStreamKey(key: string | null | undefined): string {

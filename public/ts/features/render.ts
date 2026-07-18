@@ -1568,10 +1568,10 @@ function renderOverview(): void {
     const sysDownlinkKbps = m.net ? (m.net.rxBytesPerSec * 8) / 1000 : null;
     const sysUplinkKbps = m.net ? (m.net.txBytesPerSec * 8) / 1000 : null;
     const appTotalTitle =
-        'App = node + SRS + relay + every running ffmpeg output. System = whole-system usage.';
+        'App = node + SRS + relay + every running ffmpeg output.\nSystem = whole-system usage.';
     const downlinkTotalTitle =
-        'App = SRS direct inputs + SRT bonding relay legs. System = whole-system downlink.';
-    const uplinkTotalTitle = 'App = every running ffmpeg output. System = whole-system uplink.';
+        'App = SRS direct inputs + SRT bonding relay legs.\nSystem = whole-system downlink.';
+    const uplinkTotalTitle = 'App = every running ffmpeg output.\nSystem = whole-system uplink.';
 
     const systemUsageHtml = `
     <h2 class="mb-2 text-lg font-bold">Restream Usage</h2>
