@@ -196,6 +196,154 @@ describe('Settings API integration', () => {
             assert.equal(res.status, 200);
             assert.equal(harness.db.getSetting('serverName'), 'Control Room');
         });
+
+        // Regression: a missing/malformed field used to be silently treated as
+        // "clear everything" (return []) instead of rejected, because that
+        // fallback dates back to when this field was one optional part of a
+        // combined /api/settings payload. On this dedicated endpoint it must
+        // reject instead of wiping existing targets.
+        test('rejects a request with no hostProbeTargets field, leaving existing targets intact', async () => {
+            const harness = createHarness();
+            harness.db.replaceHostProbeTargets([
+                { slot: 1, label: 'YouTube', host: 'a.rtmp.youtube.com', port: 1935 },
+            ]);
+
+            const res = await harness.request('POST', '/api/settings/host-probes', {});
+
+            assert.equal(res.status, 400);
+            assert.equal(harness.db.listHostProbeTargets().length, 1);
+        });
+
+        test('rejects a non-array hostProbeTargets value, leaving existing targets intact', async () => {
+            const harness = createHarness();
+            harness.db.replaceHostProbeTargets([
+                { slot: 1, label: 'YouTube', host: 'a.rtmp.youtube.com', port: 1935 },
+            ]);
+
+            for (const bad of ['not-an-array', 42, { slot: 1 }, null]) {
+                const res = await harness.request('POST', '/api/settings/host-probes', {
+                    hostProbeTargets: bad,
+                });
+                assert.equal(res.status, 400);
+            }
+            assert.equal(harness.db.listHostProbeTargets().length, 1);
+        });
+
+        test('sending an explicit empty array still clears every target (the real no-op-clear path)', async () => {
+            const harness = createHarness();
+            harness.db.replaceHostProbeTargets([
+                { slot: 1, label: 'YouTube', host: 'a.rtmp.youtube.com', port: 1935 },
+            ]);
+
+            const res = await harness.request('POST', '/api/settings/host-probes', {
+                hostProbeTargets: [],
+            });
+
+            assert.equal(res.status, 200);
+            assert.deepEqual(harness.db.listHostProbeTargets(), []);
+        });
+
+        test('rejects more than the 10-target maximum', async () => {
+            const harness = createHarness();
+            const hostProbeTargets = Array.from({ length: 11 }, (_, i) => ({
+                slot: i + 1,
+                label: `T${i}`,
+                host: `h${i}.example.com`,
+                port: 1000 + i,
+            }));
+
+            const res = await harness.request('POST', '/api/settings/host-probes', {
+                hostProbeTargets,
+            });
+
+            assert.equal(res.status, 400);
+            assert.deepEqual(harness.db.listHostProbeTargets(), []);
+        });
+
+        test('accepts exactly the 10-target maximum', async () => {
+            const harness = createHarness();
+            const hostProbeTargets = Array.from({ length: 10 }, (_, i) => ({
+                slot: i + 1,
+                label: `T${i}`,
+                host: `h${i}.example.com`,
+                port: 1000 + i,
+            }));
+
+            const res = await harness.request('POST', '/api/settings/host-probes', {
+                hostProbeTargets,
+            });
+
+            assert.equal(res.status, 200);
+            assert.equal(harness.db.listHostProbeTargets().length, 10);
+        });
+
+        test('rejects duplicate slot numbers', async () => {
+            const harness = createHarness();
+            const res = await harness.request('POST', '/api/settings/host-probes', {
+                hostProbeTargets: [
+                    { slot: 1, label: 'A', host: 'a.example.com', port: 1935 },
+                    { slot: 1, label: 'B', host: 'b.example.com', port: 443 },
+                ],
+            });
+
+            assert.equal(res.status, 400);
+            assert.deepEqual(harness.db.listHostProbeTargets(), []);
+        });
+
+        test('rejects slot 0 and slot 11 (out of the 1..10 range)', async () => {
+            const harness = createHarness();
+            for (const slot of [0, 11, -1]) {
+                const res = await harness.request('POST', '/api/settings/host-probes', {
+                    hostProbeTargets: [{ slot, label: 'A', host: 'a.example.com', port: 1935 }],
+                });
+                assert.equal(res.status, 400);
+            }
+        });
+
+        test('rejects port 0 and port 65536 (out of the 1..65535 range)', async () => {
+            const harness = createHarness();
+            for (const port of [0, 65536, -1]) {
+                const res = await harness.request('POST', '/api/settings/host-probes', {
+                    hostProbeTargets: [{ slot: 1, label: 'A', host: 'a.example.com', port }],
+                });
+                assert.equal(res.status, 400);
+            }
+        });
+
+        test('accepts port at both boundary values (1 and 65535)', async () => {
+            const harness = createHarness();
+            const res = await harness.request('POST', '/api/settings/host-probes', {
+                hostProbeTargets: [
+                    { slot: 1, label: 'A', host: 'a.example.com', port: 1 },
+                    { slot: 2, label: 'B', host: 'b.example.com', port: 65535 },
+                ],
+            });
+            assert.equal(res.status, 200);
+        });
+
+        test('rejects a whitespace-only label or host (trims to empty)', async () => {
+            const harness = createHarness();
+            const res = await harness.request('POST', '/api/settings/host-probes', {
+                hostProbeTargets: [{ slot: 1, label: '   ', host: '   ', port: 1935 }],
+            });
+            assert.equal(res.status, 400);
+        });
+
+        test('a non-integer slot (e.g. fractional) is rejected', async () => {
+            const harness = createHarness();
+            const res = await harness.request('POST', '/api/settings/host-probes', {
+                hostProbeTargets: [{ slot: 1.5, label: 'A', host: 'a.example.com', port: 1935 }],
+            });
+            assert.equal(res.status, 400);
+        });
+
+        test('a non-object array entry (e.g. a string) is rejected', async () => {
+            const harness = createHarness();
+            const res = await harness.request('POST', '/api/settings/host-probes', {
+                hostProbeTargets: ['not-an-object'],
+            });
+            assert.equal(res.status, 400);
+        });
     });
 
     describe('POST /api/settings/layout-order', () => {
@@ -225,6 +373,81 @@ describe('Settings API integration', () => {
             assert.deepEqual(JSON.parse(harness.db.getSetting('layoutOrder')), [
                 { id: 1, outs: ['1-1'] },
             ]);
+        });
+
+        test('rejects a missing order field entirely', async () => {
+            const harness = createHarness();
+            const res = await harness.request('POST', '/api/settings/layout-order', {});
+            assert.equal(res.status, 400);
+            assert.equal(harness.db.getSetting('layoutOrder'), null);
+        });
+
+        test('rejects a non-array order field', async () => {
+            const harness = createHarness();
+            const res = await harness.request('POST', '/api/settings/layout-order', {
+                order: 'not-an-array',
+            });
+            assert.equal(res.status, 400);
+        });
+
+        test('rejects an entry whose outs array contains a non-string', async () => {
+            const harness = createHarness();
+            const res = await harness.request('POST', '/api/settings/layout-order', {
+                order: [{ id: 1, outs: ['1-1', 42] }],
+            });
+            assert.equal(res.status, 400);
+        });
+
+        test('accepts an empty order array (clears the layout override)', async () => {
+            const harness = createHarness();
+            harness.db.setSetting('layoutOrder', JSON.stringify([{ id: 1, outs: [] }]));
+
+            const res = await harness.request('POST', '/api/settings/layout-order', { order: [] });
+
+            assert.equal(res.status, 200);
+            assert.deepEqual(JSON.parse(harness.db.getSetting('layoutOrder')), []);
+        });
+
+        test('accepts an entry with an empty outs array', async () => {
+            const harness = createHarness();
+            const res = await harness.request('POST', '/api/settings/layout-order', {
+                order: [{ id: 1, outs: [] }],
+            });
+            assert.equal(res.status, 200);
+        });
+
+        test('rejects a non-integer pipeline id', async () => {
+            const harness = createHarness();
+            const res = await harness.request('POST', '/api/settings/layout-order', {
+                order: [{ id: 1.5, outs: [] }],
+            });
+            assert.equal(res.status, 400);
+        });
+    });
+
+    describe('POST /api/settings/regenerate-stream-keys', () => {
+        test('regenerates keys when no pipelines exist', async () => {
+            const harness = createHarness();
+            const before = harness.db.listStreamKeys();
+
+            const res = await harness.request('POST', '/api/settings/regenerate-stream-keys', {});
+
+            assert.equal(res.status, 200);
+            assert.equal(res.body.streamKeys.length, before.length);
+            assert.notEqual(res.body.streamKeys[0].key, before[0].key);
+        });
+
+        test('409s and leaves keys untouched when any pipeline exists', async () => {
+            const harness = createHarness();
+            const pipeline = harness.db.createPipeline();
+            const before = harness.db.listStreamKeys();
+
+            const res = await harness.request('POST', '/api/settings/regenerate-stream-keys', {});
+
+            assert.equal(res.status, 409);
+            assert.deepEqual(harness.db.listStreamKeys(), before);
+            // Sanity: the pipeline itself is unaffected too.
+            assert.ok(harness.db.getPipeline(pipeline.id));
         });
     });
 });

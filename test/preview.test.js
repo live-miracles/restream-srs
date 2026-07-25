@@ -189,4 +189,82 @@ describe('preview lifecycle', () => {
 
         service.shutdown();
     });
+
+    test('start() rejects for a pipeline that does not exist and never spawns', async (t) => {
+        let spawnCount = 0;
+        const createPreviewService = loadPreviewService(t, () => {
+            spawnCount++;
+            return new FakeFfmpeg();
+        });
+        const service = createPreviewService(makeDb(), makeInputState());
+
+        await assert.rejects(() => service.start(9999), /Pipeline not found/);
+        assert.equal(spawnCount, 0);
+
+        service.shutdown();
+    });
+
+    test('shutdown SIGKILLs an active preview process and clears its state', async (t) => {
+        const proc = new FakeFfmpeg();
+        const createPreviewService = loadPreviewService(t, () => proc);
+        const service = createPreviewService(makeDb(), makeInputState());
+
+        await startWithPlaylist(service, 1, 1);
+        service.shutdown();
+
+        assert.deepEqual(proc.killSignals, ['SIGKILL']);
+        // A subsequent start on the same pipeline must not think one is
+        // still running (shutdown cleared the in-memory preview map).
+        assert.equal(service.keepalive(1), false);
+    });
+
+    test('an ffmpeg crash (not a deliberate stop) still removes it from the running map and cleans up its HLS dir', async (t) => {
+        const proc = new FakeFfmpeg();
+        const createPreviewService = loadPreviewService(t, () => proc);
+        const service = createPreviewService(makeDb(), makeInputState());
+
+        await startWithPlaylist(service, 1, 1);
+        const outDir = path.join(tempDir, 'hls', '1');
+        assert.ok(fs.existsSync(outDir));
+
+        // Simulate ffmpeg dying on its own (nonzero exit, no signal) rather
+        // than being killed via stop()/shutdown().
+        proc.emit('exit', 1, null);
+        await sleep(30);
+
+        assert.equal(service.keepalive(1), false);
+        assert.equal(fs.existsSync(outDir), false, 'the crashed preview HLS dir should be swept');
+
+        service.shutdown();
+    });
+
+    test('starting a second pipeline after one crashes does not disturb the first outDir cleanup', async (t) => {
+        const procs = [];
+        const createPreviewService = loadPreviewService(t, () => {
+            const p = new FakeFfmpeg(9000 + procs.length);
+            procs.push(p);
+            return p;
+        });
+        const db = {
+            getPipeline(id) {
+                if (id === 1) return { id: 1, name: 'A', streamKey: 'key1', streamKeyId: 1 };
+                if (id === 2) return { id: 2, name: 'B', streamKey: 'key2', streamKeyId: 2 };
+                return undefined;
+            },
+        };
+        const service = createPreviewService(db, makeInputState());
+
+        await startWithPlaylist(service, 1, 1);
+        await startWithPlaylist(service, 2, 1);
+        assert.equal(procs.length, 2);
+
+        procs[0].emit('exit', 1, null);
+        await sleep(30);
+
+        assert.equal(service.keepalive(1), false);
+        assert.equal(service.keepalive(2), true);
+        assert.equal(fs.existsSync(path.join(tempDir, 'hls', '2')), true);
+
+        service.shutdown();
+    });
 });

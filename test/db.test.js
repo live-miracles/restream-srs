@@ -91,6 +91,94 @@ describe('Pipeline CRUD', () => {
         for (let i = 0; i < 99; i++) db.createPipeline();
         assert.throws(() => db.createPipeline(), /No unassigned stream keys/);
     });
+
+    test('deletePipeline returns false for an unknown id (no throw, no rev bump)', () => {
+        const db = makeDb();
+        const rev = db.getConfigRev();
+        assert.equal(db.deletePipeline(9999), false);
+        assert.equal(db.getConfigRev(), rev);
+    });
+
+    test('updatePipeline returns null for an unknown id', () => {
+        const db = makeDb();
+        assert.equal(db.updatePipeline(9999, 'X'), null);
+    });
+
+    test('createPipeline fills the gap left by a deleted middle id', () => {
+        const db = makeDb();
+        const p1 = db.createPipeline();
+        const p2 = db.createPipeline();
+        const p3 = db.createPipeline();
+        db.deletePipeline(p2.id);
+        const p4 = db.createPipeline();
+        assert.equal(p4.id, p2.id);
+        assert.deepEqual(
+            db
+                .listPipelines()
+                .map((p) => p.id)
+                .sort((a, b) => a - b),
+            [p1.id, p3.id, p4.id].sort((a, b) => a - b),
+        );
+    });
+
+    test('updatePipeline can reassign the stream key, and the join reflects it immediately', () => {
+        const db = makeDb();
+        const p1 = db.createPipeline();
+        const p2 = db.createPipeline();
+        const updated = db.updatePipeline(p1.id, p1.name, p2.streamKeyId);
+        assert.equal(updated.streamKeyId, p2.streamKeyId);
+        assert.equal(updated.streamKey, p2.streamKey);
+    });
+
+    // The UI deliberately allows this and flags it with a "duplicate stream
+    // key" warning instead of rejecting it outright (same treatment as
+    // duplicate output destination URLs) — see public/ts/features/render.ts.
+    test('updatePipeline allows reassigning to a key another pipeline already holds', () => {
+        const db = makeDb();
+        const p1 = db.createPipeline();
+        const p2 = db.createPipeline();
+        db.updatePipeline(p1.id, p1.name, p2.streamKeyId);
+        assert.equal(db.getPipeline(p1.id).streamKeyId, p2.streamKeyId);
+        assert.equal(db.getPipeline(p2.id).streamKeyId, p2.streamKeyId);
+    });
+
+    test('updatePipeline rejects a stream key id that does not exist (FK constraint)', () => {
+        const db = makeDb();
+        const p = db.createPipeline();
+        assert.throws(() => db.updatePipeline(p.id, p.name, 999999), /FOREIGN KEY/);
+    });
+});
+
+describe('regenerateStreamKeys', () => {
+    test('replaces every key value but keeps slot count and ordering', () => {
+        const db = makeDb();
+        const before = db.listStreamKeys();
+        const after = db.regenerateStreamKeys();
+        assert.equal(after.length, 99);
+        for (let i = 0; i < 99; i++) {
+            assert.equal(after[i].slot, before[i].slot);
+            assert.equal(after[i].id, before[i].id);
+            assert.notEqual(after[i].key, before[i].key);
+            assert.match(after[i].key, /^key\d{2}_[a-f0-9]{32}$/);
+        }
+    });
+
+    test('bumps the config revision', () => {
+        const db = makeDb();
+        const rev = db.getConfigRev();
+        db.regenerateStreamKeys();
+        assert.ok(db.getConfigRev() > rev);
+    });
+
+    test('an assigned pipeline sees its new key via the join, keeping the same streamKeyId', () => {
+        const db = makeDb();
+        const p = db.createPipeline();
+        const oldKey = p.streamKey;
+        db.regenerateStreamKeys();
+        const got = db.getPipeline(p.id);
+        assert.equal(got.streamKeyId, p.streamKeyId);
+        assert.notEqual(got.streamKey, oldKey);
+    });
 });
 
 // ── Output CRUD ───────────────────────────────────────
@@ -309,6 +397,272 @@ describe('Output CRUD', () => {
             db.listOutputs().find((out) => out.id === o.id),
             undefined,
         );
+    });
+
+    test('createOutput rejects a pipelineId that does not exist (FK constraint)', () => {
+        const db = makeDb();
+        assert.throws(
+            () => db.createOutput({ pipelineId: 9999, name: 'X', url: 'rtmp://x' }),
+            /FOREIGN KEY/,
+        );
+    });
+
+    test('getOutput returns null for an unknown id', () => {
+        assert.equal(makeDb().getOutput('nope-1'), null);
+    });
+
+    test('deleteOutput returns false for an unknown id (no rev bump)', () => {
+        const db = makeDb();
+        const rev = db.getConfigRev();
+        assert.equal(db.deleteOutput('nope-1'), false);
+        assert.equal(db.getConfigRev(), rev);
+    });
+
+    test('updateOutput returns null for an unknown id', () => {
+        const db = makeDb();
+        assert.equal(
+            db.updateOutput('nope-1', {
+                name: 'X',
+                videoEncoding: 'copy',
+                url: 'rtmp://x',
+                audioEncoding: 'copy',
+            }),
+            null,
+        );
+    });
+
+    test('setOutputDesiredState returns null for an unknown id', () => {
+        assert.equal(makeDb().setOutputDesiredState('nope-1', 'running'), null);
+    });
+
+    test('deleteOutputsForPipeline removes every output for that pipeline only', () => {
+        const db = makeDb();
+        const p1 = db.createPipeline();
+        const p2 = db.createPipeline();
+        db.createOutput({ pipelineId: p1.id, name: 'A', url: 'rtmp://a' });
+        db.createOutput({ pipelineId: p1.id, name: 'B', url: 'rtmp://b' });
+        db.createOutput({ pipelineId: p2.id, name: 'C', url: 'rtmp://c' });
+        db.deleteOutputsForPipeline(p1.id);
+        assert.equal(db.listOutputsForPipeline(p1.id).length, 0);
+        assert.equal(db.listOutputsForPipeline(p2.id).length, 1);
+    });
+
+    test('deleteOutputsForPipeline on a pipeline with no outputs does not bump the config rev', () => {
+        const db = makeDb();
+        const p = db.createPipeline();
+        const rev = db.getConfigRev();
+        db.deleteOutputsForPipeline(p.id);
+        assert.equal(db.getConfigRev(), rev);
+    });
+
+    test('setDesiredStateForPipeline flips every output in that pipeline at once', () => {
+        const db = makeDb();
+        const p1 = db.createPipeline();
+        const p2 = db.createPipeline();
+        const a = db.createOutput({ pipelineId: p1.id, name: 'A', url: 'rtmp://a' });
+        const b = db.createOutput({ pipelineId: p1.id, name: 'B', url: 'rtmp://b' });
+        const c = db.createOutput({ pipelineId: p2.id, name: 'C', url: 'rtmp://c' });
+        db.setDesiredStateForPipeline(p1.id, 'running');
+        assert.equal(db.getOutput(a.id).desiredState, 'running');
+        assert.equal(db.getOutput(b.id).desiredState, 'running');
+        assert.equal(db.getOutput(c.id).desiredState, 'stopped');
+    });
+
+    test('clearLastErrorsForPipeline clears every output error in that pipeline only', () => {
+        const db = makeDb();
+        const p1 = db.createPipeline();
+        const p2 = db.createPipeline();
+        const a = db.createOutput({ pipelineId: p1.id, name: 'A', url: 'rtmp://a' });
+        const b = db.createOutput({ pipelineId: p2.id, name: 'B', url: 'rtmp://b' });
+        db.setOutputLastError(a.id, 'boom', 'crash');
+        db.setOutputLastError(b.id, 'boom', 'crash');
+        db.clearLastErrorsForPipeline(p1.id);
+        assert.equal(db.getOutput(a.id).lastError, null);
+        assert.match(db.getOutput(b.id).lastError, /boom$/);
+    });
+
+    test('clearLastErrorsForPipeline does not bump the config revision', () => {
+        const db = makeDb();
+        const p = db.createPipeline();
+        const o = db.createOutput({ pipelineId: p.id, name: 'A', url: 'rtmp://a' });
+        db.setOutputLastError(o.id, 'boom', 'crash');
+        const rev = db.getConfigRev();
+        db.clearLastErrorsForPipeline(p.id);
+        assert.equal(db.getConfigRev(), rev);
+    });
+
+    test('recreating an output after deleting the last one reuses its seq, not a running counter', () => {
+        const db = makeDb();
+        const p = db.createPipeline();
+        const o1 = db.createOutput({ pipelineId: p.id, name: 'A', url: 'rtmp://a' });
+        db.deleteOutput(o1.id);
+        const o2 = db.createOutput({ pipelineId: p.id, name: 'B', url: 'rtmp://b' });
+        assert.equal(o2.seq, 1);
+        assert.equal(o2.id, o1.id);
+    });
+});
+
+// ── Pipeline logs ─────────────────────────────────────
+
+describe('Pipeline logs', () => {
+    test('prunes older entries once the per-pipeline cap (100) is exceeded', () => {
+        const db = makeDb();
+        const p = db.createPipeline();
+        for (let i = 0; i < 150; i++) db.appendPipelineLog(p.id, 'test', `msg ${i}`);
+        const logs = db.getPipelineLogs(p.id, 1000);
+        assert.equal(logs.length, 100);
+        // Newest first; oldest surviving is msg 50 (0..49 pruned), newest is msg 149.
+        assert.equal(logs[0].message, 'msg 149');
+        assert.equal(logs[logs.length - 1].message, 'msg 50');
+    });
+
+    test('pruning is scoped per pipeline, not global', () => {
+        const db = makeDb();
+        const p1 = db.createPipeline();
+        const p2 = db.createPipeline();
+        for (let i = 0; i < 60; i++) db.appendPipelineLog(p1.id, 'test', `p1-${i}`);
+        for (let i = 0; i < 60; i++) db.appendPipelineLog(p2.id, 'test', `p2-${i}`);
+        assert.equal(db.getPipelineLogs(p1.id, 1000).length, 60);
+        assert.equal(db.getPipelineLogs(p2.id, 1000).length, 60);
+    });
+
+    test('getPipelineLogs respects a caller-supplied limit smaller than the cap', () => {
+        const db = makeDb();
+        const p = db.createPipeline();
+        for (let i = 0; i < 10; i++) db.appendPipelineLog(p.id, 'test', `msg ${i}`);
+        const logs = db.getPipelineLogs(p.id, 3);
+        assert.equal(logs.length, 3);
+        assert.deepEqual(
+            logs.map((l) => l.message),
+            ['msg 9', 'msg 8', 'msg 7'],
+        );
+    });
+
+    test('getPipelineLogs defaults to the 100-entry retention limit', () => {
+        const db = makeDb();
+        const p = db.createPipeline();
+        for (let i = 0; i < 120; i++) db.appendPipelineLog(p.id, 'test', `msg ${i}`);
+        assert.equal(db.getPipelineLogs(p.id).length, 100);
+    });
+
+    test('getPipelineLogs for a pipeline with no logs returns an empty array', () => {
+        const db = makeDb();
+        const p = db.createPipeline();
+        assert.deepEqual(db.getPipelineLogs(p.id), []);
+    });
+});
+
+// ── Sessions ──────────────────────────────────────────
+
+describe('Sessions', () => {
+    test('createSession then listSessions round-trips the token', () => {
+        const db = makeDb();
+        db.createSession('tok-a');
+        db.createSession('tok-b');
+        assert.deepEqual(db.listSessions().sort(), ['tok-a', 'tok-b']);
+    });
+
+    test('creating a session with the same token twice does not duplicate it', () => {
+        const db = makeDb();
+        db.createSession('tok-a');
+        db.createSession('tok-a');
+        assert.deepEqual(db.listSessions(), ['tok-a']);
+    });
+
+    test('deleteSession removes only the matching token', () => {
+        const db = makeDb();
+        db.createSession('tok-a');
+        db.createSession('tok-b');
+        db.deleteSession('tok-a');
+        assert.deepEqual(db.listSessions(), ['tok-b']);
+    });
+
+    test('deleteSession on an unknown token is a no-op', () => {
+        const db = makeDb();
+        db.createSession('tok-a');
+        db.deleteSession('does-not-exist');
+        assert.deepEqual(db.listSessions(), ['tok-a']);
+    });
+
+    test('pruneExpiredSessions removes only sessions older than maxAgeMs', async () => {
+        const db = makeDb();
+        db.createSession('old');
+        await new Promise((r) => setTimeout(r, 20));
+        db.createSession('new');
+        db.pruneExpiredSessions(10);
+        assert.deepEqual(db.listSessions(), ['new']);
+    });
+
+    test('pruneExpiredSessions with a huge maxAgeMs keeps everything', () => {
+        const db = makeDb();
+        db.createSession('tok-a');
+        db.pruneExpiredSessions(1000 * 60 * 60 * 24 * 365);
+        assert.deepEqual(db.listSessions(), ['tok-a']);
+    });
+
+    test('pruneExpiredSessions with maxAgeMs <= 0 prunes anything created before the call', async () => {
+        const db = makeDb();
+        db.createSession('tok-a');
+        db.createSession('tok-b');
+        // created_at is millisecond-resolution and the cutoff comparison is
+        // strict '<', so a 0ms maxAge only prunes sessions whose creation
+        // timestamp is strictly in the past relative to the prune call.
+        await new Promise((r) => setTimeout(r, 5));
+        db.pruneExpiredSessions(0);
+        assert.deepEqual(db.listSessions(), []);
+    });
+});
+
+// ── Host probe targets ────────────────────────────────
+
+describe('Host probe targets', () => {
+    test('listHostProbeTargets is empty by default', () => {
+        assert.deepEqual(makeDb().listHostProbeTargets(), []);
+    });
+
+    test('replaceHostProbeTargets inserts new targets', () => {
+        const db = makeDb();
+        db.replaceHostProbeTargets([
+            { slot: 1, label: 'YouTube', host: 'a.rtmp.youtube.com', port: 1935 },
+            { slot: 2, label: 'Facebook', host: 'live-api-s.facebook.com', port: 443 },
+        ]);
+        assert.equal(db.listHostProbeTargets().length, 2);
+    });
+
+    test('replaceHostProbeTargets updates an existing slot in place', () => {
+        const db = makeDb();
+        db.replaceHostProbeTargets([{ slot: 1, label: 'Old', host: 'old.example.com', port: 1 }]);
+        db.replaceHostProbeTargets([{ slot: 1, label: 'New', host: 'new.example.com', port: 2 }]);
+        const targets = db.listHostProbeTargets();
+        assert.equal(targets.length, 1);
+        assert.equal(targets[0].label, 'New');
+        assert.equal(targets[0].host, 'new.example.com');
+    });
+
+    test('replaceHostProbeTargets drops slots missing from the new list', () => {
+        const db = makeDb();
+        db.replaceHostProbeTargets([
+            { slot: 1, label: 'A', host: 'a.example.com', port: 1 },
+            { slot: 2, label: 'B', host: 'b.example.com', port: 2 },
+        ]);
+        db.replaceHostProbeTargets([{ slot: 1, label: 'A', host: 'a.example.com', port: 1 }]);
+        const targets = db.listHostProbeTargets();
+        assert.equal(targets.length, 1);
+        assert.equal(targets[0].slot, 1);
+    });
+
+    test('replaceHostProbeTargets with an empty array clears all targets', () => {
+        const db = makeDb();
+        db.replaceHostProbeTargets([{ slot: 1, label: 'A', host: 'a.example.com', port: 1 }]);
+        db.replaceHostProbeTargets([]);
+        assert.deepEqual(db.listHostProbeTargets(), []);
+    });
+
+    test('replaceHostProbeTargets bumps the config revision', () => {
+        const db = makeDb();
+        const rev = db.getConfigRev();
+        db.replaceHostProbeTargets([{ slot: 1, label: 'A', host: 'a.example.com', port: 1 }]);
+        assert.ok(db.getConfigRev() > rev);
     });
 });
 

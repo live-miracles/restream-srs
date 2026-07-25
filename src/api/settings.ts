@@ -4,7 +4,13 @@ import type { Db, HostProbeTarget } from '../types.js';
 const MAX_HOST_PROBE_TARGETS = 10;
 
 function normalizeHostProbeTargets(value: unknown): HostProbeTarget[] | null {
-    if (!Array.isArray(value)) return [];
+    // Reject (not silently treat as "clear everything"): this used to double
+    // as an implicit no-op default back when it was one optional field among
+    // several on a combined /api/settings payload, but on this endpoint's own
+    // dedicated route a missing/malformed field is almost certainly a client
+    // bug, not intent to wipe every configured target. Send an explicit empty
+    // array to actually clear them.
+    if (!Array.isArray(value)) return null;
 
     const targets: HostProbeTarget[] = [];
     for (const item of value) {

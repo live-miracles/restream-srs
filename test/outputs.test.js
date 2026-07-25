@@ -671,3 +671,321 @@ describe('output stop/start race', () => {
         assert.equal(db.lastError, null);
     });
 });
+
+describe('output service control surface', () => {
+    beforeEach(() => {
+        process.chdir(tempDir);
+    });
+
+    afterEach(() => {
+        process.chdir(originalCwd);
+        delete require.cache[require.resolve('../src/services/outputs')];
+        delete require.cache[require.resolve('../src/utils/appConfig')];
+    });
+
+    test('start() throws for an unknown output id and never spawns', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const createOutputService = loadOutputService(t, proc, { progressStallMs: 60_000 });
+        const service = createOutputService(db, makeReadyInputState());
+
+        await assert.rejects(() => service.start('does-not-exist'), /Output not found/);
+        assert.equal(service.getStats('does-not-exist').status, 'stopped');
+
+        service.shutdown();
+    });
+
+    test('start() throws for an invalid destination URL and never spawns', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        db.getOutput('out1').url = 'not-a-url';
+        const createOutputService = loadOutputService(t, proc, { progressStallMs: 60_000 });
+        const service = createOutputService(db, makeReadyInputState());
+
+        await assert.rejects(() => service.start('out1'), /Invalid output URL/);
+        assert.equal(service.getStats('out1').status, 'stopped');
+
+        service.shutdown();
+    });
+
+    test('start() does not spawn while the input is not ready, and getStats stays stopped', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const createOutputService = loadOutputService(t, proc, { progressStallMs: 60_000 });
+        const notReady = {
+            isReady: () => false,
+            isHighRes: () => false,
+            pullUrl: () => 'rtmp://x',
+        };
+        const service = createOutputService(db, notReady);
+
+        await service.start('out1');
+
+        assert.equal(service.getStats('out1').status, 'stopped');
+        assert.equal(service.getStats('out1').pid, null);
+
+        service.shutdown();
+    });
+
+    test('a second concurrent start() while one is already running does not spawn twice', async (t) => {
+        let spawnCount = 0;
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const createOutputService = loadOutputService(t, () => {
+            spawnCount++;
+            return proc;
+        });
+        const service = createOutputService(db, makeReadyInputState());
+
+        await Promise.all([service.start('out1'), service.start('out1')]);
+
+        assert.equal(spawnCount, 1);
+        assert.equal(service.getStats('out1').status, 'running');
+
+        service.shutdown();
+    });
+
+    test('getStats for an output that was never started returns stopped defaults', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const createOutputService = loadOutputService(t, proc, { progressStallMs: 60_000 });
+        const service = createOutputService(db, makeReadyInputState());
+
+        const stats = service.getStats('out1');
+        assert.deepEqual(stats, {
+            status: 'stopped',
+            pid: null,
+            bitrateKbps: null,
+            startedAtMs: null,
+            failures: 0,
+            warningReason: null,
+            memoryUsageBytes: null,
+            memoryLimitBytes: null,
+            cpuPercent: null,
+        });
+
+        service.shutdown();
+    });
+
+    test('stopAndWait resolves only after the process actually exits', async (t) => {
+        const proc = new ManualExitFfmpeg();
+        const db = makeDb();
+        const createOutputService = loadOutputService(t, proc, { progressStallMs: 60_000 });
+        const service = createOutputService(db, makeReadyInputState());
+
+        await service.start('out1');
+        let resolved = false;
+        const p = service.stopAndWait('out1').then(() => {
+            resolved = true;
+        });
+
+        await sleep(15);
+        assert.equal(resolved, false, 'must not resolve before the process exits');
+        assert.deepEqual(proc.killSignals, ['SIGTERM']);
+
+        proc.exit();
+        await p;
+        assert.equal(resolved, true);
+        assert.equal(service.getStats('out1').status, 'stopped');
+
+        service.shutdown();
+    });
+
+    test('stopAndWait on an already-stopped output resolves immediately', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const createOutputService = loadOutputService(t, proc, { progressStallMs: 60_000 });
+        const service = createOutputService(db, makeReadyInputState());
+
+        await service.stopAndWait('out1');
+        assert.equal(service.getStats('out1').status, 'stopped');
+
+        service.shutdown();
+    });
+
+    test('clearRetryState cancels a pending scheduled retry so it never fires', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const output = db.getOutput('out1');
+        const createOutputService = loadOutputService(t, proc, { progressStallMs: 60_000 });
+        const service = createOutputService(db, makeReadyInputState());
+
+        await service.start('out1');
+        // Crash: schedules a retry ~1s out via RETRY_DELAYS_MS[0].
+        proc.emit('close', 1, null);
+        assert.equal(service.getStats('out1').status, 'failed');
+        assert.equal(service.getStats('out1').failures, 1);
+
+        service.clearRetryState('out1');
+        output.desiredState = 'stopped';
+        // Give the (cancelled) retry timer a chance to fire if it wasn't
+        // actually cancelled — if it fires, tryStart would spawn a 2nd proc.
+        await sleep(30);
+
+        assert.equal(service.getStats('out1').status, 'failed');
+
+        service.shutdown();
+    });
+});
+
+describe('restartPipelineOutputs', () => {
+    beforeEach(() => {
+        process.chdir(tempDir);
+    });
+
+    afterEach(() => {
+        process.chdir(originalCwd);
+        delete require.cache[require.resolve('../src/services/outputs')];
+        delete require.cache[require.resolve('../src/utils/appConfig')];
+    });
+
+    function makeMultiDb(outputs) {
+        const byId = new Map(outputs.map((o) => [o.id, o]));
+        return {
+            lastError: null,
+            lastErrorKind: null,
+            getPipeline(id) {
+                return id === 1
+                    ? { id: 1, name: 'Live', streamKey: 'stream-key', streamKeyId: 1 }
+                    : null;
+            },
+            getOutput(id) {
+                return byId.get(id) ?? null;
+            },
+            listOutputsForPipeline(pipelineId) {
+                return outputs.filter((o) => o.pipelineId === pipelineId);
+            },
+            setOutputLastError(_id, message, kind) {
+                this.lastError = `${Date.now()}\n${message}`;
+                this.lastErrorKind = kind;
+            },
+        };
+    }
+
+    function makeOutput(id, overrides = {}) {
+        return {
+            id,
+            pipelineId: 1,
+            seq: 1,
+            name: id,
+            desiredState: 'running',
+            videoEncoding: 'copy',
+            url: 'rtmp://youtube.example/live/key',
+            audioEncoding: 'copy',
+            lastError: null,
+            ...overrides,
+        };
+    }
+
+    test('only schedules outputs whose desiredState is running, and returns that count', async (t) => {
+        const spawned = [];
+        const createOutputService = loadOutputService(
+            t,
+            () => {
+                const p = new FakeFfmpeg(1000 + spawned.length);
+                spawned.push(p);
+                return p;
+            },
+            { progressStallMs: 60_000 },
+        );
+        const db = makeMultiDb([
+            makeOutput('a', { desiredState: 'running' }),
+            makeOutput('b', { desiredState: 'stopped' }),
+            makeOutput('c', { desiredState: 'running' }),
+        ]);
+        const service = createOutputService(db, makeReadyInputState());
+
+        const scheduled = service.restartPipelineOutputs(1, 0);
+        assert.equal(scheduled, 2);
+
+        await sleep(700);
+        assert.equal(service.getStats('a').status, 'running');
+        assert.equal(service.getStats('b').status, 'stopped');
+        assert.equal(service.getStats('c').status, 'running');
+
+        service.shutdown();
+    });
+
+    test('skips outputs already actively running instead of double-spawning', async (t) => {
+        const spawned = [];
+        const createOutputService = loadOutputService(
+            t,
+            () => {
+                const p = new FakeFfmpeg(1000 + spawned.length);
+                spawned.push(p);
+                return p;
+            },
+            { progressStallMs: 60_000 },
+        );
+        const db = makeMultiDb([makeOutput('a', { desiredState: 'running' })]);
+        const service = createOutputService(db, makeReadyInputState());
+
+        await service.start('a');
+        assert.equal(spawned.length, 1);
+
+        const scheduled = service.restartPipelineOutputs(1, 0);
+        assert.equal(scheduled, 0);
+
+        await sleep(300);
+        assert.equal(
+            spawned.length,
+            1,
+            'must not spawn a second ffmpeg for an already-running output',
+        );
+
+        service.shutdown();
+    });
+
+    test('staggers restarts and resets each failure counter to 0', async (t) => {
+        const spawned = [];
+        const createOutputService = loadOutputService(
+            t,
+            () => {
+                const p = new FakeFfmpeg(1000 + spawned.length);
+                spawned.push(p);
+                return p;
+            },
+            { progressStallMs: 60_000 },
+        );
+        const db = makeMultiDb([
+            makeOutput('a', { desiredState: 'running' }),
+            makeOutput('b', { desiredState: 'running' }),
+        ]);
+        const service = createOutputService(db, makeReadyInputState());
+
+        // Give 'a' a prior failure (simulating an earlier crash, not a
+        // deliberate stop) so we can confirm the restart resets its counter.
+        await service.start('a');
+        spawned[0].emit('close', 1, null);
+        assert.equal(service.getStats('a').status, 'failed');
+        assert.equal(service.getStats('a').failures, 1);
+
+        const scheduled = service.restartPipelineOutputs(1, 0);
+        assert.equal(scheduled, 2);
+
+        // Immediately after scheduling, staggering means not everything has
+        // spawned yet (spacing is on the order of hundreds of ms).
+        await sleep(10);
+        assert.ok(spawned.length < 3, 'restarts should be staggered, not instantaneous');
+
+        await sleep(700);
+        assert.equal(service.getStats('a').status, 'running');
+        assert.equal(service.getStats('a').failures, 0);
+        assert.equal(service.getStats('b').status, 'running');
+        assert.equal(service.getStats('b').failures, 0);
+
+        service.shutdown();
+    });
+
+    test('a nonexistent pipeline schedules nothing and does not throw', async (t) => {
+        const proc = new FakeFfmpeg();
+        const createOutputService = loadOutputService(t, proc);
+        const db = makeMultiDb([]);
+        const service = createOutputService(db, makeReadyInputState());
+
+        const scheduled = service.restartPipelineOutputs(9999, 0);
+        assert.equal(scheduled, 0);
+
+        service.shutdown();
+    });
+});

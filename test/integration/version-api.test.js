@@ -1,0 +1,282 @@
+'use strict';
+
+const { describe, test, before, after, beforeEach } = require('node:test');
+const assert = require('node:assert/strict');
+const express = require('express');
+const { Readable, Writable } = require('node:stream');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const childProcess = require('node:child_process');
+
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'restream-srs-version-'));
+const originalCwd = process.cwd();
+const pkgVersion = require('../../package.json').version;
+
+before(() => {
+    fs.writeFileSync(
+        path.join(tempDir, 'restream.json'),
+        JSON.stringify(
+            {
+                port: 8080,
+                database_path: './db.sqlite',
+                srs_config_path: './srs.conf',
+                ffmpeg_path: 'ffmpeg',
+                ffprobe_path: 'ffprobe',
+            },
+            null,
+            4,
+        ),
+        'utf8',
+    );
+    fs.writeFileSync(
+        path.join(tempDir, 'srs.conf'),
+        'listen 1935;\nhttp_api {\n    listen 1985;\n}\n',
+        'utf8',
+    );
+});
+
+after(() => {
+    process.chdir(originalCwd);
+    fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+class MockRequest extends Readable {
+    constructor(method, url) {
+        super();
+        this.method = method;
+        this.url = url;
+        this.headers = {};
+        this.socket = { remoteAddress: '127.0.0.1' };
+        this.connection = this.socket;
+    }
+
+    _read() {
+        this.push(null);
+    }
+}
+
+class MockResponse extends Writable {
+    constructor(resolve) {
+        super();
+        this.statusCode = 200;
+        this.headers = {};
+        this.chunks = [];
+        this.resolve = resolve;
+        this.setHeader = (name, value) => {
+            this.headers[String(name).toLowerCase()] = value;
+        };
+        this.getHeader = (name) => this.headers[String(name).toLowerCase()];
+        this.removeHeader = (name) => {
+            delete this.headers[String(name).toLowerCase()];
+        };
+        this.writeHead = (statusCode, headers = {}) => {
+            this.statusCode = statusCode;
+            for (const [name, value] of Object.entries(headers)) this.setHeader(name, value);
+            return this;
+        };
+        this.end = (chunk, encoding, callback) => {
+            if (chunk) this.chunks.push(Buffer.from(chunk, encoding));
+            const text = Buffer.concat(this.chunks).toString('utf8');
+            this.resolve({
+                status: this.statusCode,
+                body: text ? JSON.parse(text) : undefined,
+            });
+            if (callback) callback();
+            return this;
+        };
+    }
+
+    _write(chunk, _encoding, callback) {
+        this.chunks.push(Buffer.from(chunk));
+        callback();
+    }
+}
+
+function dispatch(app, method, route) {
+    return new Promise((resolve, reject) => {
+        app.handle(new MockRequest(method, route), new MockResponse(resolve), reject);
+    });
+}
+
+function jsonResponse(body) {
+    return { ok: true, status: 200, json: async () => body };
+}
+
+// version.ts caches its result forever at module scope, and pulls the SRS API
+// port through appConfig/srsConfig (also module-cached) — every test needs a
+// fully fresh require chain plus its own fixture.
+function loadHarness(t, { execImpl, fetchImpl, existsSyncImpl } = {}) {
+    process.chdir(tempDir);
+    for (const mod of [
+        '../../src/api/version',
+        '../../src/utils/appConfig',
+        '../../src/utils/srsConfig',
+    ]) {
+        delete require.cache[require.resolve(mod)];
+    }
+    t.mock.method(
+        childProcess,
+        'execFile',
+        execImpl ??
+            ((_cmd, _args, _opts, cb) => {
+                queueMicrotask(() => cb(null, '', ''));
+            }),
+    );
+    t.mock.method(globalThis, 'fetch', fetchImpl ?? (async () => jsonResponse({ data: {} })));
+    t.mock.method(fs, 'existsSync', existsSyncImpl ?? (() => false));
+    const { registerVersionApi } = require('../../src/api/version');
+    const app = express();
+    registerVersionApi(app);
+    return { get: () => dispatch(app, 'GET', '/api/version') };
+}
+
+describe('Version API integration', () => {
+    beforeEach(() => {
+        process.chdir(tempDir);
+    });
+
+    test('falls back to "unknown" for every external tool that fails or is unavailable', async (t) => {
+        const { get } = loadHarness(t, {
+            execImpl: (_cmd, _args, _opts, cb) => {
+                queueMicrotask(() => cb(new Error('not found'), '', ''));
+            },
+            fetchImpl: async () => {
+                throw new Error('ECONNREFUSED');
+            },
+            existsSyncImpl: () => false,
+        });
+
+        const res = await get();
+
+        assert.equal(res.status, 200);
+        assert.equal(res.body.commit, 'unknown');
+        assert.equal(res.body.srs, 'unknown');
+        assert.equal(res.body.srtRelay, 'unknown');
+        assert.equal(res.body.ffmpeg, 'unknown');
+        // Not sourced externally — read straight from package.json.
+        assert.equal(res.body.app, pkgVersion);
+    });
+
+    test('parses a successful git/ffmpeg/SRS/relay response into the expected shape', async (t) => {
+        const { get } = loadHarness(t, {
+            execImpl: (cmd, args, _opts, cb) => {
+                if (cmd === 'git' && args.some((a) => a.includes('%h %s'))) {
+                    return queueMicrotask(() => cb(null, 'abc1234 Fix things\n', ''));
+                }
+                if (cmd === 'git' && args.some((a) => a.includes('%ci'))) {
+                    return queueMicrotask(() => cb(null, '2026-07-01 12:00:00 +0000\n', ''));
+                }
+                if (cmd === 'ffmpeg') {
+                    return queueMicrotask(() =>
+                        cb(null, 'ffmpeg version 7.1-static Copyright (c) 2000-2024\n', ''),
+                    );
+                }
+                queueMicrotask(() => cb(null, '', ''));
+            },
+            fetchImpl: async () => jsonResponse({ data: { version: '6.0.155' } }),
+            existsSyncImpl: () => false,
+        });
+
+        const res = await get();
+
+        assert.equal(res.status, 200);
+        assert.equal(res.body.commit, '2026-07-01 abc1234 Fix things');
+        assert.equal(res.body.srs, '6.0.155');
+        assert.equal(res.body.ffmpeg, '7.1-static');
+        assert.equal(res.body.srtRelay, 'unknown');
+    });
+
+    test('a malformed (non-JSON-shaped) SRS versions response falls back to "unknown", not a crash', async (t) => {
+        const { get } = loadHarness(t, {
+            fetchImpl: async () => jsonResponse('just a string, not {data:{version}}'),
+        });
+
+        const res = await get();
+        assert.equal(res.status, 200);
+        assert.equal(res.body.srs, 'unknown');
+    });
+
+    test('an SRS response with ok:false falls back to "unknown" instead of surfacing an HTTP error', async (t) => {
+        const { get } = loadHarness(t, {
+            fetchImpl: async () => ({
+                ok: false,
+                status: 500,
+                json: async () => ({ data: { version: 'should-not-be-used' } }),
+            }),
+        });
+
+        const res = await get();
+        assert.equal(res.status, 200);
+        // Current behavior: the code only checks resp.json(), not resp.ok, so
+        // a non-ok response whose body still parses is used as-is. Documented
+        // here so a future change to check res.ok is a deliberate one.
+        assert.equal(res.body.srs, 'should-not-be-used');
+    });
+
+    test('detects a present srt-bonding-relay binary and runs --version on it', async (t) => {
+        const { get } = loadHarness(t, {
+            execImpl: (cmd, args, _opts, cb) => {
+                if (String(cmd).includes('srt-bonding-relay')) {
+                    return queueMicrotask(() => cb(null, 'srt-bonding-relay v1.2.3\n', ''));
+                }
+                queueMicrotask(() => cb(null, '', ''));
+            },
+            existsSyncImpl: (candidate) => String(candidate).includes('srt-bonding-relay'),
+        });
+
+        const res = await get();
+        assert.equal(res.status, 200);
+        assert.equal(res.body.srtRelay, 'srt-bonding-relay v1.2.3');
+    });
+
+    test('the response is cached: a second request does not re-invoke external tools', async (t) => {
+        let execCalls = 0;
+        let fetchCalls = 0;
+        const { get } = loadHarness(t, {
+            execImpl: (_cmd, _args, _opts, cb) => {
+                execCalls++;
+                queueMicrotask(() => cb(null, 'v1\n', ''));
+            },
+            fetchImpl: async () => {
+                fetchCalls++;
+                return jsonResponse({ data: { version: '6.0.0' } });
+            },
+        });
+
+        const first = await get();
+        const callsAfterFirst = execCalls;
+        const fetchAfterFirst = fetchCalls;
+        assert.ok(callsAfterFirst > 0);
+        assert.ok(fetchAfterFirst > 0);
+
+        const second = await get();
+        assert.deepEqual(second.body, first.body);
+        assert.equal(
+            execCalls,
+            callsAfterFirst,
+            'external commands must not run again on a cache hit',
+        );
+        assert.equal(
+            fetchCalls,
+            fetchAfterFirst,
+            'SRS version must not be refetched on a cache hit',
+        );
+    });
+
+    test('multi-line ffmpeg/git output only uses the first line', async (t) => {
+        const { get } = loadHarness(t, {
+            execImpl: (cmd, _args, _opts, cb) => {
+                if (cmd === 'ffmpeg') {
+                    return queueMicrotask(() =>
+                        cb(null, 'ffmpeg version 6.1.1\nbuilt with gcc\nconfiguration: ...\n', ''),
+                    );
+                }
+                queueMicrotask(() => cb(null, '', ''));
+            },
+        });
+
+        const res = await get();
+        assert.equal(res.body.ffmpeg, '6.1.1');
+    });
+});

@@ -5,7 +5,8 @@ const assert = require('node:assert/strict');
 const express = require('express');
 const { Readable, Writable } = require('node:stream');
 
-const { registerSrsHooks } = require('../../src/api/srs');
+const { registerSrsHooks, registerSrsLogsApi } = require('../../src/api/srs');
+const childProcess = require('node:child_process');
 
 class MockRequest extends Readable {
     constructor(method, url, body) {
@@ -112,6 +113,52 @@ describe('SRS publish hook integration', () => {
         assert.equal(res.status, 403);
         assert.deepEqual(res.body, { code: 403 });
     });
+
+    test('rejects a publish with no stream field at all', async () => {
+        const harness = createHarness(['key01_good']);
+
+        const res = await harness.publish({ app: 'live' });
+
+        assert.equal(res.status, 400);
+        assert.deepEqual(res.body, { code: 400 });
+    });
+
+    test('rejects a publish with an empty-string stream', async () => {
+        const harness = createHarness(['key01_good']);
+
+        const res = await harness.publish({ app: 'live', stream: '' });
+
+        assert.equal(res.status, 400);
+        assert.deepEqual(res.body, { code: 400 });
+    });
+
+    test('rejecting a publish with no hookApp does not crash (skips the kick call)', async () => {
+        const harness = createHarness(['key01_good']);
+
+        const res = await harness.publish({ stream: 'key99_bad' });
+
+        assert.equal(res.status, 403);
+        assert.deepEqual(res.body, { code: 403 });
+    });
+
+    test('rejects a very long, non-matching stream value without crashing', async () => {
+        const harness = createHarness(['key01_good']);
+        const longStream = 'x'.repeat(10_000);
+
+        const res = await harness.publish({ app: 'live', stream: longStream });
+
+        assert.equal(res.status, 403);
+        assert.deepEqual(res.body, { code: 403 });
+    });
+
+    test('a stream key match is case-sensitive and exact (no substring/prefix match)', async () => {
+        const harness = createHarness(['key01_good']);
+
+        for (const stream of ['KEY01_GOOD', 'key01_goodextra', 'key01_goo']) {
+            const res = await harness.publish({ app: 'live', stream });
+            assert.equal(res.status, 403);
+        }
+    });
 });
 
 describe('SRS play hook integration', () => {
@@ -133,5 +180,74 @@ describe('SRS play hook integration', () => {
             assert.equal(res.status, 403);
             assert.deepEqual(res.body, { code: 403 });
         }
+    });
+
+    test('rejects an ip that merely starts with a loopback-like prefix but is not localhost', async () => {
+        const harness = createHarness(['key01_good']);
+
+        // '127' without the trailing dot must not match the '127.' prefix check.
+        for (const ip of ['1270.0.0.1', '127', '::ffff:127', 'localhost']) {
+            const res = await harness.play({ app: 'live', stream: 'key01_good', ip });
+            assert.equal(res.status, 403);
+        }
+    });
+
+    test('loopback plays succeed even with no stream field (hook does not validate stream on play)', async () => {
+        const harness = createHarness(['key01_good']);
+
+        const res = await harness.play({ app: 'live', ip: '127.0.0.1' });
+
+        assert.equal(res.status, 200);
+        assert.deepEqual(res.body, { code: 0 });
+    });
+});
+
+describe('SRS logs API integration', () => {
+    function createLogsHarness(t, { execError, execOutput = '' } = {}) {
+        const app = express();
+        const events = [{ source: 'srs', type: 'up', message: 'test event', ts: 1 }];
+        t.mock.method(childProcess, 'execFile', (_cmd, _args, _opts, cb) => {
+            queueMicrotask(() => cb(execError ?? null, execOutput, ''));
+        });
+        registerSrsLogsApi(app, () => events);
+        return {
+            events,
+            get: () => dispatch(app, 'GET', '/api/srs-logs'),
+        };
+    }
+
+    test('returns app-level srs events alongside empty log tails when journalctl is unavailable', async (t) => {
+        const harness = createLogsHarness(t, {
+            execError: new Error('journalctl: command not found'),
+        });
+
+        const res = await harness.get();
+
+        assert.equal(res.status, 200);
+        assert.deepEqual(res.body.events, harness.events);
+        assert.deepEqual(res.body.srs, { lines: [], source: 'none' });
+        assert.deepEqual(res.body.dashboard, { lines: [], source: 'none' });
+        assert.deepEqual(res.body.relay, { lines: [], source: 'none' });
+    });
+
+    test('parses non-empty journal output into lines with source=journal', async (t) => {
+        const harness = createLogsHarness(t, { execOutput: 'line one\nline two\n\n' });
+
+        const res = await harness.get();
+
+        assert.equal(res.status, 200);
+        assert.deepEqual(res.body.srs, { lines: ['line one', 'line two'], source: 'journal' });
+        assert.deepEqual(res.body.dashboard, {
+            lines: ['line one', 'line two'],
+            source: 'journal',
+        });
+    });
+
+    test('blank-only journal output is treated as no logs (source=none)', async (t) => {
+        const harness = createLogsHarness(t, { execOutput: '\n\n   \n' });
+
+        const res = await harness.get();
+
+        assert.deepEqual(res.body.srs, { lines: [], source: 'none' });
     });
 });
