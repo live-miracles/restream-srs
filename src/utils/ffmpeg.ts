@@ -131,7 +131,11 @@ export function validateOutputUrl(url: string): boolean {
 }
 
 export function validateAudioEncoding(value: unknown): string | null {
-    if (!value || value === 'copy') return 'copy';
+    // Only an absent/empty encoding defaults to 'copy' — checking truthiness
+    // instead would also catch other-typed falsy JSON values (0, false) sent
+    // by a raw API call and silently reinterpret them as 'copy' rather than
+    // rejecting them.
+    if (value === undefined || value === null || value === '' || value === 'copy') return 'copy';
     if (value === 'aac') return 'aac';
     if (typeof value !== 'string') return null;
     const parts = value.split(',').map((s) => s.trim());

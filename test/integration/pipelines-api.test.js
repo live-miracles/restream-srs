@@ -1,0 +1,321 @@
+'use strict';
+
+const { describe, test } = require('node:test');
+const assert = require('node:assert/strict');
+const express = require('express');
+const { Readable, Writable } = require('node:stream');
+
+const { createDb } = require('../../src/db/index');
+const { registerPipelineApi } = require('../../src/api/pipelines');
+
+class MockRequest extends Readable {
+    constructor(method, url, body) {
+        super();
+        this.method = method;
+        this.url = url;
+        this.headers = {};
+        this.socket = { remoteAddress: '127.0.0.1' };
+        this.connection = this.socket;
+        this.body = body;
+    }
+
+    _read() {
+        this.push(null);
+    }
+}
+
+class MockResponse extends Writable {
+    constructor(resolve) {
+        super();
+        this.statusCode = 200;
+        this.headers = {};
+        this.chunks = [];
+        this.resolve = resolve;
+        this.setHeader = (name, value) => {
+            this.headers[String(name).toLowerCase()] = value;
+        };
+        this.getHeader = (name) => this.headers[String(name).toLowerCase()];
+        this.removeHeader = (name) => {
+            delete this.headers[String(name).toLowerCase()];
+        };
+        this.writeHead = (statusCode, headers = {}) => {
+            this.statusCode = statusCode;
+            for (const [name, value] of Object.entries(headers)) this.setHeader(name, value);
+            return this;
+        };
+        this.end = (chunk, encoding, callback) => {
+            if (chunk) this.chunks.push(Buffer.from(chunk, encoding));
+            const text = Buffer.concat(this.chunks).toString('utf8');
+            this.resolve({
+                status: this.statusCode,
+                body: text ? JSON.parse(text) : undefined,
+            });
+            if (callback) callback();
+            return this;
+        };
+    }
+
+    _write(chunk, _encoding, callback) {
+        this.chunks.push(Buffer.from(chunk));
+        callback();
+    }
+}
+
+function dispatch(app, method, route, body) {
+    return new Promise((resolve, reject) => {
+        app.handle(new MockRequest(method, route, body), new MockResponse(resolve), reject);
+    });
+}
+
+function makeFakePreviewService() {
+    const stopped = [];
+    return {
+        stopped,
+        stop(pipelineId) {
+            stopped.push(pipelineId);
+        },
+    };
+}
+
+function makeFakeOutputService() {
+    const stoppedAndWaited = [];
+    return {
+        stoppedAndWaited,
+        async stopAndWait(outputId) {
+            stoppedAndWaited.push(outputId);
+        },
+    };
+}
+
+function makeFakeSrtRelayService() {
+    return {
+        getStats() {
+            return { status: 'running', pid: 4242 };
+        },
+        getStreamStatus(streamId) {
+            return { streamId, acceptedBySrs: false };
+        },
+    };
+}
+
+function createHarness() {
+    const app = express();
+    const db = createDb(':memory:');
+    const previewService = makeFakePreviewService();
+    const outputService = makeFakeOutputService();
+    const srtRelayService = makeFakeSrtRelayService();
+    registerPipelineApi(app, db, outputService, previewService, srtRelayService);
+    return {
+        db,
+        previewService,
+        outputService,
+        srtRelayService,
+        request: (method, route, body) => dispatch(app, method, route, body),
+    };
+}
+
+describe('Pipelines API integration', () => {
+    describe('POST /api/pipelines', () => {
+        test('creates a pipeline with an assigned stream key', async () => {
+            const harness = createHarness();
+            const res = await harness.request('POST', '/api/pipelines');
+            assert.equal(res.status, 201);
+            assert.ok(res.body.id > 0);
+            assert.ok(res.body.streamKey.startsWith('key'));
+        });
+    });
+
+    describe('GET /api/pipelines/:id', () => {
+        test('400s for a non-numeric id', async () => {
+            const harness = createHarness();
+            const res = await harness.request('GET', '/api/pipelines/abc');
+            assert.equal(res.status, 400);
+        });
+
+        test('404s for an unknown id', async () => {
+            const harness = createHarness();
+            const res = await harness.request('GET', '/api/pipelines/9999');
+            assert.equal(res.status, 404);
+        });
+
+        test('merges srtRelay stats and srtBonding stream status into the pipeline payload', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+
+            const res = await harness.request('GET', `/api/pipelines/${p.id}`);
+
+            assert.equal(res.status, 200);
+            assert.equal(res.body.id, p.id);
+            assert.deepEqual(res.body.srtRelay, { status: 'running', pid: 4242 });
+            assert.equal(res.body.srtBonding.streamId, `#!::r=live/${p.streamKey},m=publish`);
+        });
+    });
+
+    describe('POST /api/pipelines/:id (update)', () => {
+        test('400s for a non-numeric id', async () => {
+            const harness = createHarness();
+            const res = await harness.request('POST', '/api/pipelines/abc', { name: 'X' });
+            assert.equal(res.status, 400);
+        });
+
+        test('404s for an unknown id', async () => {
+            const harness = createHarness();
+            const res = await harness.request('POST', '/api/pipelines/9999', { name: 'X' });
+            assert.equal(res.status, 404);
+        });
+
+        test('rejects a missing name', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+            const res = await harness.request('POST', `/api/pipelines/${p.id}`, {});
+            assert.equal(res.status, 400);
+        });
+
+        test('rejects a whitespace-only name', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+            const res = await harness.request('POST', `/api/pipelines/${p.id}`, { name: '   ' });
+            assert.equal(res.status, 400);
+        });
+
+        test('renames without touching the stream key when streamKeyId is omitted', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+            const res = await harness.request('POST', `/api/pipelines/${p.id}`, { name: 'New' });
+            assert.equal(res.status, 200);
+            assert.equal(res.body.name, 'New');
+            assert.equal(res.body.streamKeyId, p.streamKeyId);
+            assert.deepEqual(harness.previewService.stopped, []);
+        });
+
+        test('reassigns the stream key when none of its outputs are active, and stops the preview', async () => {
+            const harness = createHarness();
+            const p1 = harness.db.createPipeline();
+            const p2 = harness.db.createPipeline();
+
+            const res = await harness.request('POST', `/api/pipelines/${p1.id}`, {
+                name: p1.name,
+                streamKeyId: p2.streamKeyId,
+            });
+
+            assert.equal(res.status, 200);
+            assert.equal(res.body.streamKeyId, p2.streamKeyId);
+            assert.deepEqual(harness.previewService.stopped, [p1.id]);
+        });
+
+        test('409s a stream key change while any output is running, and does not touch the preview or db', async () => {
+            const harness = createHarness();
+            const p1 = harness.db.createPipeline();
+            const p2 = harness.db.createPipeline();
+            const o = harness.db.createOutput({ pipelineId: p1.id, name: 'X', url: 'rtmp://x' });
+            harness.db.setOutputDesiredState(o.id, 'running');
+
+            const res = await harness.request('POST', `/api/pipelines/${p1.id}`, {
+                name: p1.name,
+                streamKeyId: p2.streamKeyId,
+            });
+
+            assert.equal(res.status, 409);
+            assert.equal(harness.db.getPipeline(p1.id).streamKeyId, p1.streamKeyId);
+            assert.deepEqual(harness.previewService.stopped, []);
+        });
+
+        test('renaming with an unchanged streamKeyId succeeds even with a running output', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+            const o = harness.db.createOutput({ pipelineId: p.id, name: 'X', url: 'rtmp://x' });
+            harness.db.setOutputDesiredState(o.id, 'running');
+
+            const res = await harness.request('POST', `/api/pipelines/${p.id}`, {
+                name: 'Renamed',
+                streamKeyId: p.streamKeyId,
+            });
+
+            assert.equal(res.status, 200);
+            assert.equal(res.body.name, 'Renamed');
+            // Key didn't actually change, so the active-output guard never applies.
+            assert.deepEqual(harness.previewService.stopped, []);
+        });
+    });
+
+    describe('DELETE /api/pipelines/:id', () => {
+        test('400s for a non-numeric id', async () => {
+            const harness = createHarness();
+            const res = await harness.request('DELETE', '/api/pipelines/abc');
+            assert.equal(res.status, 400);
+        });
+
+        test('404s for an unknown id', async () => {
+            const harness = createHarness();
+            const res = await harness.request('DELETE', '/api/pipelines/9999');
+            assert.equal(res.status, 404);
+        });
+
+        test('409s and deletes nothing while any output is running', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+            const o = harness.db.createOutput({ pipelineId: p.id, name: 'X', url: 'rtmp://x' });
+            harness.db.setOutputDesiredState(o.id, 'running');
+
+            const res = await harness.request('DELETE', `/api/pipelines/${p.id}`);
+
+            assert.equal(res.status, 409);
+            assert.ok(harness.db.getPipeline(p.id));
+            assert.deepEqual(harness.outputService.stoppedAndWaited, []);
+        });
+
+        test('stops the preview and every output, then deletes the pipeline and cascades its outputs', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+            const o1 = harness.db.createOutput({ pipelineId: p.id, name: 'A', url: 'rtmp://a' });
+            const o2 = harness.db.createOutput({ pipelineId: p.id, name: 'B', url: 'rtmp://b' });
+
+            const res = await harness.request('DELETE', `/api/pipelines/${p.id}`);
+
+            assert.equal(res.status, 200);
+            assert.equal(harness.db.getPipeline(p.id), undefined);
+            assert.deepEqual(harness.previewService.stopped, [p.id]);
+            assert.deepEqual(
+                new Set(harness.outputService.stoppedAndWaited),
+                new Set([o1.id, o2.id]),
+            );
+            assert.equal(harness.db.listOutputsForPipeline(p.id).length, 0);
+        });
+    });
+
+    describe('GET /api/pipelines/:id/logs', () => {
+        test('400s for a non-numeric id', async () => {
+            const harness = createHarness();
+            const res = await harness.request('GET', '/api/pipelines/abc/logs');
+            assert.equal(res.status, 400);
+        });
+
+        test('404s for an unknown pipeline', async () => {
+            const harness = createHarness();
+            const res = await harness.request('GET', '/api/pipelines/9999/logs');
+            assert.equal(res.status, 404);
+        });
+
+        test('returns logs newest first', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+            harness.db.appendPipelineLog(p.id, 'online', 'first');
+            harness.db.appendPipelineLog(p.id, 'online', 'second');
+
+            const res = await harness.request('GET', `/api/pipelines/${p.id}/logs`);
+
+            assert.equal(res.status, 200);
+            assert.deepEqual(
+                res.body.map((l) => l.message),
+                ['second', 'first'],
+            );
+        });
+
+        test('returns an empty array for a pipeline with no logs', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+            const res = await harness.request('GET', `/api/pipelines/${p.id}/logs`);
+            assert.deepEqual(res.body, []);
+        });
+    });
+});

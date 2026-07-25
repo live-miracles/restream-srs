@@ -1,3 +1,6 @@
+import { installLogTimestamps } from './utils/logTimestamps.js';
+installLogTimestamps();
+
 import express from 'express';
 import compression from 'compression';
 import path from 'path';

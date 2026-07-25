@@ -473,6 +473,131 @@ describe('SRT relay service', () => {
         });
     });
 
+    test('marks the relay as stopped with a descriptive error on a non-2xx status code', async () => {
+        global.fetch = async () => new Response('Internal Server Error', { status: 503 });
+        const service = createSrtRelayService();
+        cleanup.push(async () => service.shutdown());
+        service.start();
+
+        await waitFor(() => service.getStats().lastError);
+        assert.equal(service.getStats().status, 'stopped');
+        assert.match(service.getStats().lastError || '', /503/);
+    });
+
+    test('marks the relay as stopped instead of crashing when the response body is not valid JSON', async () => {
+        global.fetch = async () =>
+            new Response('<html>not json</html>', {
+                status: 200,
+                headers: { 'Content-Type': 'text/html' },
+            });
+        const service = createSrtRelayService();
+        cleanup.push(async () => service.shutdown());
+        service.start();
+
+        await waitFor(() => service.getStats().lastError);
+        assert.equal(service.getStats().status, 'stopped');
+        assert.equal(service.getStreamStatus('#!::r=live/key01,m=publish').inputActive, false);
+    });
+
+    test('treats a fetch timeout the same as any other connection failure', async () => {
+        global.fetch = async () => {
+            throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+        };
+        const service = createSrtRelayService();
+        cleanup.push(async () => service.shutdown());
+        service.start();
+
+        await waitFor(() => service.getStats().lastError);
+        assert.equal(service.getStats().status, 'stopped');
+        assert.match(service.getStats().lastError || '', /timeout/i);
+    });
+
+    test('drops stream states with a missing, empty, or non-string streamId instead of crashing', async () => {
+        global.fetch = async () =>
+            new Response(
+                JSON.stringify({
+                    pid: 777,
+                    startedAtMs: Date.now(),
+                    updatedAtMs: Date.now(),
+                    lastError: null,
+                    streamStates: [
+                        { inputActive: true, input: EMPTY_INPUT, output: EMPTY_OUTPUT },
+                        {
+                            streamId: '',
+                            inputActive: true,
+                            input: EMPTY_INPUT,
+                            output: EMPTY_OUTPUT,
+                        },
+                        {
+                            streamId: 12345,
+                            inputActive: true,
+                            input: EMPTY_INPUT,
+                            output: EMPTY_OUTPUT,
+                        },
+                        {
+                            streamId: '#!::r=live/keyOK,m=publish',
+                            inputActive: true,
+                            forwardedPackets: 5,
+                            input: EMPTY_INPUT,
+                            output: EMPTY_OUTPUT,
+                        },
+                    ],
+                }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } },
+            );
+
+        const service = createSrtRelayService();
+        cleanup.push(async () => service.shutdown());
+        service.start();
+
+        await waitFor(() => service.getStats().pid === 777);
+        assert.equal(
+            service.getStreamStatus('#!::r=live/keyOK,m=publish').forwardedPackets,
+            5,
+            'the well-formed entry must still be indexed',
+        );
+        // None of the malformed entries can be looked up (no valid streamId to
+        // key them by) — this only proves they didn't crash the poll loop.
+        assert.equal(service.getStreamStatus('').inputActive, false);
+    });
+
+    test('getStreamStatus returns the exact empty-status shape for a totally unknown streamId', async () => {
+        global.fetch = async () =>
+            new Response(
+                JSON.stringify({
+                    pid: 1,
+                    startedAtMs: Date.now(),
+                    updatedAtMs: Date.now(),
+                    lastError: null,
+                    streamStates: [],
+                }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } },
+            );
+        const service = createSrtRelayService();
+        cleanup.push(async () => service.shutdown());
+        service.start();
+
+        await waitFor(() => service.getStats().pid === 1);
+        assert.deepEqual(service.getStreamStatus('#!::r=live/never-seen,m=publish'), {
+            inputActive: false,
+            outputConnected: false,
+            retryFailures: 0,
+            forwardedPackets: 0,
+            forwardedBytes: 0,
+            lastPacketAt: null,
+            lastInputPacketAt: null,
+            input: UNREPORTED_INPUT,
+            output: EMPTY_OUTPUT,
+            lastErrorAt: null,
+            lastError: null,
+        });
+        // A streamId with no parseable r= resource falls back the same way.
+        assert.deepEqual(
+            service.getStreamStatus('totally-garbage-not-a-streamid'),
+            service.getStreamStatus('#!::r=live/never-seen,m=publish'),
+        );
+    });
+
     test('keeps per-stream status lookup stable with 20 concurrent streams', async () => {
         const streamStates = Array.from({ length: 20 }, (_, idx) => {
             const streamNum = String(idx + 1).padStart(2, '0');

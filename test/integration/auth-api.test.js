@@ -6,11 +6,11 @@ const express = require('express');
 const { Readable, Writable } = require('node:stream');
 
 class MockRequest extends Readable {
-    constructor(method, url, body, ip = '127.0.0.1') {
+    constructor(method, url, body, ip = '127.0.0.1', cookie) {
         super();
         this.method = method;
         this.url = url;
-        this.headers = {};
+        this.headers = cookie ? { cookie } : {};
         this.socket = { remoteAddress: ip };
         this.connection = this.socket;
         this.body = body;
@@ -59,9 +59,13 @@ class MockResponse extends Writable {
     }
 }
 
-function dispatch(app, method, route, body, ip) {
+function dispatch(app, method, route, body, ip, cookie) {
     return new Promise((resolve, reject) => {
-        app.handle(new MockRequest(method, route, body, ip), new MockResponse(resolve), reject);
+        app.handle(
+            new MockRequest(method, route, body, ip, cookie),
+            new MockResponse(resolve),
+            reject,
+        );
     });
 }
 
@@ -93,8 +97,27 @@ async function createHarness() {
     await initializePassword(db);
     registerAuthApi(app, db);
     return {
+        db,
         login: (password, ip) => dispatch(app, 'POST', '/api/auth/login', { password }, ip),
+        logout: (cookie) => dispatch(app, 'POST', '/api/auth/logout', undefined, undefined, cookie),
+        changePassword: (currentPassword, newPassword, cookie) =>
+            dispatch(
+                app,
+                'POST',
+                '/api/auth/change-password',
+                { currentPassword, newPassword },
+                undefined,
+                cookie,
+            ),
+        request: (method, route, body, cookie) =>
+            dispatch(app, method, route, body, undefined, cookie),
     };
+}
+
+// Extracts just "session=<token>" from a Set-Cookie response header so it can
+// be replayed as a request's Cookie header.
+function sessionCookieFrom(res) {
+    return res.headers['set-cookie'].split(';')[0];
 }
 
 describe('auth login integration', () => {
@@ -150,5 +173,148 @@ describe('auth login integration', () => {
         // Counter was reset: the next failure is a plain 401, not a block.
         const res = await harness.login('wrong', '203.0.113.9');
         assert.equal(res.status, 401);
+    });
+
+    test('a non-string password does not crash the server and is rejected', async () => {
+        const harness = await createHarness();
+
+        for (const badPassword of [12345, { toString: () => 'admin' }, ['admin'], null]) {
+            const res = await harness.request('POST', '/api/auth/login', { password: badPassword });
+            assert.equal(res.status, 401);
+        }
+    });
+
+    test('a missing password field is rejected, not treated as an empty-string match', async () => {
+        const harness = await createHarness();
+        const res = await harness.request('POST', '/api/auth/login', {});
+        assert.equal(res.status, 401);
+    });
+});
+
+describe('auth session integration', () => {
+    beforeEach(() => {
+        delete require.cache[require.resolve('../../src/api/auth')];
+    });
+
+    test('protected routes reject requests with no session cookie', async () => {
+        const harness = await createHarness();
+
+        const logoutRes = await harness.logout(undefined);
+        assert.equal(logoutRes.status, 401);
+
+        const changeRes = await harness.changePassword('admin', 'newpass123', undefined);
+        assert.equal(changeRes.status, 401);
+    });
+
+    test('protected routes reject a garbage cookie header', async () => {
+        const harness = await createHarness();
+        const res = await harness.logout('not-a-real-cookie-format');
+        assert.equal(res.status, 401);
+    });
+
+    test('protected routes reject a well-formed but unknown session token', async () => {
+        const harness = await createHarness();
+        const res = await harness.logout(
+            'session=0000000000000000000000000000000000000000000000000000000000000000',
+        );
+        assert.equal(res.status, 401);
+    });
+
+    test('the session cookie is parsed correctly alongside unrelated cookies', async () => {
+        const harness = await createHarness();
+        const login = await harness.login('admin');
+        const token = sessionCookieFrom(login);
+
+        const res = await harness.logout(`theme=dark; ${token}; other=1`);
+        assert.equal(res.status, 200);
+    });
+
+    test('logout invalidates the session so it cannot be reused', async () => {
+        const harness = await createHarness();
+        const login = await harness.login('admin');
+        const cookie = sessionCookieFrom(login);
+
+        const logoutRes = await harness.logout(cookie);
+        assert.equal(logoutRes.status, 200);
+        assert.match(logoutRes.headers['set-cookie'], /Max-Age=0/);
+
+        // The same token must no longer authenticate anything.
+        const replay = await harness.logout(cookie);
+        assert.equal(replay.status, 401);
+    });
+
+    test('logging out an already-invalidated session is a harmless no-op, not a crash', async () => {
+        const harness = await createHarness();
+        const login = await harness.login('admin');
+        const cookie = sessionCookieFrom(login);
+        await harness.logout(cookie);
+
+        const again = await harness.logout(cookie);
+        assert.equal(again.status, 401);
+    });
+
+    test('change-password succeeds with the correct current password and rotates it', async () => {
+        const harness = await createHarness();
+        const login = await harness.login('admin');
+        const cookie = sessionCookieFrom(login);
+
+        const res = await harness.changePassword('admin', 'new-secure-pw', cookie);
+        assert.equal(res.status, 200);
+
+        // Old password no longer works; new one does.
+        const oldLogin = await harness.login('admin');
+        assert.equal(oldLogin.status, 401);
+        const newLogin = await harness.login('new-secure-pw');
+        assert.equal(newLogin.status, 200);
+    });
+
+    test('change-password rejects an incorrect current password and leaves it unchanged', async () => {
+        const harness = await createHarness();
+        const login = await harness.login('admin');
+        const cookie = sessionCookieFrom(login);
+
+        const res = await harness.changePassword('wrong-current', 'new-secure-pw', cookie);
+        assert.equal(res.status, 403);
+
+        const stillWorks = await harness.login('admin');
+        assert.equal(stillWorks.status, 200);
+    });
+
+    test('change-password rejects an empty new password', async () => {
+        const harness = await createHarness();
+        const login = await harness.login('admin');
+        const cookie = sessionCookieFrom(login);
+
+        const res = await harness.changePassword('admin', '', cookie);
+        assert.equal(res.status, 400);
+
+        const stillWorks = await harness.login('admin');
+        assert.equal(stillWorks.status, 200);
+    });
+
+    test('a session created before a password change stays valid (not force-invalidated)', async () => {
+        const harness = await createHarness();
+        const login = await harness.login('admin');
+        const cookie = sessionCookieFrom(login);
+        await harness.changePassword('admin', 'new-secure-pw', cookie);
+
+        // Documents actual behavior: change-password does not revoke the
+        // session that made the request.
+        const res = await harness.logout(cookie);
+        assert.equal(res.status, 200);
+    });
+
+    test('two independent logins produce independent sessions; logging out one leaves the other valid', async () => {
+        const harness = await createHarness();
+        const loginA = await harness.login('admin');
+        const loginB = await harness.login('admin');
+        const cookieA = sessionCookieFrom(loginA);
+        const cookieB = sessionCookieFrom(loginB);
+        assert.notEqual(cookieA, cookieB);
+
+        await harness.logout(cookieA);
+
+        const bStillWorks = await harness.logout(cookieB);
+        assert.equal(bStillWorks.status, 200);
     });
 });

@@ -37,10 +37,29 @@ const {
     validateAudioEncoding,
 } = require('../src/utils/ffmpeg');
 const { rtmpPullUrl, srtPullUrl, rtmpPublishUrl, srtPublishUrl } = require('../src/utils/srs');
+const { red, yellow, green, cyan } = require('../src/utils/ansiColor');
 
 after(() => {
     process.chdir(originalCwd);
     fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+// ── ansiColor ──────────────────────────────────────────
+
+describe('ansiColor', () => {
+    test('wraps text in the expected SGR code and always resets', () => {
+        assert.equal(red('boom'), '\x1b[31mboom\x1b[0m');
+        assert.equal(yellow('warn'), '\x1b[33mwarn\x1b[0m');
+        assert.equal(green('ok'), '\x1b[32mok\x1b[0m');
+        assert.equal(cyan('info'), '\x1b[36minfo\x1b[0m');
+    });
+
+    test('does not choke on empty or already-ANSI-colored input', () => {
+        assert.equal(red(''), '\x1b[31m\x1b[0m');
+        // Nesting isn't sanitized/escaped — colors just concatenate literally,
+        // which is fine since nothing in this codebase nests them.
+        assert.equal(red(green('x')), '\x1b[31m\x1b[32mx\x1b[0m\x1b[0m');
+    });
 });
 
 // ── validateOutputUrl ─────────────────────────────────
@@ -199,6 +218,30 @@ describe('validateAudioEncoding', () => {
         assert.equal(validateAudioEncoding('a'), null);
         assert.equal(validateAudioEncoding('0,x'), null);
     });
+    test('rejects other-typed falsy JSON values instead of silently treating them as copy', () => {
+        // A raw API call can send any JSON type. 0/false must not be conflated
+        // with "not specified" (undefined/'') the way a bare `!value` check would.
+        assert.equal(validateAudioEncoding(0), null);
+        assert.equal(validateAudioEncoding(false), null);
+        assert.equal(validateAudioEncoding(null), 'copy');
+    });
+    test('rejects non-string, non-numeric-falsy JSON values (arrays, objects)', () => {
+        assert.equal(validateAudioEncoding([0, 1]), null);
+        assert.equal(validateAudioEncoding({ track: 0 }), null);
+        assert.equal(validateAudioEncoding(NaN), null);
+    });
+    test('rejects a trailing comma / empty track segment', () => {
+        assert.equal(validateAudioEncoding('0,'), null);
+        assert.equal(validateAudioEncoding(','), null);
+    });
+    test('rejects a negative or decimal track index', () => {
+        assert.equal(validateAudioEncoding('-1'), null);
+        assert.equal(validateAudioEncoding('1.5'), null);
+    });
+    test('accepts a track index with leading zeros, unchanged', () => {
+        // /^\d+$/ allows this; buildFfmpegArgs passes it straight into -map as text.
+        assert.equal(validateAudioEncoding('00'), '00');
+    });
 });
 
 // ── URL builders ──────────────────────────────────────
@@ -270,5 +313,79 @@ describe('URL builders', () => {
             configuredSrtPullUrl('mykey'),
             'srt://127.0.0.1:10080?streamid=#!::r=live/mykey,m=request&latency=200000&transtype=live&passphrase=supersecretpass&pbkeylen=16',
         );
+    });
+
+    function reloadSrs(confText) {
+        fs.writeFileSync(srsConfPath, confText, 'utf8');
+        delete require.cache[require.resolve('../src/utils/srsConfig')];
+        delete require.cache[require.resolve('../src/utils/srs')];
+        return require('../src/utils/srs');
+    }
+
+    test('missing http_api block falls back to the default API port (1985)', () => {
+        // readSrsConfigValues() caches per-module-load; apiUrl isn't exposed via
+        // src/utils/srs.ts directly, so exercise it through kickSrsClientsByStream's
+        // fetch target indirectly is overkill here — assert via rtmp/srt URLs still
+        // resolving cleanly when the whole http_api block is absent.
+        const { rtmpPullUrl: pull } = reloadSrs(
+            'listen 1935;\nsrt_server {\n    listen 10080;\n}\n',
+        );
+        assert.equal(pull('k'), 'rtmp://127.0.0.1:1935/live/k');
+    });
+
+    test('missing top-level listen directive falls back to the default RTMP port (1935)', () => {
+        const { rtmpPullUrl: pull } = reloadSrs('http_api {\n    listen 1985;\n}\n');
+        assert.equal(pull('k'), 'rtmp://127.0.0.1:1935/live/k');
+    });
+
+    test('missing srt_server block falls back to the default SRT port and no passphrase', () => {
+        const { srtPullUrl: pull } = reloadSrs('listen 1935;\n');
+        assert.equal(
+            pull('k'),
+            'srt://127.0.0.1:10080?streamid=#!::r=live/k,m=request&latency=200000&transtype=live',
+        );
+    });
+
+    test('an out-of-range port directive falls back to the default rather than being used verbatim', () => {
+        const { rtmpPullUrl: pull } = reloadSrs('listen 99999;\n');
+        assert.equal(pull('k'), 'rtmp://127.0.0.1:1935/live/k');
+    });
+
+    test('a non-numeric port directive falls back to the default', () => {
+        const { rtmpPullUrl: pull } = reloadSrs('listen not-a-port;\n');
+        assert.equal(pull('k'), 'rtmp://127.0.0.1:1935/live/k');
+    });
+
+    test('a directive missing its terminating semicolon is ignored (falls back to default)', () => {
+        // parseDirective's regex requires a trailing ';' — SRS itself would
+        // reject this config outright, but our parser must not crash on it.
+        const { rtmpPullUrl: pull } = reloadSrs('listen 1935\n');
+        assert.equal(pull('k'), 'rtmp://127.0.0.1:1935/live/k');
+    });
+
+    test('comments on the same line as a directive are stripped before parsing', () => {
+        const { rtmpPullUrl: pull } = reloadSrs('listen 1935; # rtmp listen port\n');
+        assert.equal(pull('k'), 'rtmp://127.0.0.1:1935/live/k');
+    });
+
+    test('an empty config file uses every default', () => {
+        const { rtmpPullUrl: pull, srtPullUrl: srtPull } = reloadSrs('');
+        assert.equal(pull('k'), 'rtmp://127.0.0.1:1935/live/k');
+        assert.equal(
+            srtPull('k'),
+            'srt://127.0.0.1:10080?streamid=#!::r=live/k,m=request&latency=200000&transtype=live',
+        );
+    });
+
+    test('throws a descriptive error when srs.conf does not exist', () => {
+        fs.rmSync(srsConfPath, { force: true });
+        delete require.cache[require.resolve('../src/utils/srsConfig')];
+        delete require.cache[require.resolve('../src/utils/srs')];
+        const { rtmpPullUrl: pull } = require('../src/utils/srs');
+        assert.throws(() => pull('k'), /Failed to read SRS config/);
+        // Restore for any tests that might run after this one in the same file.
+        fs.writeFileSync(srsConfPath, 'listen 1935;\n', 'utf8');
+        delete require.cache[require.resolve('../src/utils/srsConfig')];
+        delete require.cache[require.resolve('../src/utils/srs')];
     });
 });

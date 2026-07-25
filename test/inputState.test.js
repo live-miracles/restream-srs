@@ -50,4 +50,45 @@ describe('input state', () => {
         state.setInputResolution(1, null, null);
         assert.equal(state.isHighRes(1), false);
     });
+
+    test('treats zero or negative dimensions as "no resolution known", not high-res', () => {
+        const state = createInputState();
+
+        state.setInputResolution(1, 3840, 2160);
+        state.setInputResolution(1, 0, 2160);
+        assert.equal(state.isHighRes(1), false);
+
+        state.setInputResolution(1, 3840, 2160);
+        state.setInputResolution(1, 3840, -1);
+        assert.equal(state.isHighRes(1), false);
+
+        state.setInputResolution(1, 3840, 2160);
+        state.setInputResolution(1, 0, 0);
+        assert.equal(state.isHighRes(1), false);
+    });
+
+    test('pullUrl defaults to rtmp when no protocol has been recorded yet', () => {
+        const state = createInputState();
+        assert.match(state.pullUrl(1, 'mykey'), /^rtmp:\/\//);
+    });
+
+    test('pullUrl switches to srt once the input protocol is set to srt', () => {
+        const state = createInputState();
+        state.setPipelineState(1, true, 'srt');
+        assert.match(state.pullUrl(1, 'mykey'), /^srt:\/\//);
+    });
+
+    test('pullUrl reverts to rtmp after clearPipeline removes the recorded protocol', () => {
+        const state = createInputState();
+        state.setPipelineState(1, true, 'srt');
+        state.clearPipeline(1);
+        assert.match(state.pullUrl(1, 'mykey'), /^rtmp:\/\//);
+    });
+
+    test('isLive/isReady/getProtocol default safely for a pipeline that was never touched', () => {
+        const state = createInputState();
+        assert.equal(state.isLive(42), false);
+        assert.equal(state.isReady(42), false);
+        assert.equal(state.getProtocol(42), null);
+    });
 });
