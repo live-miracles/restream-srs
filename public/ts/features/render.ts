@@ -401,8 +401,6 @@ function selectedAudioTrack(
     if (tracks.length === 0) return null;
     if (!audioEncoding || audioEncoding === 'copy') return tracks[0];
 
-    // 'aac' (transcode, default track) falls through here too: Number('aac') is
-    // NaN, which .find() below skips, so it resolves to tracks[0] same as 'copy'.
     const firstTrack = audioEncoding
         .split(',')
         .map((part) => Number(part.trim()))
@@ -2329,19 +2327,11 @@ function outputEncodingWarnings(o: OutputView, input: InputHealth): string[] {
     const warnings: string[] = [];
     const outIsSrt = o.url.startsWith('srt://');
 
-    // RTMP inputs only ever expose a single default track, so a numeric track
-    // selection has nothing to select from.
-    if (!input.isSrt && o.audioEncoding !== 'copy' && o.audioEncoding !== 'aac') {
+    // RTMP inputs only ever expose a single default track (index 0, "Track 1"
+    // in the picker), so any other track index has nothing to select from.
+    if (!input.isSrt && o.audioEncoding !== 'copy' && o.audioEncoding !== '0') {
         warnings.push(
-            'RTMP input only has one audio track — use copy or aac, not a track selection.',
-        );
-    }
-
-    // SRT→SRT can copy any track by index; forcing 'aac' is a pointless
-    // transcode when the destination container handles the source codec fine.
-    if (input.isSrt && outIsSrt && o.audioEncoding === 'aac') {
-        warnings.push(
-            'SRT-to-SRT output should select a track (1, 2, …) instead of forcing an aac transcode.',
+            'RTMP input only has one audio track — use copy or Track 1, not a different track selection.',
         );
     }
 
@@ -2349,7 +2339,7 @@ function outputEncodingWarnings(o: OutputView, input: InputHealth): string[] {
     // timestamp jitter (see encodeAudioArgs) — the RTMP side will drift/stutter.
     if (input.isSrt && !outIsSrt && o.audioEncoding === 'copy') {
         warnings.push(
-            'SRT-to-RTMP output should not use copy audio — it can cause audio jitter; use aac instead.',
+            'SRT-to-RTMP output should not use copy audio — it can cause audio jitter; select a track instead.',
         );
     }
 
@@ -2413,13 +2403,10 @@ function renderOutputCard(
         );
     }
     if (o.audioEncoding !== 'copy') {
-        const label =
-            o.audioEncoding === 'aac'
-                ? 'AAC'
-                : o.audioEncoding
-                      .split(',')
-                      .map((t) => `T${parseInt(t) + 1}`)
-                      .join('+');
+        const label = o.audioEncoding
+            .split(',')
+            .map((t) => `T${parseInt(t) + 1}`)
+            .join('+');
         badges.push(
             `<span class="badge badge-xs badge-accent badge-soft whitespace-nowrap">${label}</span>`,
         );

@@ -106,19 +106,19 @@ describe('buildFfmpegArgs', () => {
         }
     });
 
-    test("'aac' forces a transcode; SRT origin adds the jitter filter, RTMP origin doesn't", () => {
-        const fromRtmp = buildFfmpegArgs('rtmp://in', 'rtmp://out', 'aac', 'copy');
+    test("an explicit track selection forces a transcode; SRT origin adds the jitter filter, RTMP origin doesn't", () => {
+        const fromRtmp = buildFfmpegArgs('rtmp://in', 'rtmp://out', '0', 'copy');
         assert.ok(!fromRtmp.includes('-af'));
         assert.equal(fromRtmp[fromRtmp.indexOf('-c:a') + 1], 'aac');
 
-        const fromSrt = buildFfmpegArgs('srt://in:10080', 'rtmp://out', 'aac', 'copy');
+        const fromSrt = buildFfmpegArgs('srt://in:10080', 'rtmp://out', '0', 'copy');
         assert.ok(fromSrt.includes('-af'));
         assert.ok(fromSrt.some((a) => String(a).includes('aresample')));
         assert.equal(fromSrt[fromSrt.indexOf('-c:a') + 1], 'aac');
     });
 
-    test("'aac' forces a transcode even into an SRT destination", () => {
-        const args = buildFfmpegArgs('srt://in:10080', 'srt://host:10080', 'aac', 'copy');
+    test('an explicit track selection forces a transcode even into an SRT destination', () => {
+        const args = buildFfmpegArgs('srt://in:10080', 'srt://host:10080', '0', 'copy');
         assert.equal(args[args.indexOf('-c:a') + 1], 'aac');
     });
 
@@ -176,16 +176,6 @@ describe('buildFfmpegArgs', () => {
         assert.ok(!args.includes('-map'));
     });
 
-    test("'aac' maps track 0 explicitly, same as 'copy' (it's a codec choice, not a track selector)", () => {
-        const flv = buildFfmpegArgs('rtmp://in', 'rtmp://out', 'aac');
-        assert.deepEqual(
-            flv.filter((a, i) => flv[i - 1] === '-map'),
-            ['0:v:0?', '0:a:0?'],
-        );
-        const srt = buildFfmpegArgs('rtmp://in', 'srt://out:10080', 'aac');
-        assert.ok(!srt.includes('-map'));
-    });
-
     test('selecting a track on an FLV destination maps video + that audio stream, failing fast if absent', () => {
         const args = buildFfmpegArgs('rtmp://in', 'rtmp://out', '1');
         const maps = args.filter((a, i) => args[i - 1] === '-map');
@@ -211,8 +201,8 @@ describe('validateAudioEncoding', () => {
         assert.equal(validateAudioEncoding('0'), '0');
         assert.equal(validateAudioEncoding('0, 1 ,2'), '0,1,2');
     });
-    test("accepts 'aac' (explicit transcode opt-in)", () => {
-        assert.equal(validateAudioEncoding('aac'), 'aac');
+    test("rejects 'aac' (retired in favor of explicit track selection)", () => {
+        assert.equal(validateAudioEncoding('aac'), null);
     });
     test('rejects non-numeric values', () => {
         assert.equal(validateAudioEncoding('a'), null);

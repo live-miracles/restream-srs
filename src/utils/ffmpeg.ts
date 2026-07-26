@@ -24,21 +24,22 @@ export const ENCODINGS: Record<string, VideoEncodingPreset> = {
     },
 };
 
-// 'aac' is the explicit opt-in for a real audio transcode — the only reason to
-// ever pick it is SRT-origin jitter (raw MPEG-TS PCR rounding / packet-loss
-// gaps): aresample=async=1 tracks the real clock by adding/dropping samples to
-// absorb that drift without inventing new PTS, which needs a real decode. A
-// native RTMP origin has well-behaved timestamps (srt_to_rtmp is disabled —
-// see srs.conf — so RTMP-origin pulls never pass through its jittery remux),
-// so 'aac' on an RTMP origin just normalizes the codec/format with no filter.
+// Any non-'copy' audioEncoding (an explicit track selection) forces a real
+// transcode. On an SRT origin this also fixes timestamp jitter (raw MPEG-TS
+// PCR rounding / packet-loss gaps): aresample=async=1 tracks the real clock by
+// adding/dropping samples to absorb that drift without inventing new PTS,
+// which needs a real decode. A native RTMP origin has well-behaved timestamps
+// (srt_to_rtmp is disabled — see srs.conf — so RTMP-origin pulls never pass
+// through its jittery remux), so a transcode from an RTMP origin just
+// normalizes the codec/format with no filter.
 function encodeAudioArgs(isSrtOrigin: boolean): string[] {
     const filterArgs = isSrtOrigin ? ['-af', 'aresample=async=1:first_pts=0'] : [];
     return [...filterArgs, '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '48000'];
 }
 
 // Explicit map for FLV: ffmpeg's default picks the highest-channel stream, which
-// can be an unwanted program mix. 'copy'/'aac' both mean "default track" (0) and
-// stay optional ('?') since a source with no audio at all is a legitimate,
+// can be an unwanted program mix. 'copy' means "default track" (0) and stays
+// optional ('?') since a source with no audio at all is a legitimate,
 // non-error case. An explicit numeric selection is a deliberate pick of a
 // specific track, so it's mapped without '?': if the input doesn't actually
 // have that track (e.g. picked before the input connected, or it just has
@@ -46,7 +47,7 @@ function encodeAudioArgs(isSrtOrigin: boolean): string[] {
 // a muted output — same as the SRT/mpegts path in buildAudioMapArgs below.
 function buildSinkMapArgs(audioTrack: string, isSrt: boolean): string[] {
     if (isSrt) return buildAudioMapArgs(audioTrack);
-    if (audioTrack === 'copy' || audioTrack === 'aac') {
+    if (audioTrack === 'copy') {
         return ['-map', '0:v:0?', '-map', '0:a:0?'];
     }
     const idx = audioTrack.split(',')[0].trim();
@@ -54,7 +55,7 @@ function buildSinkMapArgs(audioTrack: string, isSrt: boolean): string[] {
 }
 
 function buildAudioMapArgs(audioTrack: string): string[] {
-    if (audioTrack === 'copy' || audioTrack === 'aac') return [];
+    if (audioTrack === 'copy') return [];
     const indices = audioTrack
         .split(',')
         .map((s) => s.trim())
@@ -124,8 +125,8 @@ export function buildFfmpegArgs(
     const isSrtOrigin = inputUrl.startsWith('srt://');
     const mapArgs = buildSinkMapArgs(audioEncoding, isSrt);
     // 'copy' always means a literal stream copy, regardless of origin/destination
-    // protocol. Anything else (the 'aac' opt-in, or an explicit track index/list)
-    // forces a real transcode — see encodeAudioArgs for when that adds a filter.
+    // protocol. Anything else (an explicit track index/list) forces a real
+    // transcode — see encodeAudioArgs for when that adds a filter.
     const audioArgs =
         audioEncoding === 'copy' ? (['-c:a', 'copy'] as const) : encodeAudioArgs(isSrtOrigin);
     const fmt = isSrt ? ['-f', 'mpegts'] : ['-f', 'flv'];
@@ -143,7 +144,6 @@ export function validateAudioEncoding(value: unknown): string | null {
     // by a raw API call and silently reinterpret them as 'copy' rather than
     // rejecting them.
     if (value === undefined || value === null || value === '' || value === 'copy') return 'copy';
-    if (value === 'aac') return 'aac';
     if (typeof value !== 'string') return null;
     const parts = value.split(',').map((s) => s.trim());
     if (!parts.every((p) => /^\d+$/.test(p))) return null;
