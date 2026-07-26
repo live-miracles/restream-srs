@@ -1373,7 +1373,19 @@ function parseOutputsPayload(text: string): OutputPayloadFields[] | null {
     return outputs;
 }
 
-function parseSingleOutputPayload(text: string): OutputPayloadFields | null {
+// Unlike parseOutputItem (used for the bulk paste-all-outputs flow, where
+// every output being created needs an explicit name/encoding), a single
+// output pasted into the open form can omit name/videoEncoding/audioEncoding
+// and fall back to whatever the form already has prefilled — only the
+// destination url is meaningless to default.
+interface OutputPastePayload {
+    name?: string;
+    videoEncoding?: string;
+    url: string;
+    audioEncoding?: string;
+}
+
+function parseSingleOutputPayload(text: string): OutputPastePayload | null {
     let parsed: unknown;
     try {
         parsed = JSON.parse(text);
@@ -1381,11 +1393,23 @@ function parseSingleOutputPayload(text: string): OutputPayloadFields | null {
         api.showError('Clipboard content is not valid JSON.');
         return null;
     }
-    if (Array.isArray(parsed)) {
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
         api.showError('Expected a single output object, not a list.');
         return null;
     }
-    return parseOutputItem(parsed);
+    const { name, videoEncoding, url, audioEncoding } = parsed as Record<string, unknown>;
+    if (typeof url !== 'string' || !url.trim()) {
+        api.showError('Clipboard JSON must include a non-empty url.');
+        return null;
+    }
+    return {
+        name: typeof name === 'string' && name.trim() ? name.trim() : undefined,
+        videoEncoding:
+            typeof videoEncoding === 'string' && videoEncoding ? videoEncoding : undefined,
+        url,
+        audioEncoding:
+            typeof audioEncoding === 'string' && audioEncoding ? audioEncoding : undefined,
+    };
 }
 
 export async function copyOutput(): Promise<void> {
@@ -1429,14 +1453,24 @@ export async function pasteOutputIntoForm(): Promise<void> {
     const payload = parseSingleOutputPayload(text);
     if (!payload) return;
 
-    const nameEl = document.getElementById('out-name-input') as HTMLInputElement;
-    nameEl.value = payload.name;
-    nameEl.classList.remove('input-error');
-    (document.getElementById('out-video-encoding-input') as HTMLSelectElement).innerHTML =
-        outVideoEncodingOptions(payload.videoEncoding);
+    if (payload.name) {
+        const nameEl = document.getElementById('out-name-input') as HTMLInputElement;
+        nameEl.value = payload.name;
+        nameEl.classList.remove('input-error');
+    }
+    const videoEncodingEl = document.getElementById(
+        'out-video-encoding-input',
+    ) as HTMLSelectElement;
+    videoEncodingEl.innerHTML = outVideoEncodingOptions(
+        payload.videoEncoding ?? videoEncodingEl.value,
+    );
+    const audioEncoding =
+        payload.audioEncoding ??
+        (document.getElementById('out-audio-encoding-input') as HTMLSelectElement | null)?.value ??
+        'copy';
     populateDestination(pipelineTracks(pipelineId), {
         url: payload.url,
-        audioEncoding: payload.audioEncoding,
+        audioEncoding,
     });
 }
 
