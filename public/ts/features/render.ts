@@ -1572,9 +1572,9 @@ function renderOverview(): void {
     const downlinkTotalTitle =
         'App = SRS direct inputs + SRT bonding relay legs.\nSystem = whole-system downlink.';
     const uplinkTotalTitle = 'App = every running ffmpeg output.\nSystem = whole-system uplink.';
+    const flowTotalTitle = `${downlinkTotalTitle}\n\n${uplinkTotalTitle}`;
 
     const systemUsageHtml = `
-    <h2 class="mb-2 text-lg font-bold">Restream Usage</h2>
     <div class="overflow-x-auto mb-6">
         <table class="table table-sm">
             <thead>
@@ -1605,20 +1605,12 @@ function renderOverview(): void {
                     <td class="font-mono text-xs" title="${appTotalTitle}">${totalRamKnown ? formatBytesCompact(totalRamBytes) : '—'} / ${fmtProcRam(sysRamUsedBytes)}</td>
                 </tr>
                 <tr>
-                    <td class="text-xs opacity-60">Downlink</td>
-                    <td class="font-mono text-xs">—</td>
-                    <td class="font-mono text-xs">${srsDownlinkKnown ? formatBitrate(srsDownlinkKbps) : '—'}</td>
-                    <td class="font-mono text-xs">${relayDownlinkKnown ? formatBitrate(relayDownlinkKbps) : '—'}</td>
-                    <td class="font-mono text-xs">—</td>
-                    <td class="font-mono text-xs" title="${downlinkTotalTitle}">${totalDownlinkKnown ? formatBitrate(totalDownlinkKbps) : '—'} / ${formatBitrate(sysDownlinkKbps)}</td>
-                </tr>
-                <tr>
-                    <td class="text-xs opacity-60">Uplink</td>
-                    <td class="font-mono text-xs">—</td>
-                    <td class="font-mono text-xs">—</td>
-                    <td class="font-mono text-xs">—</td>
-                    <td class="font-mono text-xs">${outsUplinkKnown ? formatBitrate(outsUplinkKbps) : '—'}</td>
-                    <td class="font-mono text-xs" title="${uplinkTotalTitle}">${totalUplinkKnown ? formatBitrate(totalUplinkKbps) : '—'} / ${formatBitrate(sysUplinkKbps)}</td>
+                    <td class="text-xs opacity-60">Downlink &amp; Uplink</td>
+                    <td class="font-mono text-xs">-</td>
+                    <td class="font-mono text-xs">↓ ${srsDownlinkKnown ? formatBitrate(srsDownlinkKbps) : '—'}</td>
+                    <td class="font-mono text-xs">↓ ${relayDownlinkKnown ? formatBitrate(relayDownlinkKbps) : '—'}</td>
+                    <td class="font-mono text-xs">↑ ${outsUplinkKnown ? formatBitrate(outsUplinkKbps) : '—'}</td>
+                    <td class="font-mono text-xs" title="${flowTotalTitle}">↓ ${totalDownlinkKnown ? formatBitrate(totalDownlinkKbps) : '—'} / ${formatBitrate(sysDownlinkKbps)} &amp; ↑ ${totalUplinkKnown ? formatBitrate(totalUplinkKbps) : '—'} / ${formatBitrate(sysUplinkKbps)}</td>
                 </tr>
             </tbody>
         </table>
@@ -2326,6 +2318,77 @@ function restreamSinkLabel(url: string): string | null {
     return null;
 }
 
+// Config-shape lint, independent of live health: flags audio-encoding /
+// protocol-conversion choices that are technically accepted but wrong for the
+// input's protocol — see encodeAudioArgs/buildSinkMapArgs in ffmpeg.ts for why
+// each of these matters. Gated on input.connected because an unconnected
+// input's isSrt defaults to false (protocol not yet observed), which would
+// otherwise misreport every not-yet-live SRT pipeline as RTMP.
+function outputEncodingWarnings(o: OutputView, input: InputHealth): string[] {
+    if (!o.url || !input.connected) return [];
+    const warnings: string[] = [];
+    const outIsSrt = o.url.startsWith('srt://');
+
+    // RTMP inputs only ever expose a single default track, so a numeric track
+    // selection has nothing to select from.
+    if (!input.isSrt && o.audioEncoding !== 'copy' && o.audioEncoding !== 'aac') {
+        warnings.push(
+            'RTMP input only has one audio track — use copy or aac, not a track selection.',
+        );
+    }
+
+    // SRT→SRT can copy any track by index; forcing 'aac' is a pointless
+    // transcode when the destination container handles the source codec fine.
+    if (input.isSrt && outIsSrt && o.audioEncoding === 'aac') {
+        warnings.push(
+            'SRT-to-SRT output should select a track (1, 2, …) instead of forcing an aac transcode.',
+        );
+    }
+
+    // SRT→RTMP with 'copy' skips the aresample filter that corrects SRT-origin
+    // timestamp jitter (see encodeAudioArgs) — the RTMP side will drift/stutter.
+    if (input.isSrt && !outIsSrt && o.audioEncoding === 'copy') {
+        warnings.push(
+            'SRT-to-RTMP output should not use copy audio — it can cause audio jitter; use aac instead.',
+        );
+    }
+
+    // Cross-protocol conversion is only exercised for local Restream loops;
+    // pushing a protocol-converted stream straight to an external destination
+    // is unsupported/untested for anything else (YouTube, Facebook, Custom, …).
+    if (input.isSrt !== outIsSrt && !restreamSinkLabel(o.url)) {
+        const inLabel = input.isSrt ? 'SRT' : 'RTMP';
+        const outLabel = outIsSrt ? 'SRT' : 'RTMP';
+        warnings.push(
+            `${inLabel}→${outLabel} conversion is only supported for local Restream loops, not external destinations.`,
+        );
+    }
+
+    // A numeric selection past the input's actual track count maps to a
+    // stream that doesn't exist — ffmpeg fails fast on that (see
+    // buildSinkMapArgs/buildAudioMapArgs), so this is a real misconfiguration,
+    // not just a style nit. Only checked once the input has actually been
+    // probed (audioTracks populated) — before that the real count is unknown,
+    // so a track pick can't yet be judged out of range.
+    if (input.isSrt && input.audioTracks.length > 0) {
+        const outOfRange = o.audioEncoding
+            .split(',')
+            .map((s) => s.trim())
+            .filter((s) => /^\d+$/.test(s))
+            .map(Number)
+            .filter((idx) => idx >= input.audioTracks.length);
+        if (outOfRange.length > 0) {
+            const trackLabel = outOfRange.map((idx) => idx + 1).join(', ');
+            const count = input.audioTracks.length;
+            warnings.push(
+                `Output selects track ${trackLabel}, but the input only has ${count} audio track${count === 1 ? '' : 's'}.`,
+            );
+        }
+    }
+
+    return warnings;
+}
+
 function renderOutputCard(
     o: OutputView,
     input: InputHealth,
@@ -2444,9 +2507,23 @@ function renderOutputCard(
            </div>`
         : '';
 
+    const encodingWarnings = outputEncodingWarnings(o, input);
+    const encodingWarnStyle =
+        encodingWarnings.length > 0
+            ? 'style="background:color-mix(in oklch, var(--color-warning) 15%, transparent)"'
+            : '';
+    const encodingWarningsHtml = encodingWarnings
+        .map(
+            (msg) => `<div class="flex items-center gap-2 pl-2 mt-0.5 min-w-0">
+                <span class="text-warning shrink-0">${ICON_WARN}</span>
+                <span class="text-xs text-warning truncate" title="${escapeHtml(msg)}">${escapeHtml(msg)}</span>
+           </div>`,
+        )
+        .join('');
+
     const isPending = pendingOutputs.has(o.id);
     return `
-    <div class="bg-base-100 px-3 py-2 border border-base-content/10 rounded-xl w-full min-w-0 space-y-0.5" data-output-card="${o.id}">
+    <div class="bg-base-100 px-3 py-2 border border-base-content/10 rounded-xl w-full min-w-0 space-y-0.5" data-output-card="${o.id}" ${encodingWarnStyle}>
         <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
             <div class="flex items-center gap-2 shrink-0 font-semibold">
                 <div aria-label="status" class="status status-lg mx-1" style="background-color: ${statusHex}"></div>
@@ -2466,6 +2543,7 @@ function renderOutputCard(
             </div>
         </div>
         ${warningHtml}
+        ${encodingWarningsHtml}
         ${lastErrorHtml}
     </div>`;
 }

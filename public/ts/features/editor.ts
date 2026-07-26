@@ -15,6 +15,11 @@ import type { StreamKey, AudioTrackInfo, HostProbeTarget, ServerLogTail } from '
 
 const MAX_HOST_PROBE_TARGETS = 10;
 
+// Upper bound on selectable audio tracks. Outputs are often configured before
+// the pipeline's input has ever connected (so nothing has been probed yet), so
+// the track list is a static range rather than derived from live probe data.
+const MAX_AUDIO_TRACKS = 50;
+
 function hostProbeRowHtml(slot: number, target?: HostProbeTarget): string {
     return `<tr data-host-probe-row="${slot}">
         <td><input type="text" id="host-probe-${slot}-label" name="hostProbeLabel${slot}" class="input input-sm w-full" data-host-probe-slot="${slot}" data-host-probe-field="label" placeholder="YouTube" value="${escapeHtml(target?.label ?? '')}" /></td>
@@ -392,6 +397,31 @@ function detectServer(url: string): { idx: number; key: string } {
     return { idx: url.startsWith('srt://') ? CUSTOM_SRT_IDX : CUSTOM_RTMP_IDX, key: url };
 }
 
+// Drops the trailing path segment (the stream key) from a custom RTMP URL,
+// keeping only the server/app portion so it can be prefilled without leaking
+// the previous output's key. Leaves the URL untouched if it has no path
+// segment to strip (e.g. bare "rtmp://host").
+function stripRtmpStreamKey(url: string): string {
+    const m = url.match(/^([a-z]+:\/\/)(.*)$/i);
+    if (!m) return url;
+    const [, scheme, rest] = m;
+    const slashIdx = rest.lastIndexOf('/');
+    if (slashIdx === -1) return url;
+    return scheme + rest.slice(0, slashIdx + 1);
+}
+
+// Removes the streamid param from a custom SRT URL while preserving every
+// other setting (host, port, mode, latency, passphrase, keylen).
+function stripSrtStreamId(url: string): string {
+    try {
+        const u = new URL(url);
+        u.searchParams.delete('streamid');
+        return u.toString();
+    } catch {
+        return url;
+    }
+}
+
 type SrtFormSettings = {
     mode: 'caller' | 'listener';
     host: string;
@@ -546,39 +576,47 @@ function outVideoEncodingOptions(selected: string): string {
         .join('');
 }
 
-// Tracks for the pipeline whose output modal is currently open. Captured when the
-// modal opens so the global add-sink handler can build new rows with the same list.
+// Tracks for the pipeline whose output modal is currently open, keyed by index.
+// Captured when the modal opens so the global add-sink handler can build new
+// rows with the same list. Only used to enrich track labels with real
+// metadata (language/codec/channels) when it happens to be known — the option
+// list itself is a static range (see MAX_AUDIO_TRACKS) so it doesn't depend on
+// the input ever having been probed.
 let currentSinkTracks: AudioTrackInfo[] = [];
-// Whether that pipeline's input is published over SRT. An RTMP input carries a
-// single audio track, so its sinks only choose between "copy" and "aac"; an SRT
-// input additionally exposes every track for per-sink selection. Captured when
-// the modal opens.
-let currentInputIsSrt = false;
 
 // Build the audio-track <option>s for one sink. "copy" is a literal stream copy;
 // "aac" force-transcodes the default track (the only reason to pick it is to fix
-// SRT-origin timestamp jitter — see encodeAudioArgs in ffmpeg.ts). Always
-// preserves the currently selected track even when the input is offline /
-// unprobed (so editing a saved output doesn't silently reset its track to copy).
+// SRT-origin timestamp jitter — see encodeAudioArgs in ffmpeg.ts). "Track N" is
+// offered for every pipeline up to MAX_AUDIO_TRACKS regardless of origin
+// protocol or probe state, since outputs are frequently configured before the
+// input has connected; entries are enriched with real track metadata for
+// indices we do have probe data for. Always preserves the currently selected
+// value even when it falls outside that range (e.g. a stale multi-track list),
+// so editing a saved output doesn't silently reset its track to copy.
 function audioOptionsHtml(tracks: AudioTrackInfo[], selected: string): string {
-    const seen = new Set<string>(['copy', 'aac']);
+    const byIndex = new Map(tracks.map((t) => [t.index, t] as const));
     const options = [
         `<option value="copy"${selected === 'copy' ? ' selected' : ''}>copy</option>`,
         `<option value="aac"${selected === 'aac' ? ' selected' : ''}>aac</option>`,
     ];
-    for (const t of tracks) {
-        const val = String(t.index);
-        seen.add(val);
-        const parts = [`Track ${t.index + 1}`];
-        if (t.language) parts.push(`(${t.language})`);
-        if (t.title) parts.push(`— ${t.title}`);
-        parts.push(`· ${t.codec} ${t.channels}ch`);
+    let matched = selected === 'copy' || selected === 'aac';
+    for (let i = 0; i < MAX_AUDIO_TRACKS; i++) {
+        const val = String(i);
+        if (val === selected) matched = true;
+        const t = byIndex.get(i);
+        const parts = [`Track ${i + 1}`];
+        if (t) {
+            if (t.language) parts.push(`(${t.language})`);
+            if (t.title) parts.push(`— ${t.title}`);
+            parts.push(`· ${t.codec} ${t.channels}ch`);
+        }
         options.push(
-            `<option value="${val}"${selected === val ? ' selected' : ''}>${escapeHtml(parts.join(' '))}</option>`,
+            `<option value="${val}"${val === selected ? ' selected' : ''}>${escapeHtml(parts.join(' '))}</option>`,
         );
     }
-    if (selected !== 'copy' && !seen.has(selected)) {
-        options.push(`<option value="${selected}" selected>Track ${Number(selected) + 1}</option>`);
+    if (!matched) {
+        const label = /^\d+$/.test(selected) ? `Track ${Number(selected) + 1}` : selected;
+        options.push(`<option value="${selected}" selected>${escapeHtml(label)}</option>`);
     }
     return options.join('');
 }
@@ -592,32 +630,44 @@ function sinkRowHtmlForServer(idx: number, key = ''): string {
     return `<div class="js-sink-row flex flex-wrap items-end gap-2 rounded-box bg-base-200 px-2 py-2">${serverField}${sinkKeyFieldHtml(idx, key)}</div>`;
 }
 
-// Constrain the audio-track selector to match the input. RTMP inputs are
-// single-track, so they only choose between "copy" and "aac"; SRT inputs
-// additionally expose every track for selection.
 function refreshSinkAudioMode(selected: string): void {
     const sel = document.getElementById('out-audio-encoding-input') as HTMLSelectElement | null;
     if (!sel) return;
-    // Empty track list for RTMP-origin inputs collapses audioOptionsHtml to just
-    // "copy"/"aac" while still preserving a stale track selection (see its own
-    // doc comment) instead of silently discarding it.
-    sel.innerHTML = audioOptionsHtml(currentInputIsSrt ? currentSinkTracks : [], selected);
+    sel.innerHTML = audioOptionsHtml(currentSinkTracks, selected);
     sel.disabled = false;
+}
+
+function populateDestinationDetected(
+    tracks: AudioTrackInfo[],
+    idx: number,
+    key: string,
+    audioEncoding: string,
+): void {
+    currentSinkTracks = tracks;
+    const container = document.getElementById('out-sinks-container');
+    if (container) container.innerHTML = sinkRowHtmlForServer(idx, key);
+    refreshSinkAudioMode(audioEncoding);
 }
 
 function populateDestination(
     tracks: AudioTrackInfo[],
     destination: { url: string; audioEncoding: string } | null,
 ): void {
-    currentSinkTracks = tracks;
     const { idx, key } = destination?.url
         ? detectServer(destination.url)
         : { idx: CUSTOM_RTMP_IDX, key: '' };
+    populateDestinationDetected(tracks, idx, key, destination?.audioEncoding ?? 'copy');
+}
 
-    const container = document.getElementById('out-sinks-container');
-    if (container) container.innerHTML = sinkRowHtmlForServer(idx, key);
-
-    refreshSinkAudioMode(destination?.audioEncoding ?? 'copy');
+// Sanitizes a previous output's server/key for prefill so the unique-per-stream
+// identifier isn't silently reused: RTMP stream keys, SRT stream IDs, and the
+// selected Restream target pipeline are all dropped (blank), while the
+// server/connection settings around them are kept.
+function sanitizedDestinationFor(previousUrl: string): { idx: number; key: string } {
+    const { idx, key } = detectServer(previousUrl);
+    if (idx === CUSTOM_SRT_IDX) return { idx, key: stripSrtStreamId(key) };
+    if (idx === CUSTOM_RTMP_IDX) return { idx, key: stripRtmpStreamKey(key) };
+    return { idx, key: '' };
 }
 
 export function onOutServerChange(select: HTMLSelectElement): void {
@@ -639,21 +689,28 @@ export function openAddOutput(pipelineId: string): void {
     const nameEl = document.getElementById('out-name-input') as HTMLInputElement;
     nameEl.value = `Output ${existingCount + 1}`;
     nameEl.classList.remove('input-error');
-    currentInputIsSrt = pipeline?.input.isSrt ?? false;
 
     // Prefill from the pipeline's most recently added output so repeat destinations
     // (same server/encoding) don't have to be re-entered from scratch each time.
+    // The per-stream identifier (RTMP stream key / SRT stream ID) is left blank
+    // rather than copied, since that's almost never meant to be reused.
     const previous = pipeline?.outs[pipeline.outs.length - 1] ?? null;
 
     (document.getElementById('out-video-encoding-input') as HTMLSelectElement).innerHTML =
         outVideoEncodingOptions(previous?.videoEncoding ?? 'copy');
-    populateDestination(
-        pipelineTracks(pipelineId),
-        previous ? { url: previous.url, audioEncoding: previous.audioEncoding } : null,
-    );
+    if (previous) {
+        const { idx, key } = sanitizedDestinationFor(previous.url);
+        populateDestinationDetected(pipelineTracks(pipelineId), idx, key, previous.audioEncoding);
+    } else {
+        populateDestinationDetected(pipelineTracks(pipelineId), CUSTOM_RTMP_IDX, '', 'copy');
+    }
     (document.getElementById('out-modal-title') as HTMLElement).textContent = 'Add Output';
     (document.getElementById('out-save-btn') as HTMLButtonElement).disabled = false;
     (document.getElementById('out-running-hint') as HTMLElement).classList.add('hidden');
+    const copyBtn = document.getElementById('out-copy-btn') as HTMLButtonElement;
+    copyBtn.disabled = true;
+    copyBtn.classList.add('btn-disabled', 'opacity-40');
+    copyBtn.title = 'Save the output before copying it';
     modal.showModal();
 }
 
@@ -668,7 +725,6 @@ export function openEditOutput(pipelineId: string, outId: string): void {
     const nameEl = document.getElementById('out-name-input') as HTMLInputElement;
     nameEl.value = output.name;
     nameEl.classList.remove('input-error');
-    currentInputIsSrt = state.pipelines.find((p) => p.id === pipelineId)?.input.isSrt ?? false;
     (document.getElementById('out-video-encoding-input') as HTMLSelectElement).innerHTML =
         outVideoEncodingOptions(output.videoEncoding);
     populateDestination(pipelineTracks(pipelineId), {
@@ -682,6 +738,11 @@ export function openEditOutput(pipelineId: string, outId: string): void {
     const hint = document.getElementById('out-running-hint') as HTMLElement;
     saveBtn.disabled = isRunning;
     hint.classList.toggle('hidden', !isRunning);
+
+    const copyBtn = document.getElementById('out-copy-btn') as HTMLButtonElement;
+    copyBtn.disabled = false;
+    copyBtn.classList.remove('btn-disabled', 'opacity-40');
+    copyBtn.title = 'Copy output to clipboard';
 
     modal.showModal();
 }
@@ -843,6 +904,7 @@ export async function showPipelineLogs(pipelineId: string): Promise<void> {
     const contentEl = document.getElementById('logs-modal-content');
     if (!modal || !contentEl) return;
     hideLogsModalRefresh();
+    hideLogsModalClearErrors();
 
     const pipelineName = state.pipelines.find((p) => p.id === pipelineId)?.name ?? pipelineId;
     if (titleEl) titleEl.textContent = `History — ${pipelineName}`;
@@ -869,21 +931,11 @@ export async function showPipelineLogs(pipelineId: string): Promise<void> {
         .join('');
 }
 
-export async function showOutputError(pipelineId: string, outId: string): Promise<void> {
-    const modal = document.getElementById('logs-modal') as HTMLDialogElement | null;
-    const titleEl = document.getElementById('logs-modal-title');
-    const contentEl = document.getElementById('logs-modal-content');
-    if (!modal || !contentEl) return;
-    hideLogsModalRefresh();
-
-    const pipeline = state.pipelines.find((p) => p.id === pipelineId);
-    const output = pipeline?.outs.find((o) => o.id === outId);
-    if (titleEl) titleEl.textContent = `Error History - ${output?.name ?? outId}`;
-    contentEl.textContent = 'Loading…';
-    modal.showModal();
-
-    const history = await api.getOutputErrorHistory(pipelineId, outId);
-    if (!history || history.length === 0) {
+function renderOutputErrorHistory(
+    contentEl: HTMLElement,
+    history: import('../types.js').OutputErrorRecord[],
+): void {
+    if (history.length === 0) {
         contentEl.innerHTML = '<p class="opacity-50 text-sm">No error recorded.</p>';
         return;
     }
@@ -924,6 +976,37 @@ export async function showOutputError(pipelineId: string, outId: string): Promis
         .join('');
 }
 
+export async function showOutputError(pipelineId: string, outId: string): Promise<void> {
+    const modal = document.getElementById('logs-modal') as HTMLDialogElement | null;
+    const titleEl = document.getElementById('logs-modal-title');
+    const contentEl = document.getElementById('logs-modal-content');
+    const clearBtn = document.getElementById('logs-modal-clear-errors') as HTMLButtonElement | null;
+    if (!modal || !contentEl) return;
+    hideLogsModalRefresh();
+
+    const pipeline = state.pipelines.find((p) => p.id === pipelineId);
+    const output = pipeline?.outs.find((o) => o.id === outId);
+    if (titleEl) titleEl.textContent = `Error History - ${output?.name ?? outId}`;
+    contentEl.textContent = 'Loading…';
+    modal.showModal();
+
+    if (clearBtn) {
+        clearBtn.classList.remove('hidden');
+        clearBtn.onclick = () =>
+            withBusy(clearBtn, async () => {
+                await api.clearOutputErrorHistory(pipelineId, outId);
+                renderOutputErrorHistory(contentEl, []);
+                clearBtn.classList.add('hidden');
+                clearBtn.onclick = null;
+                await refreshAfterMutation();
+            });
+    }
+
+    const history = await api.getOutputErrorHistory(pipelineId, outId);
+    renderOutputErrorHistory(contentEl, history ?? []);
+    if (clearBtn && (!history || history.length === 0)) clearBtn.classList.add('hidden');
+}
+
 // Unlike output errors, the relay only ever carries one lastError/lastErrorAt
 // pair (no persisted history), so this reads straight from the already-loaded
 // health snapshot instead of calling out to an API.
@@ -933,6 +1016,7 @@ export function showRelayError(pipelineId: string): void {
     const contentEl = document.getElementById('logs-modal-content');
     if (!modal || !contentEl) return;
     hideLogsModalRefresh();
+    hideLogsModalClearErrors();
 
     const pipeline = state.pipelines.find((p) => p.id === pipelineId);
     if (titleEl) titleEl.textContent = `SRT Bonding Relay Error — ${pipeline?.name ?? pipelineId}`;
@@ -961,6 +1045,13 @@ function hideLogsModalRefresh(): void {
     refreshBtn.classList.add('hidden');
     refreshBtn.classList.remove('inline-flex');
     refreshBtn.onclick = null;
+}
+
+function hideLogsModalClearErrors(): void {
+    const clearBtn = document.getElementById('logs-modal-clear-errors') as HTMLButtonElement | null;
+    if (!clearBtn) return;
+    clearBtn.classList.add('hidden');
+    clearBtn.onclick = null;
 }
 
 function srtDetailRow(label: string, value: string): string {
@@ -1069,6 +1160,7 @@ export function showSrtBondingDetails(pipelineId: string): void {
     const modal = document.getElementById('logs-modal') as HTMLDialogElement | null;
     const refreshBtn = document.getElementById('logs-modal-refresh');
     if (!modal) return;
+    hideLogsModalClearErrors();
 
     renderSrtBondingDetailsContent(pipelineId);
     if (refreshBtn) {
@@ -1199,14 +1291,44 @@ export async function showSrsLogs(): Promise<void> {
 
 // ── Output copy / paste ───────────────────────────────
 
-function parseOutputsPayload(text: string):
-    | {
-          name: string;
-          videoEncoding: string;
-          url: string;
-          audioEncoding: string;
-      }[]
-    | null {
+interface OutputPayloadFields {
+    name: string;
+    videoEncoding: string;
+    url: string;
+    audioEncoding: string;
+}
+
+function parseOutputItem(item: unknown): OutputPayloadFields | null {
+    if (!item || typeof item !== 'object') {
+        api.showError('Invalid output format in clipboard.');
+        return null;
+    }
+    const { name, videoEncoding, url, audioEncoding } = item as Record<string, unknown>;
+    if (typeof name !== 'string' || !name.trim()) {
+        api.showError('Each output must have a non-empty name.');
+        return null;
+    }
+    if (typeof videoEncoding !== 'string') {
+        api.showError('Each output must have a videoEncoding.');
+        return null;
+    }
+    if (typeof url !== 'string' || !url.trim()) {
+        api.showError('Each output must have a non-empty url.');
+        return null;
+    }
+    if (typeof audioEncoding !== 'string') {
+        api.showError('Each output must have an audioEncoding.');
+        return null;
+    }
+    return {
+        name: name.trim(),
+        videoEncoding,
+        url,
+        audioEncoding,
+    };
+}
+
+function parseOutputsPayload(text: string): OutputPayloadFields[] | null {
     let parsed: unknown;
     try {
         parsed = JSON.parse(text);
@@ -1218,46 +1340,75 @@ function parseOutputsPayload(text: string):
         api.showError('Expected a JSON array of outputs.');
         return null;
     }
-    const outputs: {
-        name: string;
-        videoEncoding: string;
-        url: string;
-        audioEncoding: string;
-    }[] = [];
+    const outputs: OutputPayloadFields[] = [];
     for (const item of parsed) {
-        if (!item || typeof item !== 'object') {
-            api.showError('Invalid output format in clipboard.');
-            return null;
-        }
-        const { name, videoEncoding, url, audioEncoding } = item as Record<string, unknown>;
-        if (typeof name !== 'string' || !name.trim()) {
-            api.showError('Each output must have a non-empty name.');
-            return null;
-        }
-        if (typeof videoEncoding !== 'string') {
-            api.showError('Each output must have a videoEncoding.');
-            return null;
-        }
-        if (typeof url !== 'string' || !url.trim()) {
-            api.showError('Each output must have a non-empty url.');
-            return null;
-        }
-        if (typeof audioEncoding !== 'string') {
-            api.showError('Each output must have an audioEncoding.');
-            return null;
-        }
-        outputs.push({
-            name: name.trim(),
-            videoEncoding,
-            url,
-            audioEncoding,
-        });
+        const parsedItem = parseOutputItem(item);
+        if (!parsedItem) return null;
+        outputs.push(parsedItem);
     }
     if (outputs.length === 0) {
         api.showError('No outputs found in clipboard.');
         return null;
     }
     return outputs;
+}
+
+function parseSingleOutputPayload(text: string): OutputPayloadFields | null {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(text);
+    } catch {
+        api.showError('Clipboard content is not valid JSON.');
+        return null;
+    }
+    if (Array.isArray(parsed)) {
+        api.showError('Expected a single output object, not a list.');
+        return null;
+    }
+    return parseOutputItem(parsed);
+}
+
+export async function copyOutput(): Promise<void> {
+    const pipelineId = (
+        document.getElementById('out-pipe-id-input') as HTMLInputElement
+    ).value.trim();
+    const outId = (document.getElementById('out-id-input') as HTMLInputElement).value.trim();
+    const output = state.config.outputs?.find(
+        (o) => o.id === outId && String(o.pipelineId) === pipelineId,
+    );
+    if (!output) {
+        api.showError('Save the output before copying it.');
+        return;
+    }
+    const { name, videoEncoding, url, audioEncoding } = output;
+    await copyText(JSON.stringify({ name, videoEncoding, url, audioEncoding }, null, 2));
+}
+
+export async function pasteOutputIntoForm(): Promise<void> {
+    const pipelineId = (
+        document.getElementById('out-pipe-id-input') as HTMLInputElement
+    ).value.trim();
+
+    let text: string;
+    try {
+        text = await navigator.clipboard.readText();
+    } catch {
+        api.showError('Could not read clipboard. Please allow clipboard access.');
+        return;
+    }
+
+    const payload = parseSingleOutputPayload(text);
+    if (!payload) return;
+
+    const nameEl = document.getElementById('out-name-input') as HTMLInputElement;
+    nameEl.value = payload.name;
+    nameEl.classList.remove('input-error');
+    (document.getElementById('out-video-encoding-input') as HTMLSelectElement).innerHTML =
+        outVideoEncodingOptions(payload.videoEncoding);
+    populateDestination(pipelineTracks(pipelineId), {
+        url: payload.url,
+        audioEncoding: payload.audioEncoding,
+    });
 }
 
 export async function startAllOutputs(pipelineId: string, btn: HTMLButtonElement): Promise<void> {

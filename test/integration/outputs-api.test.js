@@ -122,14 +122,22 @@ function makeFakeOutputService() {
     };
 }
 
+function makeFakeHealthService() {
+    return {
+        clearOutputErrorInSnapshot() {},
+    };
+}
+
 function createHarness() {
     const app = express();
     const db = createDb(':memory:');
     const outputService = makeFakeOutputService();
-    registerOutputApi(app, db, outputService);
+    const healthService = makeFakeHealthService();
+    registerOutputApi(app, db, outputService, healthService);
     return {
         db,
         outputService,
+        healthService,
         request: (method, route, body) => dispatch(app, method, route, body),
     };
 }
@@ -457,6 +465,35 @@ describe('Outputs API integration', () => {
 
             const res = await harness.request(
                 'GET',
+                `/api/pipelines/${p2.id}/outputs/${o.id}/errors`,
+            );
+            assert.equal(res.status, 404);
+        });
+    });
+
+    describe('DELETE /api/pipelines/:pipelineId/outputs/:outId/errors', () => {
+        test('clears the error history', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+            const o = harness.db.createOutput({ pipelineId: p.id, name: 'X', url: 'rtmp://x' });
+            harness.db.setOutputLastError(o.id, 'boom', 'crash');
+
+            const res = await harness.request(
+                'DELETE',
+                `/api/pipelines/${p.id}/outputs/${o.id}/errors`,
+            );
+            assert.equal(res.status, 200);
+            assert.deepEqual(harness.db.getOutputErrorHistory(o.id), []);
+        });
+
+        test('404s for a mismatched pipeline/output pair', async () => {
+            const harness = createHarness();
+            const p1 = harness.db.createPipeline();
+            const p2 = harness.db.createPipeline();
+            const o = harness.db.createOutput({ pipelineId: p1.id, name: 'X', url: 'rtmp://x' });
+
+            const res = await harness.request(
+                'DELETE',
                 `/api/pipelines/${p2.id}/outputs/${o.id}/errors`,
             );
             assert.equal(res.status, 404);

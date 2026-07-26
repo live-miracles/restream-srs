@@ -37,13 +37,20 @@ function encodeAudioArgs(isSrtOrigin: boolean): string[] {
 }
 
 // Explicit map for FLV: ffmpeg's default picks the highest-channel stream, which
-// can be an unwanted program mix. 'copy'/'aac' both mean "default track" (0);
-// only an explicit numeric selection picks a specific one.
+// can be an unwanted program mix. 'copy'/'aac' both mean "default track" (0) and
+// stay optional ('?') since a source with no audio at all is a legitimate,
+// non-error case. An explicit numeric selection is a deliberate pick of a
+// specific track, so it's mapped without '?': if the input doesn't actually
+// have that track (e.g. picked before the input connected, or it just has
+// fewer tracks than expected), ffmpeg fails fast instead of silently shipping
+// a muted output — same as the SRT/mpegts path in buildAudioMapArgs below.
 function buildSinkMapArgs(audioTrack: string, isSrt: boolean): string[] {
     if (isSrt) return buildAudioMapArgs(audioTrack);
-    const idx =
-        audioTrack === 'copy' || audioTrack === 'aac' ? '0' : audioTrack.split(',')[0].trim();
-    return ['-map', '0:v:0?', '-map', `0:a:${idx}?`];
+    if (audioTrack === 'copy' || audioTrack === 'aac') {
+        return ['-map', '0:v:0?', '-map', '0:a:0?'];
+    }
+    const idx = audioTrack.split(',')[0].trim();
+    return ['-map', '0:v:0?', '-map', `0:a:${idx}`];
 }
 
 function buildAudioMapArgs(audioTrack: string): string[] {
