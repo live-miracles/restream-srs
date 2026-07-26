@@ -34,9 +34,9 @@ SRS_SHA256="1eb20245a76643b2d32a1be85e71015079689a0733a10f79964f9a8189c21609"
 SRS_URL="https://github.com/ossrs/srs/releases/download/${SRS_RELEASE_TAG}/${SRS_FILENAME}"
 
 # Pinned srt-bonding-relay binary — published from the standalone relay repo.
-SRT_RELEASE_TAG="${SRT_RELEASE_TAG:-v3.0.0}"
+SRT_RELEASE_TAG="${SRT_RELEASE_TAG:-v3.0.1}"
 SRT_FILENAME="srt-bonding-relay-linux-x86_64.tar.gz"
-SRT_SHA256="${SRT_SHA256:-b8f50790f42df23b551b13981112def536c6e637d2a4673ba8696eae3187d935}"
+SRT_SHA256="${SRT_SHA256:-d8746ee11778b46679a873ac90da8e30a18c80da4ca7c181274eb30e25aa6ec7}"
 SRT_URL="${SRT_URL:-https://github.com/live-miracles/srt-bonding-relay/releases/download/${SRT_RELEASE_TAG}/${SRT_FILENAME}}"
 
 # Mirrored into our own releases since BtbN prunes autobuild tags after ~2 years.

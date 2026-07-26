@@ -186,10 +186,10 @@ describe('buildFfmpegArgs', () => {
         assert.ok(!srt.includes('-map'));
     });
 
-    test('selecting a track on an FLV destination maps video + that audio stream', () => {
+    test('selecting a track on an FLV destination maps video + that audio stream, failing fast if absent', () => {
         const args = buildFfmpegArgs('rtmp://in', 'rtmp://out', '1');
         const maps = args.filter((a, i) => args[i - 1] === '-map');
-        assert.deepEqual(maps, ['0:v:0?', '0:a:1?']);
+        assert.deepEqual(maps, ['0:v:0?', '0:a:1']);
     });
 
     test('SRT destination URL parameters are passed through unchanged', () => {

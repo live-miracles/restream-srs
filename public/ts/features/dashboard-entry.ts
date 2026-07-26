@@ -19,6 +19,8 @@ import {
     openAddOutput,
     submitOutputForm,
     onOutServerChange,
+    copyOutput,
+    pasteOutputIntoForm,
     copyOutputs,
     pasteOutputs,
     startAllOutputs,
@@ -51,6 +53,8 @@ declare global {
         outputsStopAllBtn: () => Promise<void>;
         outFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
         outServerChange: (select: HTMLSelectElement) => void;
+        outCopyBtn: () => Promise<void>;
+        outPasteBtn: () => Promise<void>;
         copyText: (text: string) => Promise<void>;
         previewToggleBtn: () => Promise<void>;
         previewTrackChange: () => void;
@@ -160,6 +164,8 @@ window.outputsStopAllBtn = async () => {
 
 window.outFormBtn = (btn) => submitOutputForm(btn);
 window.outServerChange = (select) => onOutServerChange(select);
+window.outCopyBtn = () => copyOutput();
+window.outPasteBtn = () => pasteOutputIntoForm();
 
 window.copyText = copyText;
 

@@ -2,6 +2,7 @@ import type { Express } from 'express';
 import { validateOutputUrl, validateAudioEncoding, ENCODINGS } from '../utils/ffmpeg.js';
 import type { Db } from '../types.js';
 import type { OutputService } from '../services/outputs.js';
+import type { HealthService } from '../services/health.js';
 import { cyan } from '../utils/ansiColor.js';
 
 // Validate an output's destination from the request body. It needs a valid URL
@@ -25,7 +26,12 @@ function parseDestination(
     return { url, audioEncoding };
 }
 
-export function registerOutputApi(app: Express, db: Db, outputService: OutputService): void {
+export function registerOutputApi(
+    app: Express,
+    db: Db,
+    outputService: OutputService,
+    healthService: HealthService,
+): void {
     app.post('/api/pipelines/:pipelineId/outputs', (req, res) => {
         const pipelineId = parseInt(req.params.pipelineId);
         if (isNaN(pipelineId)) return res.status(400).json({ error: 'invalid pipelineId' });
@@ -206,6 +212,18 @@ export function registerOutputApi(app: Express, db: Db, outputService: OutputSer
         }
 
         return res.json(db.getOutputErrorHistory(outId));
+    });
+
+    app.delete('/api/pipelines/:pipelineId/outputs/:outId/errors', (req, res) => {
+        const { pipelineId, outId } = req.params;
+        const output = db.getOutput(outId);
+        if (!output || output.pipelineId !== parseInt(pipelineId)) {
+            return res.status(404).json({ error: 'Output not found' });
+        }
+
+        db.clearOutputLastError(outId);
+        healthService.clearOutputErrorInSnapshot(pipelineId, outId);
+        return res.json({ ok: true });
     });
 
     app.post('/api/pipelines/:pipelineId/outputs/:outId/start', async (req, res) => {
