@@ -397,6 +397,10 @@ function detectServer(url: string): { idx: number; key: string } {
     return { idx: url.startsWith('srt://') ? CUSTOM_SRT_IDX : CUSTOM_RTMP_IDX, key: url };
 }
 
+function isDestinationUrl(text: string): boolean {
+    return /^(rtmps?|srt):\/\//i.test(text);
+}
+
 // Drops the trailing path segment (the stream key) from a custom RTMP URL,
 // keeping only the server/app portion so it can be prefilled without leaking
 // the previous output's key. Leaves the URL untouched if it has no path
@@ -561,7 +565,7 @@ function sinkKeyFieldHtml(idx: number, key: string): string {
         'flex-1',
         `<input type="text" id="out-sink-key-input" name="sinkKey" class="input input-sm w-full font-mono text-xs js-sink-key"
                placeholder="${s.placeholder}" value="${escapeHtml(key)}"
-               oninput="this.classList.remove('input-error')" />`,
+               oninput="this.classList.remove('input-error')" onpaste="onSinkKeyPaste(event)" />`,
     );
 }
 
@@ -674,6 +678,22 @@ export function onOutServerChange(select: HTMLSelectElement): void {
     const idx = parseInt(select.value);
     const container = document.getElementById('out-sinks-container');
     if (container) container.innerHTML = sinkRowHtmlForServer(idx, '');
+}
+
+// If a full RTMP/RTMPS/SRT URL is pasted into the key field, split it into
+// server preset + key (e.g. a full YouTube RTMP URL switches the preset to
+// "YT RTMP" and leaves just the stream key behind) instead of dumping the
+// whole URL into the field. Falls back to the default paste behavior when
+// the URL doesn't resolve to anything more specific than Custom RTMP, since
+// that preset's field is meant to hold the full URL anyway.
+export function onSinkKeyPaste(event: ClipboardEvent): void {
+    const text = event.clipboardData?.getData('text').trim();
+    if (!text || !isDestinationUrl(text)) return;
+    const { idx, key } = detectServer(text);
+    if (idx === CUSTOM_RTMP_IDX && key === text) return;
+    event.preventDefault();
+    const container = document.getElementById('out-sinks-container');
+    if (container) container.innerHTML = sinkRowHtmlForServer(idx, key);
 }
 
 function pipelineTracks(pipelineId: string): AudioTrackInfo[] {
@@ -1394,6 +1414,15 @@ export async function pasteOutputIntoForm(): Promise<void> {
         text = await navigator.clipboard.readText();
     } catch {
         api.showError('Could not read clipboard. Please allow clipboard access.');
+        return;
+    }
+
+    const trimmed = text.trim();
+    if (isDestinationUrl(trimmed)) {
+        const audioEncoding =
+            (document.getElementById('out-audio-encoding-input') as HTMLSelectElement | null)
+                ?.value ?? 'copy';
+        populateDestination(pipelineTracks(pipelineId), { url: trimmed, audioEncoding });
         return;
     }
 
