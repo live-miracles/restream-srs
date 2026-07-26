@@ -588,22 +588,19 @@ function outVideoEncodingOptions(selected: string): string {
 // the input ever having been probed.
 let currentSinkTracks: AudioTrackInfo[] = [];
 
-// Build the audio-track <option>s for one sink. "copy" is a literal stream copy;
-// "aac" force-transcodes the default track (the only reason to pick it is to fix
-// SRT-origin timestamp jitter — see encodeAudioArgs in ffmpeg.ts). "Track N" is
-// offered for every pipeline up to MAX_AUDIO_TRACKS regardless of origin
-// protocol or probe state, since outputs are frequently configured before the
-// input has connected; entries are enriched with real track metadata for
-// indices we do have probe data for. Always preserves the currently selected
-// value even when it falls outside that range (e.g. a stale multi-track list),
-// so editing a saved output doesn't silently reset its track to copy.
+// Build the audio-track <option>s for one sink. "copy" is a literal stream copy.
+// "Track N" force-transcodes that track (also the fix for SRT-origin timestamp
+// jitter — see encodeAudioArgs in ffmpeg.ts) and is offered for every pipeline
+// up to MAX_AUDIO_TRACKS regardless of origin protocol or probe state, since
+// outputs are frequently configured before the input has connected; entries
+// are enriched with real track metadata for indices we do have probe data
+// for. Always preserves the currently selected value even when it falls
+// outside that range (e.g. a stale multi-track list), so editing a saved
+// output doesn't silently reset its track to copy.
 function audioOptionsHtml(tracks: AudioTrackInfo[], selected: string): string {
     const byIndex = new Map(tracks.map((t) => [t.index, t] as const));
-    const options = [
-        `<option value="copy"${selected === 'copy' ? ' selected' : ''}>copy</option>`,
-        `<option value="aac"${selected === 'aac' ? ' selected' : ''}>aac</option>`,
-    ];
-    let matched = selected === 'copy' || selected === 'aac';
+    const options = [`<option value="copy"${selected === 'copy' ? ' selected' : ''}>copy</option>`];
+    let matched = selected === 'copy';
     for (let i = 0; i < MAX_AUDIO_TRACKS; i++) {
         const val = String(i);
         if (val === selected) matched = true;
