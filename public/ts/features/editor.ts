@@ -1373,8 +1373,9 @@ function parseOutputsPayload(text: string): OutputPayloadFields[] | null {
 // Unlike parseOutputItem (used for the bulk paste-all-outputs flow, where
 // every output being created needs an explicit name/encoding), a single
 // output pasted into the open form can omit name/videoEncoding/audioEncoding
-// and fall back to whatever the form already has prefilled — only the
-// destination url is meaningless to default.
+// and leave those fields untouched — only the destination url is meaningless
+// to default. A bare RTMP/RTMPS/SRT URL on the clipboard is shorthand for
+// {"url": "..."}.
 interface OutputPastePayload {
     name?: string;
     videoEncoding?: string;
@@ -1383,12 +1384,17 @@ interface OutputPastePayload {
 }
 
 function parseSingleOutputPayload(text: string): OutputPastePayload | null {
+    const trimmed = text.trim();
     let parsed: unknown;
-    try {
-        parsed = JSON.parse(text);
-    } catch {
-        api.showError('Clipboard content is not valid JSON.');
-        return null;
+    if (isDestinationUrl(trimmed)) {
+        parsed = { url: trimmed };
+    } else {
+        try {
+            parsed = JSON.parse(text);
+        } catch {
+            api.showError('Clipboard content is not valid JSON.');
+            return null;
+        }
     }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
         api.showError('Expected a single output object, not a list.');
@@ -1438,15 +1444,6 @@ export async function pasteOutputIntoForm(): Promise<void> {
         return;
     }
 
-    const trimmed = text.trim();
-    if (isDestinationUrl(trimmed)) {
-        const audioEncoding =
-            (document.getElementById('out-audio-encoding-input') as HTMLSelectElement | null)
-                ?.value ?? 'copy';
-        populateDestination(pipelineTracks(pipelineId), { url: trimmed, audioEncoding });
-        return;
-    }
-
     const payload = parseSingleOutputPayload(text);
     if (!payload) return;
 
@@ -1455,12 +1452,10 @@ export async function pasteOutputIntoForm(): Promise<void> {
         nameEl.value = payload.name;
         nameEl.classList.remove('input-error');
     }
-    const videoEncodingEl = document.getElementById(
-        'out-video-encoding-input',
-    ) as HTMLSelectElement;
-    videoEncodingEl.innerHTML = outVideoEncodingOptions(
-        payload.videoEncoding ?? videoEncodingEl.value,
-    );
+    if (payload.videoEncoding) {
+        (document.getElementById('out-video-encoding-input') as HTMLSelectElement).innerHTML =
+            outVideoEncodingOptions(payload.videoEncoding);
+    }
     const audioEncoding =
         payload.audioEncoding ??
         (document.getElementById('out-audio-encoding-input') as HTMLSelectElement | null)?.value ??
