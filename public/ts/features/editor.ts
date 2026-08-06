@@ -417,13 +417,14 @@ function stripRtmpStreamKey(url: string): string {
 // Removes the streamid param from a custom SRT URL while preserving every
 // other setting (host, port, mode, latency, passphrase, keylen).
 function stripSrtStreamId(url: string): string {
-    try {
-        const u = new URL(url);
-        u.searchParams.delete('streamid');
-        return u.toString();
-    } catch {
-        return url;
-    }
+    const queryIdx = url.indexOf('?');
+    if (queryIdx === -1) return url;
+    const base = url.slice(0, queryIdx);
+    const params = url
+        .slice(queryIdx + 1)
+        .split('&')
+        .filter((part) => part.split('=', 1)[0] !== 'streamid');
+    return params.length > 0 ? `${base}?${params.join('&')}` : base;
 }
 
 type SrtFormSettings = {
@@ -440,45 +441,65 @@ const DEFAULT_SRT_SETTINGS: SrtFormSettings = {
     mode: 'caller',
     host: '',
     port: null,
-    latencyMs: 240,
+    latencyMs: null,
     passphrase: '',
     pbKeyLen: null,
     streamId: '',
 };
 
+function decodeSrtParam(value: string): string {
+    try {
+        return decodeURIComponent(value.replace(/\+/g, '%20'));
+    } catch {
+        return value;
+    }
+}
+
+function parseSrtParams(query: string): Map<string, string> {
+    const params = new Map<string, string>();
+    for (const part of query.split('&')) {
+        if (!part) continue;
+        const eqIdx = part.indexOf('=');
+        const rawKey = eqIdx === -1 ? part : part.slice(0, eqIdx);
+        const rawValue = eqIdx === -1 ? '' : part.slice(eqIdx + 1);
+        params.set(decodeSrtParam(rawKey), decodeSrtParam(rawValue));
+    }
+    return params;
+}
+
 function parseSrtUrl(url: string): SrtFormSettings {
     if (!url.startsWith('srt://')) return { ...DEFAULT_SRT_SETTINGS };
     try {
-        const parsed = new URL(url);
-        const latency = Number(parsed.searchParams.get('latency') ?? '');
+        const queryIdx = url.indexOf('?');
+        const parsed = new URL(queryIdx === -1 ? url : url.slice(0, queryIdx));
+        const params =
+            queryIdx === -1 ? new Map<string, string>() : parseSrtParams(url.slice(queryIdx + 1));
+        const latency = Number(params.get('latency') ?? '');
         const port = Number(parsed.port || '');
-        const pbKeyLen = Number(parsed.searchParams.get('pbkeylen') ?? '');
+        const pbKeyLen = Number(params.get('pbkeylen') ?? '');
         return {
-            mode: parsed.searchParams.get('mode') === 'listener' ? 'listener' : 'caller',
+            mode: params.get('mode') === 'listener' ? 'listener' : 'caller',
             host: parsed.hostname,
             port: Number.isInteger(port) && port > 0 ? port : null,
             latencyMs: Number.isInteger(latency) && latency > 0 ? Math.round(latency / 1000) : null,
-            passphrase: parsed.searchParams.get('passphrase') ?? '',
+            passphrase: params.get('passphrase') ?? '',
             pbKeyLen: pbKeyLen === 16 || pbKeyLen === 24 || pbKeyLen === 32 ? pbKeyLen : null,
-            streamId: parsed.searchParams.get('streamid') ?? '',
+            streamId: params.get('streamid') ?? '',
         };
     } catch {
         return { ...DEFAULT_SRT_SETTINGS };
     }
 }
 
-function buildSrtUrl(
-    settings: Omit<SrtFormSettings, 'port' | 'latencyMs'> & { port: number; latencyMs: number },
-): string {
-    const params = new URLSearchParams();
-    params.set('mode', settings.mode);
-    params.set('latency', String(settings.latencyMs * 1000));
+function buildSrtUrl(settings: Omit<SrtFormSettings, 'port'> & { port: number }): string {
+    const params = [`mode=${settings.mode}`];
+    if (settings.latencyMs !== null) params.push(`latency=${settings.latencyMs * 1000}`);
     if (settings.passphrase) {
-        params.set('passphrase', settings.passphrase);
-        params.set('pbkeylen', String(settings.pbKeyLen ?? 32));
+        params.push(`passphrase=${encodeURIComponent(settings.passphrase)}`);
+        params.push(`pbkeylen=${settings.pbKeyLen ?? 32}`);
     }
-    if (settings.streamId) params.set('streamid', settings.streamId);
-    return `srt://${settings.host}:${settings.port}?${params.toString()}`;
+    if (settings.streamId) params.push(`streamid=${settings.streamId}`);
+    return `srt://${settings.host}:${settings.port}?${params.join('&')}`;
 }
 
 function restreamPipelineOpts(selectedId: string): string {
@@ -785,13 +806,14 @@ function readSrtSettings(row: Element): { url: string } | { error: true } {
 
     const host = hostEl.value.trim();
     const port = Number(portEl.value.trim());
-    const latencyMs = Number(latencyEl.value.trim());
+    const latencyRaw = latencyEl.value.trim();
+    const latencyMs = latencyRaw ? Number(latencyRaw) : null;
     const passphrase = passphraseEl.value.trim();
     const pbKeyLen = keyLenEl.value ? (Number(keyLenEl.value) as 16 | 24 | 32) : null;
     const streamId = streamIdEl.value.trim();
 
     const portValid = Number.isInteger(port) && port >= 1 && port <= 65535;
-    const latencyValid = Number.isInteger(latencyMs) && latencyMs > 0;
+    const latencyValid = latencyMs === null || (Number.isInteger(latencyMs) && latencyMs > 0);
     const passphraseValid = !passphrase || (passphrase.length >= 10 && passphrase.length <= 79);
     const keyLenValid = !passphrase || pbKeyLen !== null;
 
