@@ -2316,12 +2316,12 @@ function restreamSinkLabel(url: string): string | null {
     return null;
 }
 
-// Config-shape lint, independent of live health: flags audio-encoding /
-// protocol-conversion choices that are technically accepted but wrong for the
-// input's protocol — see encodeAudioArgs/buildSinkMapArgs in ffmpeg.ts for why
-// each of these matters. Gated on input.connected because an unconnected
-// input's isSrt defaults to false (protocol not yet observed), which would
-// otherwise misreport every not-yet-live SRT pipeline as RTMP.
+// Config-shape lint, independent of live health: flags audio-encoding choices
+// that are technically accepted but wrong for the input's protocol — see
+// encodeAudioArgs/buildSinkMapArgs in ffmpeg.ts for why each of these matters.
+// Gated on input.connected because an unconnected input's isSrt defaults to
+// false (protocol not yet observed), which would otherwise misreport every
+// not-yet-live SRT pipeline as RTMP.
 function outputEncodingWarnings(o: OutputView, input: InputHealth): string[] {
     if (!o.url || !input.connected) return [];
     const warnings: string[] = [];
@@ -2340,17 +2340,6 @@ function outputEncodingWarnings(o: OutputView, input: InputHealth): string[] {
     if (input.isSrt && !outIsSrt && o.audioEncoding === 'copy') {
         warnings.push(
             'SRT-to-RTMP output should not use copy audio — it can cause audio jitter; select a track instead.',
-        );
-    }
-
-    // Cross-protocol conversion is only exercised for local Restream loops;
-    // pushing a protocol-converted stream straight to an external destination
-    // is unsupported/untested for anything else (YouTube, Facebook, Custom, …).
-    if (input.isSrt !== outIsSrt && !restreamSinkLabel(o.url)) {
-        const inLabel = input.isSrt ? 'SRT' : 'RTMP';
-        const outLabel = outIsSrt ? 'SRT' : 'RTMP';
-        warnings.push(
-            `${inLabel}→${outLabel} conversion is only supported for local Restream loops, not external destinations.`,
         );
     }
 
