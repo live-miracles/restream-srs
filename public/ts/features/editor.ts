@@ -12,6 +12,7 @@ import {
 } from '../core/utils.js';
 import { refreshAfterMutation } from './dashboard.js';
 import type { StreamKey, AudioTrackInfo, HostProbeTarget, ServerLogTail } from '../types.js';
+import { buildSrtOutputUrl, isSrtHostRequired, type SrtOutputSettings } from '../core/srt.js';
 
 const MAX_HOST_PROBE_TARGETS = 10;
 
@@ -427,15 +428,7 @@ function stripSrtStreamId(url: string): string {
     return params.length > 0 ? `${base}?${params.join('&')}` : base;
 }
 
-type SrtFormSettings = {
-    mode: 'caller' | 'listener';
-    host: string;
-    port: number | null;
-    latencyMs: number | null;
-    passphrase: string;
-    pbKeyLen: 16 | 24 | 32 | null;
-    streamId: string;
-};
+type SrtFormSettings = Omit<SrtOutputSettings, 'port'> & { port: number | null };
 
 const DEFAULT_SRT_SETTINGS: SrtFormSettings = {
     mode: 'caller',
@@ -491,15 +484,12 @@ function parseSrtUrl(url: string): SrtFormSettings {
     }
 }
 
-function buildSrtUrl(settings: Omit<SrtFormSettings, 'port'> & { port: number }): string {
-    const params = [`mode=${settings.mode}`];
-    if (settings.latencyMs !== null) params.push(`latency=${settings.latencyMs * 1000}`);
-    if (settings.passphrase) {
-        params.push(`passphrase=${encodeURIComponent(settings.passphrase)}`);
-        params.push(`pbkeylen=${settings.pbKeyLen ?? 32}`);
-    }
-    if (settings.streamId) params.push(`streamid=${settings.streamId}`);
-    return `srt://${settings.host}:${settings.port}?${params.join('&')}`;
+export function syncSrtHostVisibility(): void {
+    const modeEl = document.querySelector('.js-srt-mode') as HTMLSelectElement | null;
+    const hostEl = document.querySelector('.js-srt-host') as HTMLInputElement | null;
+    const hostFieldset = hostEl?.closest('fieldset');
+    if (!modeEl || !hostFieldset) return;
+    hostFieldset.classList.toggle('hidden', modeEl.value === 'listener');
 }
 
 function restreamPipelineOpts(selectedId: string): string {
@@ -536,6 +526,14 @@ function sinkKeyFieldHtml(idx: number, key: string): string {
         const srt = parseSrtUrl(key);
         return [
             fieldsetHtml(
+                'Type',
+                '',
+                `<select id="out-srt-mode-input" name="srtMode" class="select select-sm w-28 js-srt-mode" onchange="srtModeChange()">
+                    <option value="caller"${srt.mode === 'caller' ? ' selected' : ''}>Caller</option>
+                    <option value="listener"${srt.mode === 'listener' ? ' selected' : ''}>Listener</option>
+                </select>`,
+            ),
+            fieldsetHtml(
                 'Hostname',
                 '',
                 `<input type="text" id="out-srt-host-input" name="srtHost" class="input input-sm w-40 font-mono text-xs js-srt-host" placeholder="xxx.xxx.xxx.xxx" value="${escapeHtml(srt.host)}" oninput="this.classList.remove('input-error')" />`,
@@ -544,14 +542,6 @@ function sinkKeyFieldHtml(idx: number, key: string): string {
                 'Port',
                 '',
                 `<input type="number" min="1" max="65535" id="out-srt-port-input" name="srtPort" class="input input-sm w-20 font-mono text-xs js-srt-port" placeholder="10000" value="${srt.port ?? ''}" oninput="this.classList.remove('input-error')" />`,
-            ),
-            fieldsetHtml(
-                'Type',
-                '',
-                `<select id="out-srt-mode-input" name="srtMode" class="select select-sm w-28 js-srt-mode">
-                    <option value="caller"${srt.mode === 'caller' ? ' selected' : ''}>Caller</option>
-                    <option value="listener"${srt.mode === 'listener' ? ' selected' : ''}>Listener</option>
-                </select>`,
             ),
             fieldsetHtml(
                 'Latency (ms)',
@@ -668,6 +658,7 @@ function populateDestinationDetected(
     currentSinkTracks = tracks;
     const container = document.getElementById('out-sinks-container');
     if (container) container.innerHTML = sinkRowHtmlForServer(idx, key);
+    syncSrtHostVisibility();
     refreshSinkAudioMode(audioEncoding);
 }
 
@@ -696,6 +687,7 @@ export function onOutServerChange(select: HTMLSelectElement): void {
     const idx = parseInt(select.value);
     const container = document.getElementById('out-sinks-container');
     if (container) container.innerHTML = sinkRowHtmlForServer(idx, '');
+    syncSrtHostVisibility();
 }
 
 // If a full RTMP/RTMPS/SRT URL is pasted into the key field, split it into
@@ -712,6 +704,7 @@ export function onSinkKeyPaste(event: ClipboardEvent): void {
     event.preventDefault();
     const container = document.getElementById('out-sinks-container');
     if (container) container.innerHTML = sinkRowHtmlForServer(idx, key);
+    syncSrtHostVisibility();
 }
 
 function pipelineTracks(pipelineId: string): AudioTrackInfo[] {
@@ -804,6 +797,7 @@ function readSrtSettings(row: Element): { url: string } | { error: true } {
         return { error: true };
     }
 
+    const mode = modeEl.value === 'listener' ? 'listener' : 'caller';
     const host = hostEl.value.trim();
     const port = Number(portEl.value.trim());
     const latencyRaw = latencyEl.value.trim();
@@ -817,19 +811,25 @@ function readSrtSettings(row: Element): { url: string } | { error: true } {
     const passphraseValid = !passphrase || (passphrase.length >= 10 && passphrase.length <= 79);
     const keyLenValid = !passphrase || pbKeyLen !== null;
 
-    hostEl.classList.toggle('input-error', !host);
+    hostEl.classList.toggle('input-error', isSrtHostRequired(mode) && !host);
     portEl.classList.toggle('input-error', !portValid);
     latencyEl.classList.toggle('input-error', !latencyValid);
     passphraseEl.classList.toggle('input-error', !passphraseValid);
     keyLenEl.classList.toggle('input-error', !keyLenValid);
 
-    if (!host || !portValid || !latencyValid || !passphraseValid || !keyLenValid) {
+    if (
+        (isSrtHostRequired(mode) && !host) ||
+        !portValid ||
+        !latencyValid ||
+        !passphraseValid ||
+        !keyLenValid
+    ) {
         return { error: true };
     }
 
     return {
-        url: buildSrtUrl({
-            mode: modeEl.value === 'listener' ? 'listener' : 'caller',
+        url: buildSrtOutputUrl({
+            mode,
             host,
             port,
             latencyMs,

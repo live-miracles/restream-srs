@@ -26,6 +26,7 @@ import {
     pasteOutputs,
     startAllOutputs,
     stopAllOutputs,
+    syncSrtHostVisibility,
 } from './editor.js';
 
 declare global {
@@ -54,6 +55,7 @@ declare global {
         outputsStopAllBtn: () => Promise<void>;
         outFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
         outServerChange: (select: HTMLSelectElement) => void;
+        srtModeChange: () => void;
         onSinkKeyPaste: (event: ClipboardEvent) => void;
         outCopyBtn: () => Promise<void>;
         outPasteBtn: () => Promise<void>;
@@ -166,6 +168,7 @@ window.outputsStopAllBtn = async () => {
 
 window.outFormBtn = (btn) => submitOutputForm(btn);
 window.outServerChange = (select) => onOutServerChange(select);
+window.srtModeChange = () => syncSrtHostVisibility();
 window.onSinkKeyPaste = (event) => onSinkKeyPaste(event);
 window.outCopyBtn = () => copyOutput();
 window.outPasteBtn = () => pasteOutputIntoForm();
