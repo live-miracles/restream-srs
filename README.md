@@ -1,4 +1,4 @@
-# restream-srs
+# Restream SRS
 
 Minimal streaming server — takes RTMP/SRT inputs and restreams them to multiple RTMP/SRT outputs. Built on official [SRS](https://github.com/ossrs/srs) for ingest, `srt-bonding-relay` for bonded SRT ingress, and FFmpeg for outputs. Node.js + TypeScript backend.
 
