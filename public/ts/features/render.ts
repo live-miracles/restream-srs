@@ -190,34 +190,130 @@ function hasCurrentOutputError(o: OutputView): boolean {
     return o.lastErrorAt >= o.startedAtMs;
 }
 
-function outStatus(o: OutputView, input: InputHealth): OutStatus {
-    if (o.desiredState === 'stopped') return 'off';
-    if (o.status === 'failed') return 'error';
-    if (o.status === 'running') {
-        if (!input.live) return 'warn';
-        if (o.warningReason !== null) return 'warn';
-        if (o.bitrateKbps !== null && o.bitrateKbps >= LOW_BITRATE_KBPS) return 'good';
-        if (o.bitrateKbps === null && hasCurrentOutputError(o)) return 'error';
-        return 'warn';
+// SRS reports a zero receive bitrate until its rolling bitrate statistics are
+// populated. Do not turn that startup placeholder into a low-bitrate warning.
+const INPUT_BITRATE_STATS_WARMUP_MS = 30_000;
+
+function inputBitrateStatsReady(input: InputHealth): boolean {
+    return input.uptimeMs !== null && input.uptimeMs >= INPUT_BITRATE_STATS_WARMUP_MS;
+}
+
+function displayInputBitrateKbps(input: InputHealth): number | null {
+    if (input.live && input.recvBitrateKbps === 0 && !inputBitrateStatsReady(input)) {
+        return null;
     }
+    return input.recvBitrateKbps;
+}
+
+interface OutputHealth {
+    status: OutStatus;
+    issues: OverviewIssue[];
+}
+
+function outputHealth(o: OutputView, input: InputHealth): OutputHealth {
+    if (o.desiredState === 'stopped') return { status: 'off', issues: [] };
+
+    const withFailures = (message: string): string =>
+        o.failures > 0
+            ? `${o.failures} error${o.failures === 1 ? '' : 's'} since last start. ${message}`
+            : message;
+
+    if (o.status === 'failed') {
+        return {
+            status: 'error',
+            issues: [
+                {
+                    severity: 'error',
+                    message: withFailures(
+                        summarizeOutputError(o.lastError, 'Output process failed.'),
+                    ),
+                },
+            ],
+        };
+    }
+
+    if (o.status === 'running') {
+        if (!input.live) {
+            return {
+                status: 'warn',
+                issues: [
+                    { severity: 'warning', message: 'Output is running but input is not live.' },
+                ],
+            };
+        }
+        if (o.warningReason !== null) {
+            return { status: 'warn', issues: [{ severity: 'warning', message: o.warningReason }] };
+        }
+        if (o.bitrateKbps !== null && o.bitrateKbps >= LOW_BITRATE_KBPS) {
+            return { status: 'good', issues: [] };
+        }
+        if (o.bitrateKbps === null && hasCurrentOutputError(o)) {
+            return {
+                status: 'error',
+                issues: [
+                    {
+                        severity: 'error',
+                        message: withFailures(
+                            summarizeOutputError(
+                                o.lastError,
+                                'Output has no bitrate after an error.',
+                            ),
+                        ),
+                    },
+                ],
+            };
+        }
+        if (o.bitrateKbps === null) {
+            return {
+                status: 'warn',
+                issues: [
+                    {
+                        severity: 'warning',
+                        message: 'Output is running but no bitrate is reported yet.',
+                    },
+                ],
+            };
+        }
+        return {
+            status: 'warn',
+            issues: [
+                {
+                    severity: 'warning',
+                    message: `Output bitrate is below ${LOW_BITRATE_KBPS} kb/s.`,
+                },
+            ],
+        };
+    }
+
     // status === 'stopped' but desiredState === 'running': between retries
-    return hasCurrentOutputError(o) ? 'error' : 'warn';
+    if (hasCurrentOutputError(o)) {
+        return {
+            status: 'error',
+            issues: [
+                {
+                    severity: 'error',
+                    message: withFailures(
+                        summarizeOutputError(o.lastError, 'Output failed and is waiting to retry.'),
+                    ),
+                },
+            ],
+        };
+    }
+    return {
+        status: 'warn',
+        issues: [{ severity: 'warning', message: 'Output is waiting to start or retry.' }],
+    };
+}
+
+function outStatus(o: OutputView, input: InputHealth): OutStatus {
+    return outputHealth(o, input).status;
 }
 
 function inputStatus(input: InputHealth): InputStatus {
-    if (input.connected && input.mediaOk === false) return 'error';
-    if (input.live) {
-        if (inputMissingAudio(input)) return 'warn';
-        if (input.recvBitrateKbps !== null && input.recvBitrateKbps < LOW_BITRATE_KBPS)
-            return 'warn';
-        return 'good';
-    }
-    if (input.connected) return 'warn';
-    return 'off';
-}
-
-function inputMissingAudio(input: InputHealth): boolean {
-    return input.live && input.audioTracks.length === 0 && input.audio === null;
+    if (!input.connected) return 'off';
+    if (input.mediaOk === false) return 'error';
+    if (!input.live) return 'warn';
+    return inputIssues(input).length > 0 ? 'warn' : 'good';
 }
 
 function inputStatusColor(input: InputHealth): string {
@@ -260,8 +356,7 @@ function renderIssueTooltip(issues: OverviewIssue[], offMessage?: string | null)
 }
 
 function inputIssues(input: InputHealth): OverviewIssue[] {
-    const st = inputStatus(input);
-    if (st === 'error') {
+    if (input.connected && input.mediaOk === false) {
         return [
             {
                 severity: 'error',
@@ -269,28 +364,25 @@ function inputIssues(input: InputHealth): OverviewIssue[] {
             },
         ];
     }
-    if (st === 'warn') {
-        if (!input.live) {
-            return [
-                {
-                    severity: 'warning',
-                    message: inputStatusMessage(input),
-                },
-            ];
-        }
-        const issues: OverviewIssue[] = [];
-        if (input.recvBitrateKbps !== null && input.recvBitrateKbps < LOW_BITRATE_KBPS) {
-            issues.push({
-                severity: 'warning',
-                message: `Input bitrate is below ${LOW_BITRATE_KBPS} kb/s.`,
-            });
-        }
-        if (inputMissingAudio(input)) {
-            issues.push({ severity: 'warning', message: 'No audio track detected in input.' });
-        }
-        return issues;
+    if (!input.live) {
+        return input.connected ? [{ severity: 'warning', message: inputStatusMessage(input) }] : [];
     }
-    return [];
+
+    const issues: OverviewIssue[] = [];
+    if (
+        inputBitrateStatsReady(input) &&
+        input.recvBitrateKbps !== null &&
+        input.recvBitrateKbps < LOW_BITRATE_KBPS
+    ) {
+        issues.push({
+            severity: 'warning',
+            message: `Input bitrate is below ${LOW_BITRATE_KBPS} kb/s.`,
+        });
+    }
+    if (input.audioTracks.length === 0 && input.audio === null) {
+        issues.push({ severity: 'warning', message: 'No audio track detected in input.' });
+    }
+    return issues;
 }
 
 function summarizeOutputError(error: string | null | undefined, fallback: string): string {
@@ -336,62 +428,7 @@ function relayIssues(
 }
 
 function outputIssues(o: OutputView, input: InputHealth): OverviewIssue[] {
-    const st = outStatus(o, input);
-    if (st !== 'warn' && st !== 'error') return [];
-    const withFailures = (message: string): string =>
-        o.failures > 0
-            ? `${o.failures} error${o.failures === 1 ? '' : 's'} since last start. ${message}`
-            : message;
-
-    if (st === 'error') {
-        if (o.status === 'failed') {
-            return [
-                {
-                    severity: 'error',
-                    message: withFailures(
-                        summarizeOutputError(o.lastError, 'Output process failed.'),
-                    ),
-                },
-            ];
-        }
-        if (o.bitrateKbps === null && hasCurrentOutputError(o)) {
-            return [
-                {
-                    severity: 'error',
-                    message: withFailures(
-                        summarizeOutputError(o.lastError, 'Output has no bitrate after an error.'),
-                    ),
-                },
-            ];
-        }
-        if (hasCurrentOutputError(o)) {
-            return [
-                {
-                    severity: 'error',
-                    message: withFailures(
-                        summarizeOutputError(o.lastError, 'Output failed and is waiting to retry.'),
-                    ),
-                },
-            ];
-        }
-        return [{ severity: 'error', message: 'Output is in an error state.' }];
-    }
-
-    if (o.warningReason) return [{ severity: 'warning', message: o.warningReason }];
-    if (!input.live && o.status === 'running') {
-        return [{ severity: 'warning', message: 'Output is running but input is not live.' }];
-    }
-    if (o.status === 'running' && o.bitrateKbps === null) {
-        return [
-            { severity: 'warning', message: 'Output is running but no bitrate is reported yet.' },
-        ];
-    }
-    if (o.status === 'running') {
-        return [
-            { severity: 'warning', message: `Output bitrate is below ${LOW_BITRATE_KBPS} kb/s.` },
-        ];
-    }
-    return [{ severity: 'warning', message: 'Output is waiting to start or retry.' }];
+    return outputHealth(o, input).issues;
 }
 
 function selectedAudioTrack(
@@ -926,7 +963,7 @@ function renderInputStats(input: InputHealth): string {
                 ? `
         <div class="input-meta-row input-meta-row-sm my-0.5">
             ${compactStat('IP', input.publisherIp)}
-            ${compactStat('In', formatBitrate(input.recvBitrateKbps))}
+            ${compactStat('In', formatBitrate(displayInputBitrateKbps(input)))}
             ${compactStat('Codec', v.codec)}
             ${compactStat('Size', v.width && v.height ? `${v.width}×${v.height}` : null)}
             ${compactStat('FPS', v.fps != null ? v.fps : null)}
@@ -1356,7 +1393,7 @@ function renderOverview(): void {
                 <td>${overviewStatusBadge(st)}</td>
                 <td>${renderOverviewIssues(inputIssues(inp))}</td>
                 <td class="font-mono text-xs">${inp.live ? formatUptime(inp.uptimeMs) : '—'}</td>
-                <td class="font-mono text-xs">${inp.connected ? formatBitrate(inp.recvBitrateKbps) : '—'}</td>
+                <td class="font-mono text-xs">${inp.connected ? formatBitrate(displayInputBitrateKbps(inp)) : '—'}</td>
                 <td>${typeBadge(protocolLabel)}</td>
                 <td class="font-mono text-xs">${spec}</td>
             </tr>`;
