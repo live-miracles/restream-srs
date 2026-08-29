@@ -78,6 +78,28 @@ describe('validateOutputUrl', () => {
 // ── buildFfmpegArgs ───────────────────────────────────
 
 describe('buildFfmpegArgs', () => {
+    test('paces SRT-origin RTMP outputs with -readrate 1', () => {
+        const args = buildFfmpegArgs('srt://in:10080', 'rtmp://out', 'copy');
+        const readrate = args.indexOf('-readrate');
+        assert.ok(readrate >= 0 && readrate < args.indexOf('-i'));
+        assert.equal(args[readrate + 1], '1');
+    });
+
+    test('paces SRT-origin RTMPS outputs with -readrate 1', () => {
+        const args = buildFfmpegArgs('srt://in:10080', 'rtmps://out', 'copy');
+        const readrate = args.indexOf('-readrate');
+        assert.ok(readrate >= 0 && readrate < args.indexOf('-i'));
+        assert.equal(args[readrate + 1], '1');
+    });
+
+    test('does not add -readrate to RTMP-origin or SRT-destination outputs', () => {
+        const cases = [
+            buildFfmpegArgs('rtmp://in', 'rtmp://out', 'copy'),
+            buildFfmpegArgs('srt://in:10080', 'srt://out:10080', 'copy'),
+        ];
+        for (const args of cases) assert.ok(!args.includes('-readrate'));
+    });
+
     test('includes input URL after -i', () => {
         const args = buildFfmpegArgs('rtmp://in', 'rtmp://out', 'copy');
         assert.equal(args[args.indexOf('-i') + 1], 'rtmp://in');
