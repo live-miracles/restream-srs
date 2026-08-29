@@ -84,6 +84,9 @@ export function buildFfmpegArgs(
     audioEncoding: string,
     videoEncoding = 'copy',
 ): string[] {
+    const isSrtDestination = url.startsWith('srt://');
+    const isRtmpDestination = url.startsWith('rtmp://') || url.startsWith('rtmps://');
+    const isSrtOrigin = inputUrl.startsWith('srt://');
     const encArgs = (ENCODINGS[videoEncoding] ?? ENCODINGS.copy).args;
     const args: string[] = [
         // Keep stderr quiet: '-nostats' drops the ~2/s "frame=…bitrate=…" line and
@@ -115,21 +118,23 @@ export function buildFfmpegArgs(
         'crccheck+bitstream',
         '-rw_timeout',
         String(INPUT_TIMEOUT_US),
-        '-i',
-        inputUrl,
-        '-progress',
-        'pipe:1',
     ];
 
-    const isSrt = url.startsWith('srt://');
-    const isSrtOrigin = inputUrl.startsWith('srt://');
-    const mapArgs = buildSinkMapArgs(audioEncoding, isSrt);
+    // Bonded SRT recovery can deliver a short burst of already-buffered
+    // MPEG-TS packets. Pace only live SRT-to-RTMP/RTMPS outputs so YouTube
+    // does not see those packets as faster-than-real-time video. SRT outputs
+    // retain their existing behavior, and RTMP-origin outputs do not need this
+    // guard.
+    if (isSrtOrigin && isRtmpDestination) args.push('-readrate', '1');
+    args.push('-i', inputUrl, '-progress', 'pipe:1');
+
+    const mapArgs = buildSinkMapArgs(audioEncoding, isSrtDestination);
     // 'copy' always means a literal stream copy, regardless of origin/destination
     // protocol. Anything else (an explicit track index/list) forces a real
     // transcode — see encodeAudioArgs for when that adds a filter.
     const audioArgs =
         audioEncoding === 'copy' ? (['-c:a', 'copy'] as const) : encodeAudioArgs(isSrtOrigin);
-    const fmt = isSrt ? ['-f', 'mpegts'] : ['-f', 'flv'];
+    const fmt = isSrtDestination ? ['-f', 'mpegts'] : ['-f', 'flv'];
     args.push(...mapArgs, ...encArgs, ...audioArgs, ...fmt, url);
     return args;
 }
