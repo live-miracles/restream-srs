@@ -379,7 +379,10 @@ function inputIssues(input: InputHealth): OverviewIssue[] {
             message: `Input bitrate is below ${LOW_BITRATE_KBPS} kb/s.`,
         });
     }
-    if (input.audioTracks.length === 0 && input.audio === null) {
+    // Audio metadata is empty while the initial ffprobe is still running.
+    // Only report missing audio after probing has confirmed usable media;
+    // otherwise every new input briefly appears unhealthy during startup.
+    if (input.mediaOk === true && input.audioTracks.length === 0 && input.audio === null) {
         issues.push({ severity: 'warning', message: 'No audio track detected in input.' });
     }
     return issues;
