@@ -1,6 +1,6 @@
 {
     "name": "restream-srs",
-    "version": "2.3.3",
+    "version": "2.3.4",
     "description": "Minimal RTMP/SRT streaming server with dynamic output management",
     "main": "dist/index.js",
     "type": "commonjs",
