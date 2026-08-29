@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -19,3 +20,10 @@ for (const fileName of ['public/index.html', 'public/login.html']) {
 
     fs.writeFileSync(filePath, updated);
 }
+
+// npm version creates its commit immediately after this lifecycle hook. Stage
+// the generated files so that they are included in that automatic commit.
+execFileSync('git', ['add', '--', 'public/index.html', 'public/login.html'], {
+    cwd: projectDir,
+    stdio: 'inherit',
+});
