@@ -164,8 +164,8 @@ describe('Version API integration', () => {
                 if (cmd === 'git' && args.some((a) => a.includes('%h %s'))) {
                     return queueMicrotask(() => cb(null, 'abc1234 Fix things\n', ''));
                 }
-                if (cmd === 'git' && args.some((a) => a.includes('%ci'))) {
-                    return queueMicrotask(() => cb(null, '2026-07-01 12:00:00 +0000\n', ''));
+                if (cmd === 'git' && args.some((a) => a.includes('%cd'))) {
+                    return queueMicrotask(() => cb(null, '2026-07-01 12:00\n', ''));
                 }
                 if (cmd === 'ffmpeg') {
                     return queueMicrotask(() =>
@@ -181,7 +181,7 @@ describe('Version API integration', () => {
         const res = await get();
 
         assert.equal(res.status, 200);
-        assert.equal(res.body.commit, '2026-07-01 abc1234 Fix things');
+        assert.equal(res.body.commit, '2026-07-01 12:00 abc1234 Fix things');
         assert.equal(res.body.srs, '6.0.155');
         assert.equal(res.body.ffmpeg, '7.1-static');
         assert.equal(res.body.srtRelay, 'unknown');

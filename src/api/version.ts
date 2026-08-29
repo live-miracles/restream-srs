@@ -88,7 +88,8 @@ export function registerVersionApi(app: Express): void {
 
         const [commitLine, commitDate, srs, srtRelay, ffmpegOut] = await Promise.all([
             exec('git', ['log', '-1', '--format=%h %s']),
-            exec('git', ['log', '-1', '--format=%ci']),
+            // Format in the server's local timezone, matching journald/log output.
+            exec('git', ['log', '-1', '--date=format-local:%Y-%m-%d %H:%M', '--format=%cd']),
             getSrsVersion(),
             getSrtRelayVersion(),
             exec(readAppConfig().ffmpegPath, ['-version']),
@@ -97,10 +98,9 @@ export function registerVersionApi(app: Express): void {
         const ffmpegLine = ffmpegOut.split('\n')[0] ?? '';
         const ffmpeg = ffmpegLine.replace(/^ffmpeg version /, '').split(' ')[0] || 'unknown';
 
-        const date = commitDate.split(' ')[0] || '';
         cached = {
             app: readAppVersion(),
-            commit: date ? `${date} ${commitLine}` : commitLine || 'unknown',
+            commit: commitDate ? `${commitDate} ${commitLine}` : commitLine || 'unknown',
             srs: srs || 'unknown',
             srtRelay,
             ffmpeg,
