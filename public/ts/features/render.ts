@@ -210,6 +210,11 @@ interface OutputHealth {
     issues: OverviewIssue[];
 }
 
+interface DerivedInputHealth {
+    status: InputStatus;
+    issues: OverviewIssue[];
+}
+
 function outputHealth(o: OutputView, input: InputHealth): OutputHealth {
     if (o.desiredState === 'stopped') return { status: 'off', issues: [] };
 
@@ -309,11 +314,52 @@ function outStatus(o: OutputView, input: InputHealth): OutStatus {
     return outputHealth(o, input).status;
 }
 
+function inputHealth(input: InputHealth): DerivedInputHealth {
+    if (!input.connected) return { status: 'off', issues: [] };
+    // A failed probe takes precedence over the transient pending state. This
+    // also keeps an error visible if a later retry has not begun or completed.
+    if (input.mediaOk === false || input.mediaError) {
+        return {
+            status: 'error',
+            issues: [{ severity: 'error', message: inputStatusMessage(input) }],
+        };
+    }
+    // A connected publisher is not fully ready until ffprobe has returned the
+    // media details used to validate and display its encoding.
+    if (input.mediaOk === null) {
+        return {
+            status: 'warn',
+            issues: [{ severity: 'warning', message: inputStatusMessage(input) }],
+        };
+    }
+    if (!input.live) {
+        return {
+            status: 'warn',
+            issues: [{ severity: 'warning', message: inputStatusMessage(input) }],
+        };
+    }
+
+    const issues: OverviewIssue[] = [];
+    if (
+        inputBitrateStatsReady(input) &&
+        input.recvBitrateKbps !== null &&
+        input.recvBitrateKbps < LOW_BITRATE_KBPS
+    ) {
+        issues.push({
+            severity: 'warning',
+            message: `Input bitrate is below ${LOW_BITRATE_KBPS} kb/s.`,
+        });
+    }
+    // Only report missing audio after ffprobe has confirmed usable media;
+    // otherwise every new input briefly appears unhealthy during startup.
+    if (input.audioTracks.length === 0 && input.audio === null) {
+        issues.push({ severity: 'warning', message: 'No audio track detected in input.' });
+    }
+    return { status: issues.length > 0 ? 'warn' : 'good', issues };
+}
+
 function inputStatus(input: InputHealth): InputStatus {
-    if (!input.connected) return 'off';
-    if (input.mediaOk === false) return 'error';
-    if (!input.live) return 'warn';
-    return inputIssues(input).length > 0 ? 'warn' : 'good';
+    return inputHealth(input).status;
 }
 
 function inputStatusColor(input: InputHealth): string {
@@ -356,36 +402,7 @@ function renderIssueTooltip(issues: OverviewIssue[], offMessage?: string | null)
 }
 
 function inputIssues(input: InputHealth): OverviewIssue[] {
-    if (input.connected && input.mediaOk === false) {
-        return [
-            {
-                severity: 'error',
-                message: inputStatusMessage(input),
-            },
-        ];
-    }
-    if (!input.live) {
-        return input.connected ? [{ severity: 'warning', message: inputStatusMessage(input) }] : [];
-    }
-
-    const issues: OverviewIssue[] = [];
-    if (
-        inputBitrateStatsReady(input) &&
-        input.recvBitrateKbps !== null &&
-        input.recvBitrateKbps < LOW_BITRATE_KBPS
-    ) {
-        issues.push({
-            severity: 'warning',
-            message: `Input bitrate is below ${LOW_BITRATE_KBPS} kb/s.`,
-        });
-    }
-    // Audio metadata is empty while the initial ffprobe is still running.
-    // Only report missing audio after probing has confirmed usable media;
-    // otherwise every new input briefly appears unhealthy during startup.
-    if (input.mediaOk === true && input.audioTracks.length === 0 && input.audio === null) {
-        issues.push({ severity: 'warning', message: 'No audio track detected in input.' });
-    }
-    return issues;
+    return inputHealth(input).issues;
 }
 
 function summarizeOutputError(error: string | null | undefined, fallback: string): string {
@@ -932,12 +949,14 @@ function formatMediaProbeStatus(input: InputHealth): string | null {
 }
 
 function inputStatusMessage(input: InputHealth): string {
-    return input.mediaError ?? 'Input connected, waiting for valid media.';
+    if (input.mediaError) return input.mediaError;
+    if (input.mediaOk === null)
+        return 'Waiting for ffprobe to finish and return the input encoding.';
+    return 'Input connected, waiting for valid media.';
 }
 
 function renderMediaProbeNotice(input: InputHealth): string {
-    const message =
-        input.mediaError ?? 'Codec info is still being probed — this may take a moment.';
+    const message = inputStatusMessage(input);
     const toneClass = input.mediaError ? 'text-error' : input.live ? 'opacity-50' : 'text-warning';
     const probeStatus = input.mediaError ? null : formatMediaProbeStatus(input);
     return `<p class="text-xs ${toneClass} mt-2">${escapeHtml(message)}${probeStatus ? ` <span class="opacity-60">${escapeHtml(probeStatus)}</span>` : ''}</p>`;
@@ -951,7 +970,7 @@ function renderInputStats(input: InputHealth): string {
     // row below on video-truthy would silently hide a live ffprobe failure.
     // SRT inputs never populate that fallback (srt_to_rtmp is off), which is
     // why this only ever masked errors on RTMP-sourced pipelines.
-    if (!input.live || input.mediaError) {
+    if (!input.live || input.mediaError || input.mediaOk === null) {
         return renderMediaProbeNotice(input);
     }
 
