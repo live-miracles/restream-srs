@@ -11,7 +11,8 @@ const version = packageJson.version;
 for (const fileName of ['public/index.html', 'public/login.html']) {
     const filePath = path.join(projectDir, fileName);
     const source = fs.readFileSync(filePath, 'utf8');
-    const updated = source.replace(/(output\.css\?v=)[^"']+/g, `$1${version}`)
+    const updated = source
+        .replace(/(output\.css\?v=)[^"']+/g, `$1${version}`)
         .replace(/(dashboard-entry\.js\?v=)[^"']+/g, `$1${version}`);
 
     if (!source.includes('output.css?v=') && !source.includes('dashboard-entry.js?v=')) {
