@@ -275,7 +275,7 @@ function makeFakeOutputService() {
 function makeFakeSrtRelay() {
     return {
         getStats: () => ({ status: 'stopped', lastError: null }),
-        getStreamStatus: () => ({ inputActive: false }),
+        getStreamStatus: () => makeBondingStatus({ inputActive: false }),
     };
 }
 

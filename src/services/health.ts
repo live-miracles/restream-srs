@@ -759,14 +759,7 @@ export function createHealthService(
             const rawBondingStatus = srtRelayService.getStreamStatus(bondingStreamId);
             const now = Date.now();
             const previousRelaySample = relayInputSamples.get(pipeline.id);
-            // Keep health polling tolerant of older relay status responses and test
-            // doubles that omit the optional input counters.
-            const relayInput = rawBondingStatus.input ?? {
-                recvLossTotal: 0,
-                recvDropTotal: 0,
-                recvUniquePacketsTotal: 0,
-                legs: [],
-            };
+            const relayInput = rawBondingStatus.input;
             const currentRelaySample = {
                 recvLossTotal: relayInput.recvLossTotal,
                 recvDropTotal: relayInput.recvDropTotal,
@@ -905,7 +898,7 @@ export function createHealthService(
                 string,
                 { health: 'ok' | 'warn' | 'error'; reason: string | null }
             >();
-            for (const leg of relayInput.legs ?? []) {
+            for (const leg of relayInput.legs) {
                 const key = `${leg.ip}:${leg.port}`;
                 const packets = leg.recvUniquePacketsTotal ?? leg.recvPacketsTotal;
                 const previousLeg = previousLegs.get(key);
@@ -959,7 +952,7 @@ export function createHealthService(
             legPacketSamples.set(pipeline.id, currentLegs);
             const pipelineLegHistory =
                 legHistory.get(pipeline.id) ?? new Map<string, LegHistorySeries>();
-            for (const leg of relayInput.legs ?? []) {
+            for (const leg of relayInput.legs) {
                 const key = `${leg.ip}:${leg.port}`;
                 const previousLeg = previousLegs.get(key);
                 const packets = leg.recvUniquePacketsTotal ?? leg.recvPacketsTotal;
@@ -1096,7 +1089,7 @@ export function createHealthService(
                 relayInputActive: rawBondingStatus.inputActive,
                 relayAcceptedBySrs,
             });
-            const rawLegs = rawBondingStatus.input?.legs ?? [];
+            const rawLegs = rawBondingStatus.input.legs;
             const bondingStatus: PipelineHealth['srtBonding'] = {
                 ...rawBondingStatus,
                 acceptedBySrs: relayAcceptedBySrs,
