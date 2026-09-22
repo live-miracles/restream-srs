@@ -899,7 +899,8 @@ export function createHealthService(
                 { health: 'ok' | 'warn' | 'error'; reason: string | null }
             >();
             for (const leg of relayInput.legs) {
-                const key = `${leg.ip}:${leg.port}`;
+                const key = leg.ip;
+                const transportKey = `${leg.ip}:${leg.port}`;
                 const packets = leg.recvUniquePacketsTotal ?? leg.recvPacketsTotal;
                 const previousLeg = previousLegs.get(key);
                 const noFlowSinceMs =
@@ -933,15 +934,15 @@ export function createHealthService(
                     alerts.push({
                         severity: 'warning',
                         code: 'bonded-leg-no-flow',
-                        message: `Bonded leg ${key} is connected but has stopped delivering packets.`,
+                        message: `Bonded leg ${transportKey} is connected but has stopped delivering packets.`,
                         sinceMs: noFlowSinceMs,
                     });
                 }
-                legHealth.set(key, { health, reason });
+                legHealth.set(transportKey, { health, reason });
                 if (previousLeg && previousLeg.state !== leg.state) {
                     diagnostics?.event('bonded-leg-transition', {
                         pipelineId: pipeline.id,
-                        leg: key,
+                        leg: transportKey,
                         from: previousLeg.state,
                         to: leg.state,
                         health,
@@ -953,7 +954,8 @@ export function createHealthService(
             const pipelineLegHistory =
                 legHistory.get(pipeline.id) ?? new Map<string, LegHistorySeries>();
             for (const leg of relayInput.legs) {
-                const key = `${leg.ip}:${leg.port}`;
+                const key = leg.ip;
+                const transportKey = `${leg.ip}:${leg.port}`;
                 const previousLeg = previousLegs.get(key);
                 const packets = leg.recvUniquePacketsTotal ?? leg.recvPacketsTotal;
                 const receivedDelta =
@@ -991,10 +993,11 @@ export function createHealthService(
                     port: leg.port,
                     samples: [],
                 };
+                series.port = leg.port;
                 const sample: LegHistorySample = {
                     ts: now,
                     state: leg.state,
-                    health: legHealth.get(key)?.health ?? 'ok',
+                    health: legHealth.get(transportKey)?.health ?? 'ok',
                     recvRateMbps: leg.recvRateMbps,
                     rttMs: leg.rttMs,
                     latencyMs: leg.latencyMs,
@@ -1040,8 +1043,8 @@ export function createHealthService(
                 const dropPct = receivedPackets > 0 ? (dropPackets / receivedPackets) * 100 : 0;
                 const retransmissionPct =
                     receivedPackets > 0 ? (retransmittedPackets / receivedPackets) * 100 : 0;
-                let health = legHealth.get(key)?.health ?? 'ok';
-                let reason = legHealth.get(key)?.reason ?? null;
+                let health = legHealth.get(transportKey)?.health ?? 'ok';
+                let reason = legHealth.get(transportKey)?.reason ?? null;
                 if (receivedPackets >= 100 && (dropPct >= 5 || dropPackets >= 1000)) {
                     health = 'error';
                     reason = `Leg packet drops are ${dropPct.toFixed(1)}% over the last minute (${dropPackets} packets).`;
@@ -1060,12 +1063,12 @@ export function createHealthService(
                     reason = `Leg latency is high (${Math.round(leg.latencyMs)} ms).`;
                 }
                 sample.health = health;
-                legHealth.set(key, { health, reason });
+                legHealth.set(transportKey, { health, reason });
                 if (health !== 'ok' && reason) {
                     alerts.push({
                         severity: health === 'error' ? 'error' : 'warning',
                         code: 'bonded-leg-quality',
-                        message: `Bonded leg ${key}: ${reason}`,
+                        message: `Bonded leg ${transportKey}: ${reason}`,
                         sinceMs: windowSamples[0]?.ts ?? now,
                     });
                 }
