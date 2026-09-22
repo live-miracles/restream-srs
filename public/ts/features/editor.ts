@@ -34,6 +34,7 @@ const legHistoryOffsets = new Map<string, number>();
 function formatLegChartTimeTick(ts: number): string {
     const date = new Date(ts);
     const minutes = date.getMinutes();
+    if (minutes % 5 !== 0) return '';
     const minuteLabel = minutes.toString().padStart(2, '0');
     if (minutes % 10 !== 0) return minuteLabel;
     return `${date.getHours().toString().padStart(2, '0')}:${minuteLabel}`;
@@ -77,8 +78,7 @@ function legHistoryChart(
     ctx.font = '10px sans-serif';
     ctx.fillStyle = color;
     ctx.globalAlpha = 0.65;
-    const spanMinutes = (maxTs - minTs) / 60_000;
-    const tickMinutes = spanMinutes <= 30 ? 1 : 5;
+    const tickMinutes = 1;
     const tickIntervalMs = tickMinutes * 60_000;
     const firstMinute = Math.ceil(minTs / tickIntervalMs) * tickIntervalMs;
     ctx.textAlign = 'center';
