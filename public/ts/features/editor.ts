@@ -69,8 +69,10 @@ function legHistoryChart(
     const minTs = Math.min(...allSamples.map((sample) => sample.ts));
     const maxTs = Math.max(...allSamples.map((sample) => sample.ts));
     const range = Math.max(1, maxTs - minTs);
-    const yMax =
-        maxValue > 0 ? maxValue : Math.max(1, ...allSamples.map((sample) => value(sample) ?? 0));
+    const observedMax = Math.max(...allSamples.map((sample) => value(sample) ?? 0));
+    // Keep a configured ceiling for charts that need one, but let sparse or
+    // low-valued series use their own range so small loss spikes are visible.
+    const yMax = maxValue > 0 ? maxValue : observedMax > 0 ? observedMax * 1.2 : 1;
     ctx.clearRect(0, 0, width, height);
     ctx.font = '10px sans-serif';
     ctx.fillStyle = color;
@@ -132,7 +134,8 @@ function renderLegHistoryCharts(pipelineId: string, data: LegHistoryData): void 
             '<p class="text-sm opacity-50">No bonded-leg history is available for this period.</p>';
         return;
     }
-    const fmt = (value: number) => (value >= 10 ? value.toFixed(0) : value.toFixed(1));
+    const fmt = (value: number) =>
+        value >= 10 ? value.toFixed(0) : value < 1 ? value.toFixed(2) : value.toFixed(1);
     const legend = data.legs
         .map(
             (leg, index) =>
@@ -148,7 +151,7 @@ function renderLegHistoryCharts(pipelineId: string, data: LegHistoryData): void 
         'srt-leg-loss-chart',
         data.legs,
         (sample) => Math.max(sample.lossPct ?? 0, sample.dropPct ?? 0),
-        5,
+        0,
         (value) => `${fmt(value)}%`,
     );
     legHistoryChart(
