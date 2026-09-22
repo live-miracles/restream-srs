@@ -39,6 +39,11 @@ const LEG_HISTORY_MAX_SAMPLES = (60 * 60 * 1000) / POLL_INTERVAL_MS;
 const LEG_HISTORY_MAX_WINDOW_MS = 30 * 60 * 1000;
 const LEG_HEALTH_WINDOW_MS = 60 * 1000;
 
+function counterDelta(current: number | null, previous: number | null | undefined): number | null {
+    if (current === null || previous === null || previous === undefined) return null;
+    return current >= previous ? current - previous : current;
+}
+
 export interface InputHealth {
     connected: boolean;
     live: boolean;
@@ -958,36 +963,11 @@ export function createHealthService(
                 const transportKey = `${leg.ip}:${leg.port}`;
                 const previousLeg = previousLegs.get(key);
                 const packets = leg.recvUniquePacketsTotal ?? leg.recvPacketsTotal;
-                const receivedDelta =
-                    packets !== null &&
-                    previousLeg?.packets !== null &&
-                    previousLeg?.packets !== undefined
-                        ? Math.max(0, packets - previousLeg.packets)
-                        : null;
-                const lossDelta =
-                    leg.recvLossTotal !== null &&
-                    previousLeg?.recvLossTotal !== null &&
-                    previousLeg?.recvLossTotal !== undefined
-                        ? Math.max(0, leg.recvLossTotal - previousLeg.recvLossTotal)
-                        : null;
-                const dropDelta =
-                    leg.recvDropTotal !== null &&
-                    previousLeg?.recvDropTotal !== null &&
-                    previousLeg?.recvDropTotal !== undefined
-                        ? Math.max(0, leg.recvDropTotal - previousLeg.recvDropTotal)
-                        : null;
-                const retransDelta =
-                    leg.retransTotal !== null &&
-                    previousLeg?.retransTotal !== null &&
-                    previousLeg?.retransTotal !== undefined
-                        ? Math.max(0, leg.retransTotal - previousLeg.retransTotal)
-                        : null;
-                const belatedDelta =
-                    leg.belatedTotal !== null &&
-                    previousLeg?.belatedTotal !== null &&
-                    previousLeg?.belatedTotal !== undefined
-                        ? Math.max(0, leg.belatedTotal - previousLeg.belatedTotal)
-                        : null;
+                const receivedDelta = counterDelta(packets, previousLeg?.packets);
+                const lossDelta = counterDelta(leg.recvLossTotal, previousLeg?.recvLossTotal);
+                const dropDelta = counterDelta(leg.recvDropTotal, previousLeg?.recvDropTotal);
+                const retransDelta = counterDelta(leg.retransTotal, previousLeg?.retransTotal);
+                const belatedDelta = counterDelta(leg.belatedTotal, previousLeg?.belatedTotal);
                 const series = pipelineLegHistory.get(key) ?? {
                     ip: leg.ip,
                     port: leg.port,
