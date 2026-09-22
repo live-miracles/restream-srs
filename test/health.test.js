@@ -808,7 +808,8 @@ describe('createHealthService diagnostics and bonded-leg alerts', () => {
     test('surfaces packet-drop, retransmission, belated, latency, bitrate-collapse, and forwarding-stalled alerts once a relay baseline exists', async (t) => {
         let stream = streamFixture();
         t.mock.method(globalThis, 'fetch', async (url) => {
-            if (String(url).includes('/streams/')) return jsonResponse({ code: 0, streams: [stream] });
+            if (String(url).includes('/streams/'))
+                return jsonResponse({ code: 0, streams: [stream] });
             return jsonResponse({ code: 0, clients: [] });
         });
         const createHealthService = loadHealthService(t);
@@ -878,7 +879,8 @@ describe('createHealthService diagnostics and bonded-leg alerts', () => {
     test('reports pure packet loss (no drops) instead of the drop alert', async (t) => {
         const stream = streamFixture();
         t.mock.method(globalThis, 'fetch', async (url) => {
-            if (String(url).includes('/streams/')) return jsonResponse({ code: 0, streams: [stream] });
+            if (String(url).includes('/streams/'))
+                return jsonResponse({ code: 0, streams: [stream] });
             return jsonResponse({ code: 0, clients: [] });
         });
         const createHealthService = loadHealthService(t);
@@ -911,7 +913,10 @@ describe('createHealthService diagnostics and bonded-leg alerts', () => {
         await tickPoll(t);
 
         const alerts = (await getSnapshot(app)).pipelines['1'].alerts;
-        assert.deepEqual(alerts.map((a) => a.code), ['srt-packet-loss']);
+        assert.deepEqual(
+            alerts.map((a) => a.code),
+            ['srt-packet-loss'],
+        );
 
         service.shutdown();
     });
@@ -919,7 +924,8 @@ describe('createHealthService diagnostics and bonded-leg alerts', () => {
     test('logs a bonded-leg-transition event and a bonded-leg-quality alert when a leg comes up with bad packet quality', async (t) => {
         const stream = streamFixture();
         t.mock.method(globalThis, 'fetch', async (url) => {
-            if (String(url).includes('/streams/')) return jsonResponse({ code: 0, streams: [stream] });
+            if (String(url).includes('/streams/'))
+                return jsonResponse({ code: 0, streams: [stream] });
             return jsonResponse({ code: 0, clients: [] });
         });
         const createHealthService = loadHealthService(t);
@@ -987,7 +993,8 @@ describe('createHealthService diagnostics and bonded-leg alerts', () => {
     test('logs input-publisher-transition and surfaces a transient publisher-reconnected alert on a CID change', async (t) => {
         let stream = streamFixture();
         t.mock.method(globalThis, 'fetch', async (url) => {
-            if (String(url).includes('/streams/')) return jsonResponse({ code: 0, streams: [stream] });
+            if (String(url).includes('/streams/'))
+                return jsonResponse({ code: 0, streams: [stream] });
             return jsonResponse({ code: 0, clients: [] });
         });
         const createHealthService = loadHealthService(t);
@@ -1033,7 +1040,8 @@ describe('createHealthService diagnostics and bonded-leg alerts', () => {
         const stream = streamFixture();
         t.mock.method(globalThis, 'fetch', async (url) => {
             if (!reachable) throw new Error('down');
-            if (String(url).includes('/streams/')) return jsonResponse({ code: 0, streams: [stream] });
+            if (String(url).includes('/streams/'))
+                return jsonResponse({ code: 0, streams: [stream] });
             return jsonResponse({ code: 0, clients: [] });
         });
         const createHealthService = loadHealthService(t);

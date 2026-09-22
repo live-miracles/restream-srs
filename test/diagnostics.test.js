@@ -215,8 +215,16 @@ describe('diagnostics logger retention', () => {
         const logger = createDiagnosticsLogger(dir, { retentionMs: 5_000 });
         await closeAndSettle(logger);
 
-        assert.equal(fs.existsSync(oldFile), false, 'file past the retention window must be removed');
-        assert.equal(fs.existsSync(recentFile), true, 'file within the retention window must survive');
+        assert.equal(
+            fs.existsSync(oldFile),
+            false,
+            'file past the retention window must be removed',
+        );
+        assert.equal(
+            fs.existsSync(recentFile),
+            true,
+            'file within the retention window must survive',
+        );
     });
 
     test('the documented seven-day default retention removes only files older than seven days', async () => {
@@ -303,7 +311,11 @@ describe('diagnostics logger total size cap', () => {
         await sleep(150);
         await closeAndSettle(logger);
 
-        assert.equal(fs.existsSync(junk), false, 'the oversized junk file should have been evicted');
+        assert.equal(
+            fs.existsSync(junk),
+            false,
+            'the oversized junk file should have been evicted',
+        );
         assert.equal(fs.existsSync(activeFile), true, 'the active file must never be evicted');
         assert.equal(readLines(activeFile)[0].event, 'keep-me');
     });
