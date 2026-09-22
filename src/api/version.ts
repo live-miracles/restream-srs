@@ -76,6 +76,7 @@ interface VersionResult {
     srs: string;
     srtRelay: string;
     ffmpeg: string;
+    node: string;
     os: string;
     kernel: string;
 }
@@ -104,6 +105,7 @@ export function registerVersionApi(app: Express): void {
             srs: srs || 'unknown',
             srtRelay,
             ffmpeg,
+            node: process.version,
             os: readOsRelease(),
             kernel: os.release(),
         };

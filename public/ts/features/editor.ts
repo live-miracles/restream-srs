@@ -131,17 +131,17 @@ function renderLegHistoryCharts(pipelineId: string, data: LegHistoryData): void 
     if (!wrap) return;
     if (data.legs.length === 0 || data.legs.every((leg) => leg.samples.length === 0)) {
         wrap.innerHTML =
-            '<p class="text-sm opacity-50">No bonded-leg history is available for this period.</p>';
+            '<p class="text-sm opacity-50">No packet drop history is available for this period.</p>';
         return;
     }
     const fmt = (value: number) => (value >= 10 ? value.toFixed(0) : value.toFixed(1));
-    const cumulativeLossSeries = data.legs.map((leg) => {
+    const cumulativeDropSeries = data.legs.map((leg) => {
         let total = 0;
         return {
             ...leg,
             samples: leg.samples.map((sample) => {
-                total += (sample.lossPackets ?? 0) + (sample.dropPackets ?? 0);
-                return { ...sample, lossPct: total };
+                total += sample.dropPackets ?? 0;
+                return { ...sample, dropPackets: total };
             }),
         };
     });
@@ -154,13 +154,13 @@ function renderLegHistoryCharts(pipelineId: string, data: LegHistoryData): void 
     if (!document.getElementById('srt-leg-loss-chart')) {
         wrap.innerHTML = `<div class="flex flex-wrap gap-x-3 gap-y-1 mb-2">${legend}</div>
             <div class="grid grid-cols-1 gap-4">
-                <div><div class="text-xs opacity-60 mb-1">Cumulative packet loss / drop</div><canvas id="srt-leg-loss-chart" class="w-full h-32 text-base-content"></canvas></div>
+                <div><canvas id="srt-leg-loss-chart" class="w-full h-32 text-base-content"></canvas></div>
             </div>`;
     }
     legHistoryChart(
         'srt-leg-loss-chart',
-        cumulativeLossSeries,
-        (sample) => sample.lossPct,
+        cumulativeDropSeries,
+        (sample) => sample.dropPackets ?? null,
         0,
         (value) => fmt(value),
     );
@@ -195,7 +195,7 @@ async function loadLegHistory(pipelineId: string, showLoading = true): Promise<v
 function renderLegHistorySection(pipelineId: string): string {
     return `<div id="srt-leg-history-section" class="mt-1">
         <div class="mb-2 flex items-center justify-center gap-2 px-1">
-            <div class="text-xs font-semibold uppercase opacity-50">Bonded leg history</div>
+            <div class="text-xs font-semibold uppercase opacity-50">Cumulative packet drops</div>
             <div class="flex items-center gap-1">
                 <button id="srt-leg-history-back" type="button" class="btn btn-xs btn-ghost">&#8592; 10 min</button>
                 <span id="srt-leg-history-range" class="inline-flex w-28 justify-center"><span class="badge badge-success badge-xs gap-1">LIVE</span></span>
@@ -354,6 +354,7 @@ export function openSettings(): void {
         (document.getElementById('v-srs') as HTMLElement).textContent = v.srs;
         (document.getElementById('v-relay') as HTMLElement).textContent = v.srtRelay;
         (document.getElementById('v-ffmpeg') as HTMLElement).textContent = v.ffmpeg;
+        (document.getElementById('v-node') as HTMLElement).textContent = v.node;
         (document.getElementById('v-os') as HTMLElement).textContent = v.os;
         (document.getElementById('v-kernel') as HTMLElement).textContent = v.kernel;
     });
