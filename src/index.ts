@@ -132,7 +132,16 @@ app.use(
     express.static(publicDir, {
         setHeaders(res, filePath) {
             if (filePath.endsWith('.js') || filePath.endsWith('.css')) {
-                res.setHeader('Cache-Control', 'no-cache');
+                // These bundles are generated outside git and can change while
+                // the release version stays the same. Do not let a browser or
+                // reverse proxy keep an old module graph after deployment.
+                res.setHeader(
+                    'Cache-Control',
+                    'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0',
+                );
+                res.setHeader('Pragma', 'no-cache');
+                res.setHeader('Expires', '0');
+                res.setHeader('Surrogate-Control', 'no-store');
             }
         },
     }),
