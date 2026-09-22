@@ -283,6 +283,7 @@ export interface LegHistorySample {
     receivedPackets?: number | null;
     lossPackets?: number | null;
     dropPackets?: number | null;
+    lossTotal?: number | null;
     dropTotal?: number | null;
     retransmittedPackets?: number | null;
 }
