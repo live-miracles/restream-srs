@@ -1,4 +1,5 @@
 import { readRelayConfig } from '../utils/relayConfig.js';
+import type { DiagnosticsLogger } from '../utils/diagnostics.js';
 
 const SRT_BONDING_POLL_MS = 5000;
 const SRT_BONDING_FETCH_TIMEOUT_MS = 2000;
@@ -306,7 +307,7 @@ function parseStreamStatus(
     };
 }
 
-export function createSrtRelayService(): SrtRelayService {
+export function createSrtRelayService(diagnostics?: DiagnosticsLogger): SrtRelayService {
     let stats: SrtRelayStats = {
         status: 'stopped',
         pid: null,
@@ -318,6 +319,8 @@ export function createSrtRelayService(): SrtRelayService {
     let pollTimer: NodeJS.Timeout | null = null;
     let everReachedRelay = false;
     let refreshInFlight: Promise<void> | null = null;
+    let previousStatus: SrtRelayStats['status'] = stats.status;
+    const previousStreamStates = new Map<string, SrtRelayStreamStatus>();
 
     async function refresh(): Promise<void> {
         if (refreshInFlight) return refreshInFlight;
@@ -349,6 +352,43 @@ export function createSrtRelayService(): SrtRelayService {
                     lastError: data.lastError ?? null,
                     port: relayConfig.input_port,
                 };
+                if (previousStatus !== stats.status) {
+                    diagnostics?.event('relay-transition', {
+                        from: previousStatus,
+                        to: stats.status,
+                        pid,
+                        error: stats.lastError,
+                    });
+                    previousStatus = stats.status;
+                }
+                for (const [streamId, next] of streamStates) {
+                    const previous = previousStreamStates.get(streamId);
+                    if (!previous) {
+                        diagnostics?.event('relay-input-transition', {
+                            streamId,
+                            inputActive: next.inputActive,
+                            outputConnected: next.outputConnected,
+                        });
+                        continue;
+                    }
+                    if (
+                        previous.inputActive !== next.inputActive ||
+                        previous.outputConnected !== next.outputConnected
+                    ) {
+                        diagnostics?.event('relay-input-transition', {
+                            streamId,
+                            fromInputActive: previous.inputActive,
+                            toInputActive: next.inputActive,
+                            fromOutputConnected: previous.outputConnected,
+                            toOutputConnected: next.outputConnected,
+                            retryFailures: next.retryFailures,
+                            error: next.lastError,
+                        });
+                    }
+                }
+                previousStreamStates.clear();
+                for (const [streamId, value] of streamStates)
+                    previousStreamStates.set(streamId, value);
             } catch (err) {
                 const relayConfig = readRelayConfig();
                 streamStates = new Map();
@@ -359,6 +399,14 @@ export function createSrtRelayService(): SrtRelayService {
                     lastError: err instanceof Error ? err.message : String(err),
                     port: relayConfig.input_port,
                 };
+                if (previousStatus !== stats.status) {
+                    diagnostics?.event('relay-transition', {
+                        from: previousStatus,
+                        to: stats.status,
+                        error: stats.lastError,
+                    });
+                    previousStatus = stats.status;
+                }
             } finally {
                 refreshInFlight = null;
             }

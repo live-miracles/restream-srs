@@ -683,4 +683,112 @@ describe('SRT relay service', () => {
             lastError: null,
         });
     });
+
+    function makeDiagnosticsSpy() {
+        const events = [];
+        return {
+            events,
+            event(event, fields = {}) {
+                events.push({ event, ...fields });
+            },
+            close() {},
+        };
+    }
+
+    test('logs a relay-transition and a first-sight relay-input-transition on the first poll', async () => {
+        global.fetch = async () =>
+            new Response(
+                JSON.stringify({
+                    pid: 222,
+                    startedAtMs: Date.now(),
+                    updatedAtMs: Date.now(),
+                    activeStreamIds: ['#!::r=live/key01,m=publish'],
+                    lastError: null,
+                    streamStates: [
+                        {
+                            streamId: '#!::r=live/key01,m=publish',
+                            inputActive: true,
+                            outputConnected: true,
+                            retryFailures: 0,
+                            forwardedPackets: 0,
+                            forwardedBytes: 0,
+                            lastPacketAt: null,
+                            lastInputPacketAt: null,
+                            input: EMPTY_INPUT,
+                            output: EMPTY_OUTPUT,
+                            lastErrorAt: null,
+                            lastError: null,
+                        },
+                    ],
+                }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } },
+            );
+
+        const diagnostics = makeDiagnosticsSpy();
+        const service = createSrtRelayService(diagnostics);
+        cleanup.push(async () => service.shutdown());
+        service.start();
+
+        await waitFor(() => service.getStats().status === 'running');
+
+        const relayTransition = diagnostics.events.find((e) => e.event === 'relay-transition');
+        assert.deepEqual(relayTransition, {
+            event: 'relay-transition',
+            from: 'stopped',
+            to: 'running',
+            pid: 222,
+            error: null,
+        });
+
+        const inputTransition = diagnostics.events.find(
+            (e) => e.event === 'relay-input-transition',
+        );
+        assert.deepEqual(inputTransition, {
+            event: 'relay-input-transition',
+            streamId: '#!::r=live/key01,m=publish',
+            inputActive: true,
+            outputConnected: true,
+        });
+    });
+
+    test('logs relay-transition running->failed once a previously reachable relay stops responding', async () => {
+        let calls = 0;
+        global.fetch = async () => {
+            calls += 1;
+            if (calls === 1) {
+                return new Response(
+                    JSON.stringify({
+                        pid: 333,
+                        startedAtMs: Date.now() - 5000,
+                        updatedAtMs: Date.now(),
+                        activeStreamIds: [],
+                        lastError: null,
+                        streamStates: [],
+                    }),
+                    { status: 200, headers: { 'Content-Type': 'application/json' } },
+                );
+            }
+            throw new Error('connect ECONNREFUSED 127.0.0.1:8081');
+        };
+
+        const diagnostics = makeDiagnosticsSpy();
+        const service = createSrtRelayService(diagnostics);
+        cleanup.push(async () => service.shutdown());
+        service.start();
+
+        await waitFor(() => service.getStats().status === 'running');
+        await waitFor(() => service.getStats().status === 'failed', 8000);
+
+        const transitions = diagnostics.events.filter((e) => e.event === 'relay-transition');
+        assert.deepEqual(transitions[0], {
+            event: 'relay-transition',
+            from: 'stopped',
+            to: 'running',
+            pid: 333,
+            error: null,
+        });
+        assert.equal(transitions[1].from, 'running');
+        assert.equal(transitions[1].to, 'failed');
+        assert.match(transitions[1].error, /ECONNREFUSED/);
+    });
 });

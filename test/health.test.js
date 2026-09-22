@@ -279,6 +279,107 @@ function makeFakeSrtRelay() {
     };
 }
 
+function makeDiagnosticsSpy() {
+    const events = [];
+    return {
+        events,
+        event(event, fields = {}) {
+            events.push({ event, ...fields });
+        },
+        close() {},
+    };
+}
+
+// Fills in the full SrtRelayStreamStatus shape (see src/services/srtRelay.ts)
+// so tests only need to specify the fields a given scenario cares about.
+function makeBondingStatus(overrides = {}) {
+    const { input: inputOverrides, output: outputOverrides, ...rest } = overrides;
+    return {
+        inputActive: true,
+        outputConnected: true,
+        retryFailures: 0,
+        forwardedPackets: 0,
+        forwardedBytes: 0,
+        lastPacketAt: null,
+        lastInputPacketAt: null,
+        lastErrorAt: null,
+        lastError: null,
+        ...rest,
+        input: {
+            recvPacketsTotal: 0,
+            recvUniquePacketsTotal: 0,
+            recvLossTotal: 0,
+            recvDropTotal: 0,
+            retransTotal: 0,
+            rttMs: null,
+            latencyMs: 100,
+            bandwidthMbps: null,
+            recvRateMbps: null,
+            belatedTotal: 0,
+            belatedAvgMs: null,
+            undecryptTotal: null,
+            reorderDistance: null,
+            rcvBufMs: null,
+            legs: [],
+            ...inputOverrides,
+        },
+        output: {
+            sentPacketsTotal: 0,
+            sendLossTotal: 0,
+            sendDropTotal: 0,
+            retransTotal: 0,
+            rttMs: null,
+            latencyMs: null,
+            bandwidthMbps: null,
+            sendRateMbps: null,
+            undecryptTotal: null,
+            sndBufMs: null,
+            ...outputOverrides,
+        },
+    };
+}
+
+function makeLeg(overrides = {}) {
+    return {
+        ip: '203.0.113.10',
+        port: 10081,
+        state: 'running',
+        rttMs: 5,
+        latencyMs: 100,
+        recvPacketsTotal: 0,
+        recvUniquePacketsTotal: 0,
+        recvLossTotal: 0,
+        recvDropTotal: 0,
+        retransTotal: 0,
+        bandwidthMbps: 10,
+        recvRateMbps: 1,
+        belatedTotal: 0,
+        belatedAvgMs: 0,
+        undecryptTotal: 0,
+        reorderDistance: 0,
+        rcvBufMs: 100,
+        ...overrides,
+    };
+}
+
+// A relay double whose getStreamStatus() result the test can swap out between
+// polls to simulate the bonded relay's stats changing over time.
+function makeFakeSrtRelayMutable(initialStatus) {
+    let status = initialStatus;
+    return {
+        setStatus(next) {
+            status = next;
+        },
+        getStats: () => ({ status: 'running', lastError: null }),
+        getStreamStatus: () => status,
+    };
+}
+
+async function tickPoll(t, ms = 5000) {
+    t.mock.timers.tick(ms);
+    await sleep(20);
+}
+
 function makeFakeInputState() {
     const live = new Map();
     const protocol = new Map();
@@ -669,6 +770,314 @@ describe('createHealthService poll orchestration', () => {
 
         const snapshot = await getSnapshot(app);
         assert.deepEqual(snapshot.pipelines, {});
+
+        service.shutdown();
+    });
+});
+
+describe('createHealthService diagnostics and bonded-leg alerts', () => {
+    beforeEach(() => {
+        process.chdir(tempDir);
+    });
+
+    afterEach(() => {
+        process.chdir(originalCwd);
+        delete require.cache[require.resolve('../src/services/health')];
+        delete require.cache[require.resolve('../src/utils/appConfig')];
+        delete require.cache[require.resolve('../src/utils/srsConfig')];
+    });
+
+    function streamFixture(overrides = {}) {
+        return {
+            id: 's1',
+            name: 'key01',
+            vhost: '__defaultVhost__',
+            app: 'live',
+            tcUrl: 'rtmp://x/live',
+            live_ms: 0,
+            publish: { active: true, cid: 'cid-1' },
+            kbps: { recv_30s: 1000, send_30s: 0 },
+            clients: 1,
+            frames: 0,
+            recv_bytes: 0,
+            send_bytes: 0,
+            ...overrides,
+        };
+    }
+
+    test('surfaces packet-drop, retransmission, belated, latency, bitrate-collapse, and forwarding-stalled alerts once a relay baseline exists', async (t) => {
+        let stream = streamFixture();
+        t.mock.method(globalThis, 'fetch', async (url) => {
+            if (String(url).includes('/streams/')) return jsonResponse({ code: 0, streams: [stream] });
+            return jsonResponse({ code: 0, clients: [] });
+        });
+        const createHealthService = loadHealthService(t);
+        const relay = makeFakeSrtRelayMutable(
+            makeBondingStatus({
+                forwardedPackets: 1000,
+                input: {
+                    recvUniquePacketsTotal: 1000,
+                    recvDropTotal: 0,
+                    retransTotal: 0,
+                    belatedTotal: 0,
+                    latencyMs: 100,
+                },
+            }),
+        );
+        const diagnostics = makeDiagnosticsSpy();
+        const pipeline = { id: 1, name: 'P1', streamKey: 'key01', streamKeyId: 1 };
+        const service = createHealthService(
+            makeFakeDb([pipeline]),
+            makeFakeOutputService(),
+            relay,
+            makeFakeInputState(),
+            diagnostics,
+        );
+        const app = express();
+        service.registerRoutes(app);
+
+        t.mock.timers.enable({ apis: ['setInterval'] });
+        service.start();
+        await sleep(20);
+        // Baseline poll: no previous sample yet, so no alerts should fire.
+        assert.deepEqual((await getSnapshot(app)).pipelines['1'].alerts, []);
+
+        // Same publish.cid, only the bitrate changes — kept out of the same
+        // object literal reused above so the streams fetch reflects it live.
+        stream = streamFixture({ kbps: { recv_30s: 300, send_30s: 0 } });
+        relay.setStatus(
+            makeBondingStatus({
+                forwardedPackets: 1000, // unchanged despite more received packets below
+                input: {
+                    recvUniquePacketsTotal: 1600,
+                    recvDropTotal: 50,
+                    retransTotal: 40,
+                    belatedTotal: 150,
+                    latencyMs: 1500,
+                },
+            }),
+        );
+        await tickPoll(t);
+
+        const alerts = (await getSnapshot(app)).pipelines['1'].alerts;
+        assert.deepEqual(
+            alerts.map((a) => a.code),
+            [
+                'srt-packets-dropped',
+                'srt-retransmissions',
+                'srt-belated-packets',
+                'srt-latency-spike',
+                'input-bitrate-collapse',
+                'relay-forwarding-stalled',
+            ],
+        );
+
+        service.shutdown();
+    });
+
+    test('reports pure packet loss (no drops) instead of the drop alert', async (t) => {
+        const stream = streamFixture();
+        t.mock.method(globalThis, 'fetch', async (url) => {
+            if (String(url).includes('/streams/')) return jsonResponse({ code: 0, streams: [stream] });
+            return jsonResponse({ code: 0, clients: [] });
+        });
+        const createHealthService = loadHealthService(t);
+        const relay = makeFakeSrtRelayMutable(
+            makeBondingStatus({
+                forwardedPackets: 1000,
+                input: { recvUniquePacketsTotal: 1000, recvLossTotal: 0, recvDropTotal: 0 },
+            }),
+        );
+        const pipeline = { id: 1, name: 'P1', streamKey: 'key01', streamKeyId: 1 };
+        const service = createHealthService(
+            makeFakeDb([pipeline]),
+            makeFakeOutputService(),
+            relay,
+            makeFakeInputState(),
+        );
+        const app = express();
+        service.registerRoutes(app);
+
+        t.mock.timers.enable({ apis: ['setInterval'] });
+        service.start();
+        await sleep(20);
+
+        relay.setStatus(
+            makeBondingStatus({
+                forwardedPackets: 1900,
+                input: { recvUniquePacketsTotal: 1900, recvLossTotal: 20, recvDropTotal: 0 },
+            }),
+        );
+        await tickPoll(t);
+
+        const alerts = (await getSnapshot(app)).pipelines['1'].alerts;
+        assert.deepEqual(alerts.map((a) => a.code), ['srt-packet-loss']);
+
+        service.shutdown();
+    });
+
+    test('logs a bonded-leg-transition event and a bonded-leg-quality alert when a leg comes up with bad packet quality', async (t) => {
+        const stream = streamFixture();
+        t.mock.method(globalThis, 'fetch', async (url) => {
+            if (String(url).includes('/streams/')) return jsonResponse({ code: 0, streams: [stream] });
+            return jsonResponse({ code: 0, clients: [] });
+        });
+        const createHealthService = loadHealthService(t);
+        const relay = makeFakeSrtRelayMutable(
+            makeBondingStatus({
+                input: {
+                    legs: [
+                        makeLeg({
+                            state: 'pending',
+                            recvUniquePacketsTotal: 500,
+                            recvDropTotal: 0,
+                        }),
+                    ],
+                },
+            }),
+        );
+        const diagnostics = makeDiagnosticsSpy();
+        const pipeline = { id: 1, name: 'P1', streamKey: 'key01', streamKeyId: 1 };
+        const service = createHealthService(
+            makeFakeDb([pipeline]),
+            makeFakeOutputService(),
+            relay,
+            makeFakeInputState(),
+            diagnostics,
+        );
+        const app = express();
+        service.registerRoutes(app);
+
+        t.mock.timers.enable({ apis: ['setInterval'] });
+        service.start();
+        await sleep(20);
+
+        relay.setStatus(
+            makeBondingStatus({
+                input: {
+                    legs: [
+                        makeLeg({
+                            state: 'running',
+                            recvUniquePacketsTotal: 1100,
+                            recvDropTotal: 50,
+                        }),
+                    ],
+                },
+            }),
+        );
+        await tickPoll(t);
+
+        const transition = diagnostics.events.find((e) => e.event === 'bonded-leg-transition');
+        assert.ok(transition, 'expected a bonded-leg-transition event');
+        assert.equal(transition.from, 'pending');
+        assert.equal(transition.to, 'running');
+        assert.equal(transition.pipelineId, 1);
+
+        const snapshot = await getSnapshot(app);
+        const qualityAlert = snapshot.pipelines['1'].alerts.find(
+            (a) => a.code === 'bonded-leg-quality',
+        );
+        assert.ok(qualityAlert, 'expected a bonded-leg-quality alert');
+        assert.equal(qualityAlert.severity, 'error');
+        assert.equal(snapshot.pipelines['1'].srtBonding.input.legs[0].health, 'error');
+
+        service.shutdown();
+    });
+
+    test('logs input-publisher-transition and surfaces a transient publisher-reconnected alert on a CID change', async (t) => {
+        let stream = streamFixture();
+        t.mock.method(globalThis, 'fetch', async (url) => {
+            if (String(url).includes('/streams/')) return jsonResponse({ code: 0, streams: [stream] });
+            return jsonResponse({ code: 0, clients: [] });
+        });
+        const createHealthService = loadHealthService(t);
+        const diagnostics = makeDiagnosticsSpy();
+        const pipeline = { id: 1, name: 'P1', streamKey: 'key01', streamKeyId: 1 };
+        const service = createHealthService(
+            makeFakeDb([pipeline]),
+            makeFakeOutputService(),
+            makeFakeSrtRelay(),
+            makeFakeInputState(),
+            diagnostics,
+        );
+        const app = express();
+        service.registerRoutes(app);
+
+        t.mock.timers.enable({ apis: ['setInterval'] });
+        service.start();
+        await sleep(20);
+
+        stream = streamFixture({ publish: { active: true, cid: 'cid-2' } });
+        await tickPoll(t);
+
+        const transition = diagnostics.events.find((e) => e.event === 'input-publisher-transition');
+        assert.deepEqual(transition, {
+            event: 'input-publisher-transition',
+            pipelineId: 1,
+            fromCid: 'cid-1',
+            toCid: 'cid-2',
+            protocol: 'rtmp',
+        });
+
+        const snapshot = await getSnapshot(app);
+        assert.ok(
+            snapshot.pipelines['1'].alerts.some((a) => a.code === 'publisher-reconnected'),
+            'expected a transient publisher-reconnected alert right after the CID change',
+        );
+
+        service.shutdown();
+    });
+
+    test('logs srs-transition and input-transition diagnostics events across an outage and recovery', async (t) => {
+        let reachable = true;
+        const stream = streamFixture();
+        t.mock.method(globalThis, 'fetch', async (url) => {
+            if (!reachable) throw new Error('down');
+            if (String(url).includes('/streams/')) return jsonResponse({ code: 0, streams: [stream] });
+            return jsonResponse({ code: 0, clients: [] });
+        });
+        const createHealthService = loadHealthService(t);
+        const diagnostics = makeDiagnosticsSpy();
+        const pipeline = { id: 1, name: 'P1', streamKey: 'key01', streamKeyId: 1 };
+        const service = createHealthService(
+            makeFakeDb([pipeline]),
+            makeFakeOutputService(),
+            makeFakeSrtRelay(),
+            makeFakeInputState(),
+            diagnostics,
+        );
+        const app = express();
+        service.registerRoutes(app);
+
+        t.mock.timers.enable({ apis: ['setInterval'] });
+        service.start();
+        await sleep(20);
+
+        const inputTransition = diagnostics.events.find((e) => e.event === 'input-transition');
+        assert.deepEqual(inputTransition, {
+            event: 'input-transition',
+            pipelineId: 1,
+            from: 'offline',
+            to: 'live',
+            protocol: 'rtmp',
+        });
+
+        reachable = false;
+        await tickPoll(t);
+        assert.deepEqual(
+            diagnostics.events.filter((e) => e.event === 'srs-transition'),
+            [{ event: 'srs-transition', from: 'up', to: 'down', message: 'Unreachable: down' }],
+        );
+
+        reachable = true;
+        await tickPoll(t);
+        assert.deepEqual(
+            diagnostics.events.filter((e) => e.event === 'srs-transition'),
+            [
+                { event: 'srs-transition', from: 'up', to: 'down', message: 'Unreachable: down' },
+                { event: 'srs-transition', from: 'down', to: 'up' },
+            ],
+        );
 
         service.shutdown();
     });
