@@ -151,11 +151,13 @@ function renderLegHistoryCharts(pipelineId: string, data: LegHistoryData): void 
                 `<span class="inline-flex items-center gap-1 text-xs"><span class="inline-block h-2 w-2 rounded-full" style="background:${['#38bdf8', '#a78bfa', '#f59e0b', '#34d399', '#fb7185', '#f97316'][index % 6]}"></span>${escapeHtml(`${leg.ip}:${leg.port}`)}</span>`,
         )
         .join('');
-    wrap.innerHTML = `<div class="flex flex-wrap gap-x-3 gap-y-1 mb-2">${legend}</div>
-        <div class="grid grid-cols-1 gap-4">
-            <div><div class="text-xs opacity-60 mb-1">Cumulative packet loss / drop</div><canvas id="srt-leg-loss-chart" class="w-full h-32 text-base-content"></canvas></div>
-            <div><div class="text-xs opacity-60 mb-1">Receive rate (Mbps)</div><canvas id="srt-leg-rate-chart" class="w-full h-32 text-base-content"></canvas></div>
-        </div>`;
+    if (!document.getElementById('srt-leg-loss-chart')) {
+        wrap.innerHTML = `<div class="flex flex-wrap gap-x-3 gap-y-1 mb-2">${legend}</div>
+            <div class="grid grid-cols-1 gap-4">
+                <div><div class="text-xs opacity-60 mb-1">Cumulative packet loss / drop</div><canvas id="srt-leg-loss-chart" class="w-full h-32 text-base-content"></canvas></div>
+                <div><div class="text-xs opacity-60 mb-1">Receive rate (Mbps)</div><canvas id="srt-leg-rate-chart" class="w-full h-32 text-base-content"></canvas></div>
+            </div>`;
+    }
     legHistoryChart(
         'srt-leg-loss-chart',
         cumulativeLossSeries,
@@ -172,19 +174,24 @@ function renderLegHistoryCharts(pipelineId: string, data: LegHistoryData): void 
     );
 }
 
-async function loadLegHistory(pipelineId: string): Promise<void> {
+async function loadLegHistory(pipelineId: string, showLoading = true): Promise<void> {
     const offset = legHistoryOffsets.get(pipelineId) ?? 0;
     const to = Date.now() - offset;
     const from = to - LEG_HISTORY_WINDOW_MS;
     const content = document.getElementById('srt-leg-history-content');
-    if (content) content.innerHTML = '<p class="text-sm opacity-50">Loading leg history…</p>';
+    if (content && showLoading) {
+        content.innerHTML = '<p class="text-sm opacity-50">Loading leg history…</p>';
+    }
     const data = await api.getLegHistory(pipelineId, from, to);
     if (!data || !document.getElementById('srt-leg-history-content')) return;
     const range = document.getElementById('srt-leg-history-range');
     if (range) {
         const fmt = (ts: number) =>
             new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        range.textContent = offset === 0 ? 'LIVE' : `${fmt(data.from)} – ${fmt(data.to)}`;
+        range.innerHTML =
+            offset === 0
+                ? '<span class="badge badge-success badge-xs gap-1">LIVE</span>'
+                : `<span class="font-mono text-xs opacity-60">${fmt(data.from)} – ${fmt(data.to)}</span>`;
     }
     const back = document.getElementById('srt-leg-history-back') as HTMLButtonElement | null;
     const forward = document.getElementById('srt-leg-history-forward') as HTMLButtonElement | null;
@@ -195,11 +202,11 @@ async function loadLegHistory(pipelineId: string): Promise<void> {
 
 function renderLegHistorySection(pipelineId: string): string {
     return `<div id="srt-leg-history-section" class="mt-1">
-        <div class="flex items-center justify-between gap-2 mb-2">
+        <div class="mb-2 flex items-center justify-center gap-2 px-1">
             <div class="text-xs font-semibold uppercase opacity-50">Bonded leg history</div>
             <div class="flex items-center gap-1">
                 <button id="srt-leg-history-back" type="button" class="btn btn-xs btn-ghost">&#8592; 10 min</button>
-                <span id="srt-leg-history-range" class="font-mono text-xs opacity-60 w-28 text-center">LIVE</span>
+                <span id="srt-leg-history-range" class="inline-flex w-28 justify-center"><span class="badge badge-success badge-xs gap-1">LIVE</span></span>
                 <button id="srt-leg-history-forward" type="button" class="btn btn-xs btn-ghost" disabled>10 min &#8594;</button>
             </div>
         </div>
@@ -1411,6 +1418,14 @@ function renderSrtBondingDetailsContent(pipelineId: string, target?: HTMLElement
 export function renderSrtBondingDetailsInline(pipelineId: string): void {
     const target = document.getElementById('srt-bonding-details');
     if (!target) return;
+    const alreadyRendered =
+        target.dataset.pipelineId === pipelineId &&
+        !!document.getElementById('srt-leg-history-section');
+    if (alreadyRendered) {
+        void loadLegHistory(pipelineId, false);
+        return;
+    }
+    target.dataset.pipelineId = pipelineId;
     renderSrtBondingDetailsContent(pipelineId, target);
     const graphs = document.getElementById('srt-bonding-graphs');
     const history = target.querySelector('#srt-leg-history-section');
