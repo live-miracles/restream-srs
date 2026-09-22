@@ -155,7 +155,6 @@ function renderLegHistoryCharts(pipelineId: string, data: LegHistoryData): void 
         wrap.innerHTML = `<div class="flex flex-wrap gap-x-3 gap-y-1 mb-2">${legend}</div>
             <div class="grid grid-cols-1 gap-4">
                 <div><div class="text-xs opacity-60 mb-1">Cumulative packet loss / drop</div><canvas id="srt-leg-loss-chart" class="w-full h-32 text-base-content"></canvas></div>
-                <div><div class="text-xs opacity-60 mb-1">Receive rate (Mbps)</div><canvas id="srt-leg-rate-chart" class="w-full h-32 text-base-content"></canvas></div>
             </div>`;
     }
     legHistoryChart(
@@ -164,13 +163,6 @@ function renderLegHistoryCharts(pipelineId: string, data: LegHistoryData): void 
         (sample) => sample.lossPct,
         0,
         (value) => fmt(value),
-    );
-    legHistoryChart(
-        'srt-leg-rate-chart',
-        data.legs,
-        (sample) => sample.recvRateMbps,
-        0,
-        (value) => `${fmt(value)}`,
     );
 }
 
