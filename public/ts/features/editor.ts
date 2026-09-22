@@ -148,7 +148,7 @@ function renderLegHistoryCharts(pipelineId: string, data: LegHistoryData): void 
     const legend = data.legs
         .map(
             (leg, index) =>
-                `<span class="inline-flex items-center gap-1 text-xs"><span class="inline-block h-2 w-2 rounded-full" style="background:${['#38bdf8', '#a78bfa', '#f59e0b', '#34d399', '#fb7185', '#f97316'][index % 6]}"></span>${escapeHtml(`${leg.ip}:${leg.port}`)}</span>`,
+                `<span class="inline-flex items-center gap-1 text-xs"><span class="inline-block h-2 w-2 rounded-full" style="background:${['#38bdf8', '#a78bfa', '#f59e0b', '#34d399', '#fb7185', '#f97316'][index % 6]}"></span>${escapeHtml(leg.ip)}</span>`,
         )
         .join('');
     if (!document.getElementById('srt-leg-loss-chart')) {
