@@ -131,7 +131,7 @@ function renderLegHistoryCharts(pipelineId: string, data: LegHistoryData): void 
     if (!wrap) return;
     if (data.legs.length === 0 || data.legs.every((leg) => leg.samples.length === 0)) {
         wrap.innerHTML =
-            '<p class="text-sm opacity-50">No packet drop history is available for this period.</p>';
+            '<p class="text-sm opacity-50">No SRT leg history is available for this period.</p>';
         return;
     }
     const fmt = (value: number) => (value >= 10 ? value.toFixed(0) : value.toFixed(1));
@@ -141,14 +141,25 @@ function renderLegHistoryCharts(pipelineId: string, data: LegHistoryData): void 
                 `<span class="inline-flex items-center gap-1 text-xs"><span class="inline-block h-2 w-2 rounded-full" style="background:${['#38bdf8', '#a78bfa', '#f59e0b', '#34d399', '#fb7185', '#f97316'][index % 6]}"></span>${escapeHtml(leg.ip)}</span>`,
         )
         .join('');
-    if (!document.getElementById('srt-leg-loss-chart')) {
+    if (
+        !document.getElementById('srt-leg-loss-chart') ||
+        !document.getElementById('srt-leg-drop-chart')
+    ) {
         wrap.innerHTML = `<div class="flex flex-wrap gap-x-3 gap-y-1 mb-2">${legend}</div>
             <div class="grid grid-cols-1 gap-4">
-                <div><canvas id="srt-leg-loss-chart" class="w-full h-32 text-base-content"></canvas></div>
+                <div><div class="text-xs opacity-60 mb-1">Cumulative packet loss</div><canvas id="srt-leg-loss-chart" class="w-full h-32 text-base-content"></canvas></div>
+                <div><div class="text-xs opacity-60 mb-1">Cumulative packet drops</div><canvas id="srt-leg-drop-chart" class="w-full h-32 text-base-content"></canvas></div>
             </div>`;
     }
     legHistoryChart(
         'srt-leg-loss-chart',
+        data.legs,
+        (sample) => sample.lossTotal ?? null,
+        0,
+        (value) => fmt(value),
+    );
+    legHistoryChart(
+        'srt-leg-drop-chart',
         data.legs,
         (sample) => sample.dropTotal ?? null,
         0,
@@ -185,7 +196,7 @@ async function loadLegHistory(pipelineId: string, showLoading = true): Promise<v
 function renderLegHistorySection(pipelineId: string): string {
     return `<div id="srt-leg-history-section" class="mt-1">
         <div class="mb-2 flex items-center justify-center gap-2 px-1">
-            <div class="text-xs font-semibold uppercase opacity-50">Cumulative packet drops</div>
+            <div class="text-xs font-semibold uppercase opacity-50">SRT Legs History</div>
             <div class="flex items-center gap-1">
                 <button id="srt-leg-history-back" type="button" class="btn btn-xs btn-ghost">&#8592; 10 min</button>
                 <span id="srt-leg-history-range" class="inline-flex w-28 justify-center"><span class="badge badge-success badge-xs gap-1">LIVE</span></span>
