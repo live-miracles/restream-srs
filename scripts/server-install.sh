@@ -11,6 +11,19 @@
 #   REPO_URL=https://github.com/your-fork/restream-srs sudo bash scripts/server-install.sh
 set -euo pipefail
 
+ASSUME_YES=no
+case "${1:-}" in
+    -y | --yes)
+        ASSUME_YES=yes
+        ;;
+    '')
+        ;;
+    *)
+        echo "Usage: sudo bash scripts/server-install.sh [-y|--yes]" >&2
+        exit 2
+        ;;
+esac
+
 if [[ "$(id -u)" -ne 0 ]]; then
     echo "ERROR: run as root (sudo bash scripts/server-install.sh)" >&2
     exit 1
@@ -77,7 +90,7 @@ verify_sha256() {
 
 step "1/9 System packages"
 apt-get update -q
-apt-get install -y -q curl tar xz-utils unzip git ca-certificates
+apt-get install -y -q curl tar xz-utils unzip git ca-certificates build-essential
 
 step "2/9 Node.js 22"
 if node --version 2> /dev/null | grep -q '^v22'; then
@@ -234,7 +247,9 @@ if [[ -s "$DB_FILE" ]]; then
         y | Y) wipe_db=yes ;;
         n | N) wipe_db=no ;;
         *)
-            if [[ -t 0 ]]; then
+            if [[ "$ASSUME_YES" == yes ]]; then
+                echo "Existing database found at $DB_FILE. Preserving it (-y/--yes)."
+            elif [[ -t 0 ]]; then
                 read -rp "Existing database found at $DB_FILE. Preserve it? [Y/n] " reply
                 [[ "$reply" == "n" || "$reply" == "N" ]] && wipe_db=yes
             fi
