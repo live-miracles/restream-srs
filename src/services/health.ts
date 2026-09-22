@@ -114,6 +114,7 @@ export interface LegHistorySample {
     receivedPackets?: number | null;
     lossPackets?: number | null;
     dropPackets?: number | null;
+    dropTotal?: number | null;
     retransmittedPackets?: number | null;
 }
 
@@ -997,6 +998,7 @@ export function createHealthService(
                     receivedPackets: receivedDelta,
                     lossPackets: lossDelta,
                     dropPackets: dropDelta,
+                    dropTotal: leg.recvDropTotal,
                     retransmittedPackets: retransDelta,
                 };
                 series.samples.push(sample);
