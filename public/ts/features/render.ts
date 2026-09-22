@@ -2358,7 +2358,10 @@ function renderPipelineInfo(selectedId: string | null): void {
             ed.renderSrtBondingDetailsInline(pipeline.id);
         } else {
             const details = document.getElementById('srt-bonding-details');
-            if (details) details.innerHTML = '';
+            if (details) {
+                details.innerHTML = '';
+                delete details.dataset.pipelineId;
+            }
             if (bondingGraphs) bondingGraphs.innerHTML = '';
         }
     });
