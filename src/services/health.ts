@@ -14,8 +14,14 @@ import { readAppConfig } from '../utils/appConfig.js';
 import { readSrsConfigValues } from '../utils/srsConfig.js';
 import type { Db } from '../types.js';
 import type { OutputService } from './outputs.js';
-import type { SrtRelayService, SrtRelayStats, SrtRelayStreamStatus } from './srtRelay.js';
+import type {
+    SrtRelayService,
+    SrtRelayStats,
+    SrtRelayStreamStatus,
+    SrtRelayLegState,
+} from './srtRelay.js';
 import { inputPullUrl, type InputProtocol, type InputState } from './inputState.js';
+import type { DiagnosticsLogger } from '../utils/diagnostics.js';
 
 const FFPROBE_CMD = readAppConfig().ffprobePath;
 const FFPROBE_TIMEOUT_MS = 15000;
@@ -343,6 +349,7 @@ export function createHealthService(
     outputService: OutputService,
     srtRelayService: SrtRelayService,
     inputState: InputState,
+    diagnostics?: DiagnosticsLogger,
 ) {
     let snapshot: HealthSnapshot = {
         generatedAt: new Date().toISOString(),
@@ -386,6 +393,7 @@ export function createHealthService(
         Map<
             string,
             {
+                state: SrtRelayLegState;
                 packets: number | null;
                 noFlowSinceMs: number | null;
                 recvLossTotal: number | null;
@@ -554,6 +562,7 @@ export function createHealthService(
                 const msg = `Unreachable: ${reason instanceof Error ? reason.message : String(reason)}`;
                 pushSrsEvent('srs', 'down', msg);
                 console.warn(`[srs] ${msg}`);
+                diagnostics?.event('srs-transition', { from: 'up', to: 'down', message: msg });
             }
         }
         if (clientsResult.status === 'fulfilled') {
@@ -562,6 +571,7 @@ export function createHealthService(
         if (srsReachable && prevSrsReachable === false) {
             pushSrsEvent('srs', 'up', 'Reachable again');
             console.log('[srs] reachable again');
+            diagnostics?.event('srs-transition', { from: 'down', to: 'up' });
         }
         prevSrsReachable = srsReachable;
         inputState.setSrsReachable(srsReachable);
@@ -572,9 +582,11 @@ export function createHealthService(
             const msg = `Unreachable: ${relayStats.lastError ?? 'unknown error'}`;
             pushSrsEvent('relay', 'down', msg);
             console.warn(`[relay] ${msg}`);
+            diagnostics?.event('relay-transition', { from: 'running', to: 'failed', message: msg });
         } else if (!relayFailed && prevRelayFailed && relayStats.status === 'running') {
             pushSrsEvent('relay', 'up', 'Reachable again');
             console.log('[relay] reachable again');
+            diagnostics?.event('relay-transition', { from: 'failed', to: 'running' });
         }
         prevRelayFailed = relayFailed;
 
@@ -611,6 +623,12 @@ export function createHealthService(
             if (publisherChanged) {
                 clearFfprobeState(pipeline.id);
                 publisherChangedAt.set(pipeline.id, Date.now());
+                diagnostics?.event('input-publisher-transition', {
+                    pipelineId: pipeline.id,
+                    fromCid: prevPublisherCid,
+                    toCid: publisherCid,
+                    protocol: nowSrtInput ? 'srt' : 'rtmp',
+                });
             }
             const nowProtocol: InputProtocol | null = nowConnected
                 ? nowSrtInput
@@ -656,6 +674,12 @@ export function createHealthService(
                     } catch {
                         /* non-critical */
                     }
+                    diagnostics?.event('input-transition', {
+                        pipelineId: pipeline.id,
+                        from: prevLive ? 'live' : 'offline',
+                        to: 'live',
+                        protocol: inputState.getProtocol(pipeline.id),
+                    });
                 }
 
                 if (prevLive && !nowLive && nowConnected) {
@@ -672,6 +696,12 @@ export function createHealthService(
                     } catch {
                         /* non-critical */
                     }
+                    diagnostics?.event('input-transition', {
+                        pipelineId: pipeline.id,
+                        from: 'live',
+                        to: 'media-lost',
+                        uptimeSec,
+                    });
                 }
 
                 if (prevConnected && !nowConnected) {
@@ -694,6 +724,12 @@ export function createHealthService(
                     } catch {
                         /* non-critical */
                     }
+                    diagnostics?.event('input-transition', {
+                        pipelineId: pipeline.id,
+                        from: 'connected',
+                        to: 'disconnected',
+                        uptimeSec,
+                    });
                 }
             }
 
@@ -856,6 +892,7 @@ export function createHealthService(
             const currentLegs = new Map<
                 string,
                 {
+                    state: SrtRelayLegState;
                     packets: number | null;
                     noFlowSinceMs: number | null;
                     recvLossTotal: number | null;
@@ -880,6 +917,7 @@ export function createHealthService(
                         ? (previousLeg.noFlowSinceMs ?? now)
                         : null;
                 currentLegs.set(key, {
+                    state: leg.state,
                     packets,
                     noFlowSinceMs,
                     recvLossTotal: leg.recvLossTotal,
@@ -907,6 +945,16 @@ export function createHealthService(
                     });
                 }
                 legHealth.set(key, { health, reason });
+                if (previousLeg && previousLeg.state !== leg.state) {
+                    diagnostics?.event('bonded-leg-transition', {
+                        pipelineId: pipeline.id,
+                        leg: key,
+                        from: previousLeg.state,
+                        to: leg.state,
+                        health,
+                        reason,
+                    });
+                }
             }
             legPacketSamples.set(pipeline.id, currentLegs);
             const pipelineLegHistory =

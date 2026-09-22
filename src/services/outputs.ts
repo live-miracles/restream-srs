@@ -10,6 +10,7 @@ import {
 import { red, yellow, green } from '../utils/ansiColor.js';
 import type { Db, Output } from '../types.js';
 import type { InputState } from './inputState.js';
+import type { DiagnosticsLogger } from '../utils/diagnostics.js';
 
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000];
 // Outputs retry indefinitely — an input can be down for hours during a major
@@ -137,7 +138,11 @@ function killOrphanedFfmpeg(): void {
     }
 }
 
-export function createOutputService(db: Db, inputState: InputState): OutputService {
+export function createOutputService(
+    db: Db,
+    inputState: InputState,
+    diagnostics?: DiagnosticsLogger,
+): OutputService {
     const processes = new Map<string, ChildProcess>();
     const statuses = new Map<
         string,
@@ -224,6 +229,12 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
                 `[outputs] ${output.id} (${output.name}) retry ${r.failures} scheduled in ${delayMs}ms`,
             ),
         );
+        diagnostics?.event('ffmpeg-retry-scheduled', {
+            outputId: output.id,
+            outputName: output.name,
+            attempt: r.failures,
+            delayMs,
+        });
         scheduleTryStart(output.id, delayMs);
     }
 
@@ -303,10 +314,24 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
                     if (speed > 1.1) {
                         p.fastMediaSinceMs ??= now;
                         if (now - p.fastMediaSinceMs >= 10_000) {
-                            p.mediaClockWarning = `FFmpeg media clock is running fast (${speed.toFixed(2)}x realtime).`;
+                            const warning = `FFmpeg media clock is running fast (${speed.toFixed(2)}x realtime).`;
+                            if (!p.mediaClockWarning) {
+                                diagnostics?.event('ffmpeg-media-clock-warning', {
+                                    outputId,
+                                    speed,
+                                    message: warning,
+                                });
+                            }
+                            p.mediaClockWarning = warning;
                         }
                     } else {
                         p.fastMediaSinceMs = null;
+                        if (p.mediaClockWarning) {
+                            diagnostics?.event('ffmpeg-media-clock-recovered', {
+                                outputId,
+                                message: 'FFmpeg media clock returned to realtime pacing.',
+                            });
+                        }
                         p.mediaClockWarning = null;
                     }
                 }
@@ -355,6 +380,10 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
         if (line) {
             p.lastTimestampWarningAtMs = Date.now();
             p.lastTimestampWarning = `FFmpeg reported: ${line}`;
+            diagnostics?.event('ffmpeg-timestamp-warning', {
+                outputId,
+                line,
+            });
         }
     }
 
@@ -583,6 +612,12 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
                 `[outputs] ${outputId} (${output.name}) socket unhealthy: ${reason}, killing pid=${proc.pid}`,
             ),
         );
+        diagnostics?.event('ffmpeg-restart', {
+            outputId,
+            outputName: output.name,
+            reason: `socket unhealthy: ${reason}`,
+            pid: proc.pid ?? null,
+        });
         watchdogKills.add(outputId);
         void killProcess(outputId, proc, false);
         return true;
@@ -648,6 +683,14 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
                             )}MB), killing pid=${proc.pid} for retry`,
                         ),
                     );
+                    diagnostics?.event('ffmpeg-restart', {
+                        outputId,
+                        outputName: output.name,
+                        reason: 'memory limit exceeded',
+                        pid: proc.pid ?? null,
+                        rssMb: Math.round(rssBytes / (1024 * 1024)),
+                        limitMb: Math.round(limitBytes / (1024 * 1024)),
+                    });
                     watchdogKills.add(outputId);
                     void killProcess(outputId, proc, false);
                     continue;
@@ -680,6 +723,13 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
                     )}s, killing pid=${proc.pid} for retry`,
                 ),
             );
+            diagnostics?.event('ffmpeg-restart', {
+                outputId,
+                outputName: output.name,
+                reason: 'output progress stalled',
+                pid: proc.pid ?? null,
+                stalledSeconds: Math.round((now - p.lastOutputProgressAtMs) / 1000),
+            });
             watchdogKills.add(outputId);
             void killProcess(outputId, proc, false);
         }
@@ -751,6 +801,13 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
             lastOutTimeWallMs: null,
         });
         console.log(green(`[outputs] ${output.id} (${output.name}) started pid=${child.pid}`));
+        diagnostics?.event('ffmpeg-started', {
+            outputId: output.id,
+            outputName: output.name,
+            pid: child.pid ?? null,
+            inputProtocol: inputUrl.split(':', 1)[0],
+            outputProtocol: output.url.split(':', 1)[0],
+        });
 
         let buf = '';
         child.stdout?.on('data', (d: Buffer) => {
@@ -764,11 +821,12 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
 
         let stderrTail = '';
         child.stderr?.on('data', (d: Buffer) => {
-            stderrTail = (stderrTail + d.toString()).slice(-STDERR_TAIL_BYTES);
+            const text = d.toString();
+            stderrTail = (stderrTail + text).slice(-STDERR_TAIL_BYTES);
             const p = progress.get(output.id);
             if (p) {
                 p.stderrTail = stderrTail;
-                noteTimestampWarning(output.id, d.toString());
+                noteTimestampWarning(output.id, text);
             }
         });
 
@@ -788,6 +846,16 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
                     `[outputs] ${output.id} (${output.name}) exited code=${code} signal=${signal} status=${status}`,
                 ),
             );
+            diagnostics?.event('ffmpeg-exited', {
+                outputId: output.id,
+                outputName: output.name,
+                pid: child.pid ?? null,
+                code,
+                signal,
+                status,
+                watchdog: wasWatchdog,
+                stderrTail: stderrTail.trim() || null,
+            });
 
             if (!wasStop) {
                 try {

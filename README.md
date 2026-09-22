@@ -356,6 +356,18 @@ ever log to the journal. All three require `restream-srs.service`'s
 `SupplementaryGroups=systemd-journal` (set by `server-install.sh`); without it,
 the Server Logs view shows no output for whichever service's journal it can't read.
 
+The control plane also writes structured diagnostics to
+`/var/lib/restream-srs/diagnostics/` in production. The rotated JSONL files keep
+output starts/exits/restarts, SRS and relay transitions, input and bonded-leg
+transitions, and FFmpeg timestamp/media-clock warnings for seven days (the last
+ffmpeg stderr tail at exit is included on the exit event; raw stderr isn't
+streamed to diagnostics to keep incident volume from crowding out the window).
+Files are
+rotated daily or at 100 MB, whichever comes first, with a 5 GB total diagnostics
+cap that removes the oldest rotated files first. The installer configures
+persistent journald with a seven-day retention limit, 1 GB system journal cap,
+256 MB runtime cap, and one-day journal file rotation.
+
 Relay ports and status polling are read from `srt-bonding-relay.json`, located beside `srs_config_path`.
 
 Installer/development overrides:

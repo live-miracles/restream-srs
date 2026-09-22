@@ -989,3 +989,122 @@ describe('restartPipelineOutputs', () => {
         service.shutdown();
     });
 });
+
+function makeDiagnosticsSpy() {
+    const events = [];
+    return {
+        events,
+        event(event, fields = {}) {
+            events.push({ event, ...fields });
+        },
+        close() {},
+    };
+}
+
+describe('output diagnostics events', () => {
+    beforeEach(() => {
+        process.chdir(tempDir);
+    });
+
+    afterEach(() => {
+        process.chdir(originalCwd);
+        delete require.cache[require.resolve('../src/services/outputs')];
+        delete require.cache[require.resolve('../src/utils/appConfig')];
+    });
+
+    test('emits started, timestamp-warning, restart, exited, and retry-scheduled events across a stall/kill/retry cycle', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const diagnostics = makeDiagnosticsSpy();
+        const createOutputService = loadOutputService(t, proc);
+        const service = createOutputService(db, makeReadyInputState(), diagnostics);
+
+        await service.start('out1');
+        proc.stdout.write('total_size=4096\nout_time_ms=1000000\nbitrate=3200.0kbits/s\n');
+        proc.stderr.write(
+            'Application provided invalid, non monotonically increasing dts to muxer in stream 0: non-monotonous DTS\n',
+        );
+
+        await sleep(80);
+
+        assert.deepEqual(
+            diagnostics.events.map((e) => e.event),
+            [
+                'ffmpeg-started',
+                'ffmpeg-timestamp-warning',
+                'ffmpeg-restart',
+                'ffmpeg-exited',
+                'ffmpeg-retry-scheduled',
+            ],
+        );
+
+        const started = diagnostics.events[0];
+        assert.equal(started.outputId, 'out1');
+        assert.equal(started.outputName, 'YouTube');
+        assert.equal(started.pid, proc.pid);
+        assert.equal(started.inputProtocol, 'rtmp');
+        assert.equal(started.outputProtocol, 'rtmp');
+
+        const warning = diagnostics.events[1];
+        assert.equal(warning.outputId, 'out1');
+        assert.match(warning.line, /non-monotonous DTS/i);
+
+        const restart = diagnostics.events[2];
+        assert.equal(restart.outputId, 'out1');
+        assert.equal(restart.reason, 'output progress stalled');
+        assert.equal(restart.pid, proc.pid);
+
+        const exited = diagnostics.events[3];
+        assert.equal(exited.outputId, 'out1');
+        assert.equal(exited.signal, 'SIGTERM');
+        assert.equal(exited.status, 'failed');
+        assert.equal(exited.watchdog, true);
+
+        const retry = diagnostics.events[4];
+        assert.equal(retry.outputId, 'out1');
+        assert.equal(retry.attempt, 1);
+        assert.equal(retry.delayMs, 1000);
+
+        service.shutdown();
+    });
+
+    test('does not emit a second media-clock-recovered event when media pacing was never flagged as fast', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const diagnostics = makeDiagnosticsSpy();
+        const createOutputService = loadOutputService(t, proc, { progressStallMs: 60_000 });
+        const service = createOutputService(db, makeReadyInputState(), diagnostics);
+
+        await service.start('out1');
+        proc.stdout.write('total_size=4096\nout_time_ms=1000000\n');
+        await sleep(15);
+        proc.stdout.write('total_size=8192\nout_time_ms=2000000\n');
+        await sleep(15);
+
+        assert.ok(
+            !diagnostics.events.some((e) => e.event.startsWith('ffmpeg-media-clock')),
+            'realtime-paced progress must not emit any media-clock diagnostics event',
+        );
+
+        service.shutdown();
+    });
+
+    test('does not emit a diagnostics event for unstructured stderr that matches no known warning pattern', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const diagnostics = makeDiagnosticsSpy();
+        const createOutputService = loadOutputService(t, proc, { progressStallMs: 60_000 });
+        const service = createOutputService(db, makeReadyInputState(), diagnostics);
+
+        await service.start('out1');
+        proc.stderr.write('Connection reset by peer\n');
+        await sleep(15);
+
+        assert.ok(
+            !diagnostics.events.some((e) => e.event === 'ffmpeg-timestamp-warning'),
+            'routine stderr noise must not be classified as a timestamp warning',
+        );
+
+        service.shutdown();
+    });
+});

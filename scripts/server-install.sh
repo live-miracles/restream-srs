@@ -255,6 +255,24 @@ echo "App config: $APP_DIR/restream.json"
 echo "Data:   $DB_FILE"
 
 step "9/9 Systemd"
+# Keep the journal bounded and available for the same seven-day incident window
+# as the application's structured diagnostics. These limits are host-wide, but
+# are intentionally conservative for the streaming VM and prevent a noisy
+# service from consuming the disk.
+mkdir -p /etc/systemd/journald.conf.d
+cat > /etc/systemd/journald.conf.d/restream-srs.conf << 'EOF'
+[Journal]
+Storage=persistent
+Compress=yes
+SystemMaxUse=1G
+SystemKeepFree=2G
+RuntimeMaxUse=256M
+MaxRetentionSec=7day
+MaxFileSec=1day
+SystemMaxFileSize=100M
+EOF
+systemctl restart systemd-journald
+
 cat > /etc/systemd/system/srs.service << EOF
 [Unit]
 Description=SRS Streaming Server

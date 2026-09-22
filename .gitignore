@@ -13,6 +13,7 @@ srt-bonding-relay.env
 objs/
 build/
 hls/
+diagnostics/
 *.wav
 *.mkv
 /docs

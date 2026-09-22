@@ -26,6 +26,7 @@ import {
 import { registerVersionApi } from './api/version.js';
 import { readAppConfig } from './utils/appConfig.js';
 import { createHostProbeService } from './services/hostProbes.js';
+import { createDiagnosticsLogger } from './utils/diagnostics.js';
 
 const app = express();
 const PORT = readAppConfig().port;
@@ -47,11 +48,20 @@ app.use(
 app.use(express.json());
 
 const db = createDb();
+const diagnostics = createDiagnosticsLogger(
+    path.join(path.dirname(readAppConfig().databasePath), 'diagnostics'),
+);
 
 const inputState = createInputState();
-const outputService = createOutputService(db, inputState);
-const srtRelayService = createSrtRelayService();
-const healthService = createHealthService(db, outputService, srtRelayService, inputState);
+const outputService = createOutputService(db, inputState, diagnostics);
+const srtRelayService = createSrtRelayService(diagnostics);
+const healthService = createHealthService(
+    db,
+    outputService,
+    srtRelayService,
+    inputState,
+    diagnostics,
+);
 const previewService = createPreviewService(db, inputState);
 const hostProbeService = createHostProbeService(db);
 
@@ -151,6 +161,7 @@ function shutdown(signal: string): void {
     healthService.shutdown();
     srtRelayService.shutdown();
     previewService.shutdown();
+    diagnostics.close();
     process.exit(0);
 }
 
