@@ -154,6 +154,7 @@ describe('Version API integration', () => {
         assert.equal(res.body.srs, 'unknown');
         assert.equal(res.body.srtRelay, 'unknown');
         assert.equal(res.body.ffmpeg, 'unknown');
+        assert.equal(res.body.node, process.version);
         // Not sourced externally — read straight from package.json.
         assert.equal(res.body.app, pkgVersion);
     });
@@ -185,6 +186,7 @@ describe('Version API integration', () => {
         assert.equal(res.body.srs, '6.0.155');
         assert.equal(res.body.ffmpeg, '7.1-static');
         assert.equal(res.body.srtRelay, 'unknown');
+        assert.equal(res.body.node, process.version);
     });
 
     test('a malformed (non-JSON-shaped) SRS versions response falls back to "unknown", not a crash', async (t) => {

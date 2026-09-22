@@ -183,6 +183,7 @@ export const getVersion = () =>
         srs: string;
         srtRelay: string;
         ffmpeg: string;
+        node: string;
         os: string;
         kernel: string;
     }>('/api/version');
