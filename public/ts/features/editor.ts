@@ -134,8 +134,17 @@ function renderLegHistoryCharts(pipelineId: string, data: LegHistoryData): void 
             '<p class="text-sm opacity-50">No bonded-leg history is available for this period.</p>';
         return;
     }
-    const fmt = (value: number) =>
-        value >= 10 ? value.toFixed(0) : value < 1 ? value.toFixed(2) : value.toFixed(1);
+    const fmt = (value: number) => (value >= 10 ? value.toFixed(0) : value.toFixed(1));
+    const cumulativeLossSeries = data.legs.map((leg) => {
+        let total = 0;
+        return {
+            ...leg,
+            samples: leg.samples.map((sample) => {
+                total += (sample.lossPackets ?? 0) + (sample.dropPackets ?? 0);
+                return { ...sample, lossPct: total };
+            }),
+        };
+    });
     const legend = data.legs
         .map(
             (leg, index) =>
@@ -144,15 +153,15 @@ function renderLegHistoryCharts(pipelineId: string, data: LegHistoryData): void 
         .join('');
     wrap.innerHTML = `<div class="flex flex-wrap gap-x-3 gap-y-1 mb-2">${legend}</div>
         <div class="grid grid-cols-1 gap-4">
-            <div><div class="text-xs opacity-60 mb-1">Packet loss / drop (%)</div><canvas id="srt-leg-loss-chart" class="w-full h-32 text-base-content"></canvas></div>
+            <div><div class="text-xs opacity-60 mb-1">Cumulative packet loss / drop</div><canvas id="srt-leg-loss-chart" class="w-full h-32 text-base-content"></canvas></div>
             <div><div class="text-xs opacity-60 mb-1">Receive rate (Mbps)</div><canvas id="srt-leg-rate-chart" class="w-full h-32 text-base-content"></canvas></div>
         </div>`;
     legHistoryChart(
         'srt-leg-loss-chart',
-        data.legs,
-        (sample) => Math.max(sample.lossPct ?? 0, sample.dropPct ?? 0),
+        cumulativeLossSeries,
+        (sample) => sample.lossPct,
         0,
-        (value) => `${fmt(value)}%`,
+        (value) => fmt(value),
     );
     legHistoryChart(
         'srt-leg-rate-chart',
