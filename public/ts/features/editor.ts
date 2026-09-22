@@ -1280,9 +1280,9 @@ function hideLogsModalClearErrors(): void {
 }
 
 function srtDetailRow(label: string, value: string): string {
-    return `<div class="flex items-center justify-between gap-4 py-1 border-b border-base-content/10 last:border-b-0">
+    return `<div class="flex items-center gap-3 py-1 border-b border-base-content/10 last:border-b-0">
         <span class="opacity-60">${label}</span>
-        <span class="text-right">${value}</span>
+        <span>${value}</span>
     </div>`;
 }
 
