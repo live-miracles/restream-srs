@@ -122,11 +122,7 @@ export function createDiagnosticsLogger(
     const write = (record: Record<string, unknown>): void => {
         const line = `${JSON.stringify({ ts: new Date().toISOString(), ...record })}\n`;
         const date = localDate();
-        if (
-            !state ||
-            state.date !== date ||
-            state.bytes + Buffer.byteLength(line) > maxFileBytes
-        ) {
+        if (!state || state.date !== date || state.bytes + Buffer.byteLength(line) > maxFileBytes) {
             rotate(date);
         }
         if (!state) return;
