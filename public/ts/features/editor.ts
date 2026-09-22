@@ -135,16 +135,6 @@ function renderLegHistoryCharts(pipelineId: string, data: LegHistoryData): void 
         return;
     }
     const fmt = (value: number) => (value >= 10 ? value.toFixed(0) : value.toFixed(1));
-    const cumulativeDropSeries = data.legs.map((leg) => {
-        let total = 0;
-        return {
-            ...leg,
-            samples: leg.samples.map((sample) => {
-                total += sample.dropPackets ?? 0;
-                return { ...sample, dropPackets: total };
-            }),
-        };
-    });
     const legend = data.legs
         .map(
             (leg, index) =>
@@ -159,8 +149,8 @@ function renderLegHistoryCharts(pipelineId: string, data: LegHistoryData): void 
     }
     legHistoryChart(
         'srt-leg-loss-chart',
-        cumulativeDropSeries,
-        (sample) => sample.dropPackets ?? null,
+        data.legs,
+        (sample) => sample.dropTotal ?? null,
         0,
         (value) => fmt(value),
     );
