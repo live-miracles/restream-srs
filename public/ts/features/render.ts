@@ -427,6 +427,12 @@ function relayIssues(
     outputSt: RelayFlowStatus,
 ): OverviewIssue[] {
     const issues: OverviewIssue[] = [];
+    for (const alert of pipeline.alerts) {
+        // The leg-specific version below includes the address and the precise
+        // reason, so avoid showing the generic no-flow alert twice.
+        if (alert.code === 'bonded-leg-no-flow') continue;
+        issues.push({ severity: alert.severity, message: alert.message });
+    }
     const inputSeverity = inputSt === 'error' ? 'error' : 'warning';
     const outputSeverity = outputSt === 'error' ? 'error' : 'warning';
 
@@ -586,6 +592,12 @@ function relayInputReasons(pipeline: PipelineView, relayProcessRunning: boolean)
     const broken = brokenLegCount(pipeline);
     const reasons: string[] = [];
 
+    for (const leg of legs) {
+        if (leg.health && leg.health !== 'ok' && leg.healthReason) {
+            reasons.push(`Leg ${leg.ip}: ${leg.healthReason}`);
+        }
+    }
+
     if (legs.length > 0 && broken === legs.length) {
         reasons.push(`All ${legs.length} bonded leg${legs.length === 1 ? '' : 's'} are down`);
     } else if (broken > 0) {
@@ -706,6 +718,8 @@ function relayHasRecentOutputFlow(pipeline: PipelineView): boolean {
 function relayInputStatus(pipeline: PipelineView, relayProcessRunning: boolean): RelayFlowStatus {
     if (!relayProcessRunning) return 'off';
     if (!pipeline.srtBonding.inputActive) return 'off';
+    if (pipeline.srtBonding.input.legs.some((leg) => leg.health === 'error')) return 'error';
+    if (pipeline.srtBonding.input.legs.some((leg) => leg.health === 'warn')) return 'warn';
     // A single connected leg has no failover if it drops — that's a warning
     // floor even when everything else about it looks healthy. A total outage
     // (every configured leg broken) is worse than reduced redundancy, so it
@@ -726,18 +740,14 @@ function relayOutputStatus(pipeline: PipelineView, relayProcessRunning: boolean)
     return relayHasRecentOutputFlow(pipeline) ? 'good' : 'warn';
 }
 
-function legStateDotColor(state: SrtBondingLeg['state']): string {
-    switch (state) {
-        case 'running':
-            return STATUS_COLOR_GOOD;
-        case 'idle':
-        case 'pending':
-            return STATUS_COLOR_WARN;
-        case 'broken':
-            return STATUS_COLOR_ERROR;
-        default:
-            return STATUS_COLOR_OFF;
-    }
+function legHealthColor(leg: SrtBondingLeg): string {
+    if (leg.health === 'error') return STATUS_COLOR_ERROR;
+    if (leg.health === 'warn') return STATUS_COLOR_WARN;
+    return STATUS_COLOR_GOOD;
+}
+
+function legHealthLabel(leg: SrtBondingLeg): string {
+    return (leg.health ?? (leg.state === 'running' ? 'ok' : 'warn')).toUpperCase();
 }
 
 function relayInputSeverityColor(
@@ -1336,9 +1346,11 @@ function renderOverview(): void {
     ).length;
     const legCells = (leg: SrtBondingLeg | null): string => {
         if (!leg) return `${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}${td(null)}`;
-        const color = legStateDotColor(leg.state);
+        const color = legHealthColor(leg);
+        const health = legHealthLabel(leg);
+        const title = leg.healthReason ?? `Transport state: ${leg.state}`;
         return `
-            <td><span class="inline-flex items-center gap-1"><span class="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style="background:${color}"></span>${escapeHtml(leg.state)}</span></td>
+            <td title="${escapeHtml(title)}"><span class="inline-flex items-center gap-1"><span class="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style="background:${color}"></span>${health}<span class="opacity-60">(${escapeHtml(leg.state)})</span></span></td>
             <td class="font-mono text-xs">${escapeHtml(leg.ip)}</td>
             <td class="font-mono text-xs">${fmtMs(leg.latencyMs)}</td>
             <td class="font-mono text-xs">${fmtMs(leg.rttMs)}</td>
@@ -2186,7 +2198,6 @@ function renderPipelineInfo(selectedId: string | null): void {
     const bondingDotFill = document.getElementById('srt-bonding-status-fill');
     const bondingTooltipContent = document.getElementById('srt-bonding-status-tooltip-content');
     const bondingUrl = document.getElementById('srt-bonding-url');
-    const bondingInfoBtn = document.getElementById('srt-bonding-info-btn');
     const bondingStats = document.getElementById('srt-bonding-stats');
     const bondingLegs = document.getElementById('srt-bonding-legs');
     const bondingErrWrap = document.getElementById('srt-bonding-last-error-wrap');
@@ -2232,13 +2243,6 @@ function renderPipelineInfo(selectedId: string | null): void {
         bondingUrl.textContent = bondingDisplayUrl;
         bondingUrl.dataset.copy = bondingUrlValue;
         bondingUrl.dataset.port = String(bondingPortValue);
-    }
-    if (bondingInfoBtn) {
-        (bondingInfoBtn as HTMLButtonElement).onclick = () => {
-            void import('../features/editor.js').then((ed) =>
-                ed.showSrtBondingDetails(pipeline.id),
-            );
-        };
     }
     if (bondingStats) {
         const b = pipeline.srtBonding;
@@ -2306,9 +2310,11 @@ function renderPipelineInfo(selectedId: string | null): void {
                        </tr></thead>
                        <tbody>${legs
                            .map((leg) => {
-                               const color = legStateDotColor(leg.state);
+                               const color = legHealthColor(leg);
+                               const health = legHealthLabel(leg);
+                               const title = leg.healthReason ?? `Transport state: ${leg.state}`;
                                return `<tr>
-                                   <td><span class="inline-flex items-center gap-1"><span class="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style="background:${color}"></span>${leg.state}</span></td>
+                                   <td title="${escapeHtml(title)}"><span class="inline-flex items-center gap-1"><span class="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style="background:${color}"></span>${health}<span class="opacity-60">(${escapeHtml(leg.state)})</span></span></td>
                                    <td class="font-mono text-xs">${leg.ip}</td>
                                    <td class="font-mono text-xs">${fmtMs(leg.rttMs)}</td>
                                    <td class="font-mono text-xs">${fmtMbpsValue(leg.recvRateMbps)}</td>
@@ -2341,6 +2347,10 @@ function renderPipelineInfo(selectedId: string | null): void {
             };
         }
     }
+
+    void import('../features/editor.js').then((ed) =>
+        ed.renderSrtBondingDetailsInline(pipeline.id),
+    );
 
     renderPreview(pipeline);
     renderOutputsList(pipeline);

@@ -333,7 +333,7 @@
       </div>
 
       <!-- Middle: Pipeline info -->
-      <div class="bg-base-200 mt-4 hidden overflow-y-auto rounded-xl px-4 pb-4 shadow" id="pipe-info-col">
+      <div class="bg-base-200 mt-4 flex hidden flex-col gap-2 overflow-y-auto rounded-xl px-4 pb-4 shadow" id="pipe-info-col">
         <div class="bg-base-200 sticky top-0 z-10 -mx-4 flex items-center justify-between gap-3 rounded-t-xl px-4 pt-4 pb-3 text-xl font-bold">
           <div class="flex min-w-0 items-center gap-2">
             <span class="truncate" id="pipe-name"></span>
@@ -532,7 +532,7 @@
           <div id="input-stats"></div>
         </div>
 
-        <div id="srt-bonding-card" class="border-base-content/10 bg-base-100/50 mb-2 rounded-xl border p-3">
+        <div id="srt-bonding-card" class="border-base-content/10 bg-base-100/50 order-last rounded-xl border p-3">
           <div class="mb-1 flex items-center justify-between gap-2">
             <div class="flex items-center gap-2">
               <div class="js-tooltip shrink-0" id="srt-bonding-status-tooltip">
@@ -542,22 +542,6 @@
                 <div id="srt-bonding-status-tooltip-content" class="js-tooltip-content hidden"></div>
               </div>
               <span class="text-xs font-semibold opacity-60">SRT Bonding</span>
-              <button class="btn btn-xs btn-ghost shrink-0 p-0 leading-none opacity-60" id="srt-bonding-info-btn" title="View all SRT details">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round">
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="M12 16v-4" />
-                  <path d="M12 8h.01" />
-                </svg>
-              </button>
             </div>
             <div class="flex gap-1">
               <button class="btn btn-xs btn-ghost btn-outline" onclick="copyText(document.getElementById('srt-bonding-url').dataset.port)">
@@ -620,9 +604,16 @@
           </div>
         </div>
 
+        <div id="srt-bonding-graphs" class="border-base-content/10 bg-base-100/50 order-last rounded-xl border p-3"></div>
+
+        <div id="srt-bonding-stats-card" class="border-base-content/10 bg-base-100/50 order-last rounded-xl border p-3">
+          <div class="mb-1 text-xs font-semibold opacity-60">Detailed SRT Statistics</div>
+          <div id="srt-bonding-details"></div>
+        </div>
+
         <!-- Publish URLs -->
-        <div class="space-y-2">
-          <div class="border-base-content/10 bg-base-100/50 rounded-xl border p-3">
+        <div class="flex flex-col gap-2">
+          <div class="border-base-content/10 bg-base-100/50 order-2 rounded-xl border p-3">
             <div class="mb-1 flex items-center justify-between gap-2">
               <span class="text-xs font-semibold opacity-60">SRT Publish URL</span>
               <div class="flex gap-1">
@@ -709,7 +700,7 @@
             </div>
             <code class="font-mono text-xs break-all opacity-80" id="srt-publish-url"></code>
           </div>
-          <div class="border-base-content/10 bg-base-100/50 rounded-xl border p-3">
+          <div class="border-base-content/10 bg-base-100/50 order-1 rounded-xl border p-3">
             <div class="mb-1 flex items-center justify-between gap-2">
               <span class="text-xs font-semibold opacity-60">RTMP Publish URL</span>
               <div class="flex gap-1">

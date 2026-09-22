@@ -156,6 +156,7 @@ export function parsePipelines(
             ...p,
             id: String(p.id),
             input,
+            alerts: ph?.alerts ?? [],
             outs,
             srtBonding: ph?.srtBonding ?? EMPTY_BONDING,
         };

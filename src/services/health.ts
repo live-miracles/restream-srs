@@ -29,6 +29,9 @@ const FFPROBE_FAILED_REFRESH_MS = 30000;
 const FFPROBE_STAGGER_MS = 200;
 const POLL_INTERVAL_MS = 5000;
 const MAX_SRS_EVENTS = 200;
+const LEG_HISTORY_MAX_SAMPLES = (60 * 60 * 1000) / POLL_INTERVAL_MS;
+const LEG_HISTORY_MAX_WINDOW_MS = 30 * 60 * 1000;
+const LEG_HEALTH_WINDOW_MS = 60 * 1000;
 
 export interface InputHealth {
     connected: boolean;
@@ -70,12 +73,43 @@ interface OutputHealth {
 interface PipelineHealth {
     input: InputHealth;
     outputs: Record<string, OutputHealth>;
+    alerts: PipelineAlert[];
     srtBonding: SrtRelayStreamStatus & {
         acceptedBySrs: boolean;
         publishConflict: boolean;
         srsPublisher: SrsPublisherInfo | null;
         localSrtPublisherConflict: boolean;
     };
+}
+
+export interface PipelineAlert {
+    severity: 'warning' | 'error';
+    code: string;
+    message: string;
+    sinceMs: number;
+}
+
+export interface LegHistorySample {
+    ts: number;
+    state: string;
+    health: 'ok' | 'warn' | 'error';
+    recvRateMbps: number | null;
+    rttMs: number | null;
+    latencyMs: number | null;
+    lossPct: number | null;
+    dropPct: number | null;
+    retransmissionPct: number | null;
+    belated: number | null;
+    receivedPackets?: number | null;
+    lossPackets?: number | null;
+    dropPackets?: number | null;
+    retransmittedPackets?: number | null;
+}
+
+export interface LegHistorySeries {
+    ip: string;
+    port: number;
+    samples: LegHistorySample[];
 }
 
 export interface HealthSnapshot {
@@ -333,6 +367,35 @@ export function createHealthService(
     const inputConnected = new Map<number, boolean>();
     const inputLiveStartMs = new Map<number, number>();
     const inputPublisherCid = new Map<number, string>();
+    const publisherChangedAt = new Map<number, number>();
+    const relayInputSamples = new Map<
+        number,
+        {
+            recvLossTotal: number;
+            recvDropTotal: number;
+            recvUniquePacketsTotal: number;
+            retransTotal: number;
+            belatedTotal: number | null;
+            latencyMs: number | null;
+            recvBitrateKbps: number | null;
+            forwardedPackets: number;
+        }
+    >();
+    const legPacketSamples = new Map<
+        number,
+        Map<
+            string,
+            {
+                packets: number | null;
+                noFlowSinceMs: number | null;
+                recvLossTotal: number | null;
+                recvDropTotal: number | null;
+                retransTotal: number | null;
+                belatedTotal: number | null;
+            }
+        >
+    >();
+    const legHistory = new Map<number, Map<string, LegHistorySeries>>();
     const ffprobeResults = new Map<number, ProbeStatus>();
     const ffprobeTimers = new Map<number, NodeJS.Timeout>();
     const ffprobeInFlight = new Set<number>();
@@ -441,6 +504,18 @@ export function createHealthService(
         for (const pipelineId of inputPublisherCid.keys()) {
             if (!activePipelineIds.has(pipelineId)) inputPublisherCid.delete(pipelineId);
         }
+        for (const pipelineId of publisherChangedAt.keys()) {
+            if (!activePipelineIds.has(pipelineId)) publisherChangedAt.delete(pipelineId);
+        }
+        for (const pipelineId of relayInputSamples.keys()) {
+            if (!activePipelineIds.has(pipelineId)) relayInputSamples.delete(pipelineId);
+        }
+        for (const pipelineId of legPacketSamples.keys()) {
+            if (!activePipelineIds.has(pipelineId)) legPacketSamples.delete(pipelineId);
+        }
+        for (const pipelineId of legHistory.keys()) {
+            if (!activePipelineIds.has(pipelineId)) legHistory.delete(pipelineId);
+        }
         for (const pipelineId of ffprobeResults.keys()) {
             if (!activePipelineIds.has(pipelineId)) clearFfprobeState(pipelineId);
         }
@@ -533,7 +608,10 @@ export function createHealthService(
                 publisherCid !== null &&
                 prevPublisherCid !== null &&
                 publisherCid !== prevPublisherCid;
-            if (publisherChanged) clearFfprobeState(pipeline.id);
+            if (publisherChanged) {
+                clearFfprobeState(pipeline.id);
+                publisherChangedAt.set(pipeline.id, Date.now());
+            }
             const nowProtocol: InputProtocol | null = nowConnected
                 ? nowSrtInput
                     ? 'srt'
@@ -643,6 +721,317 @@ export function createHealthService(
             );
             const bondingStreamId = `#!::r=live/${pipeline.streamKey},m=publish`;
             const rawBondingStatus = srtRelayService.getStreamStatus(bondingStreamId);
+            const now = Date.now();
+            const previousRelaySample = relayInputSamples.get(pipeline.id);
+            // Keep health polling tolerant of older relay status responses and test
+            // doubles that omit the optional input counters.
+            const relayInput = rawBondingStatus.input ?? {
+                recvLossTotal: 0,
+                recvDropTotal: 0,
+                recvUniquePacketsTotal: 0,
+                legs: [],
+            };
+            const currentRelaySample = {
+                recvLossTotal: relayInput.recvLossTotal,
+                recvDropTotal: relayInput.recvDropTotal,
+                recvUniquePacketsTotal: relayInput.recvUniquePacketsTotal,
+                retransTotal: relayInput.retransTotal,
+                belatedTotal: relayInput.belatedTotal,
+                latencyMs: relayInput.latencyMs,
+                recvBitrateKbps: s?.kbps?.recv_30s ?? null,
+                forwardedPackets: rawBondingStatus.forwardedPackets,
+            };
+            relayInputSamples.set(pipeline.id, currentRelaySample);
+            const alerts: PipelineAlert[] = [];
+            const changedAt = publisherChangedAt.get(pipeline.id);
+            if (changedAt && now - changedAt <= 30_000) {
+                alerts.push({
+                    severity: 'warning',
+                    code: 'publisher-reconnected',
+                    message: 'SRT publisher reconnected; input timing may be recovering.',
+                    sinceMs: changedAt,
+                });
+            } else if (changedAt) {
+                publisherChangedAt.delete(pipeline.id);
+            }
+            if (previousRelaySample && rawBondingStatus.inputActive) {
+                const dropped = Math.max(
+                    0,
+                    currentRelaySample.recvDropTotal - previousRelaySample.recvDropTotal,
+                );
+                const lost = Math.max(
+                    0,
+                    currentRelaySample.recvLossTotal - previousRelaySample.recvLossTotal,
+                );
+                const received = Math.max(
+                    0,
+                    currentRelaySample.recvUniquePacketsTotal -
+                        previousRelaySample.recvUniquePacketsTotal,
+                );
+                const lossRatio = received > 0 ? lost / received : 0;
+                const retransmitted = Math.max(
+                    0,
+                    currentRelaySample.retransTotal - previousRelaySample.retransTotal,
+                );
+                const forwarded = Math.max(
+                    0,
+                    currentRelaySample.forwardedPackets - previousRelaySample.forwardedPackets,
+                );
+                if (dropped > 0) {
+                    alerts.push({
+                        severity: 'warning',
+                        code: 'srt-packets-dropped',
+                        message: `SRT input dropped ${dropped} packet${dropped === 1 ? '' : 's'} in the last health interval.`,
+                        sinceMs: now,
+                    });
+                } else if (lossRatio >= 0.01) {
+                    alerts.push({
+                        severity: 'warning',
+                        code: 'srt-packet-loss',
+                        message: `SRT input packet loss is ${(lossRatio * 100).toFixed(1)}% in the last health interval.`,
+                        sinceMs: now,
+                    });
+                }
+                if (received > 0 && retransmitted / received >= 0.05) {
+                    alerts.push({
+                        severity: 'warning',
+                        code: 'srt-retransmissions',
+                        message: `SRT retransmissions reached ${((retransmitted / received) * 100).toFixed(1)}% in the last health interval.`,
+                        sinceMs: now,
+                    });
+                }
+                const belated =
+                    currentRelaySample.belatedTotal !== null &&
+                    previousRelaySample.belatedTotal !== null
+                        ? Math.max(
+                              0,
+                              currentRelaySample.belatedTotal - previousRelaySample.belatedTotal,
+                          )
+                        : 0;
+                if (belated > 100) {
+                    alerts.push({
+                        severity: 'warning',
+                        code: 'srt-belated-packets',
+                        message: `SRT received ${belated} belated packets in the last health interval.`,
+                        sinceMs: now,
+                    });
+                }
+                if (
+                    currentRelaySample.latencyMs !== null &&
+                    (currentRelaySample.latencyMs >= 1000 ||
+                        (previousRelaySample.latencyMs !== null &&
+                            currentRelaySample.latencyMs >=
+                                previousRelaySample.latencyMs * 1.5 + 100))
+                ) {
+                    alerts.push({
+                        severity: 'warning',
+                        code: 'srt-latency-spike',
+                        message: `SRT latency is high (${Math.round(currentRelaySample.latencyMs)} ms).`,
+                        sinceMs: now,
+                    });
+                }
+                if (
+                    currentRelaySample.recvBitrateKbps !== null &&
+                    previousRelaySample.recvBitrateKbps !== null &&
+                    previousRelaySample.recvBitrateKbps >= 500 &&
+                    currentRelaySample.recvBitrateKbps <= previousRelaySample.recvBitrateKbps * 0.6
+                ) {
+                    alerts.push({
+                        severity: 'warning',
+                        code: 'input-bitrate-collapse',
+                        message: `Input bitrate dropped from ${Math.round(previousRelaySample.recvBitrateKbps)} to ${Math.round(currentRelaySample.recvBitrateKbps)} kb/s.`,
+                        sinceMs: now,
+                    });
+                }
+                if (received > 0 && forwarded === 0) {
+                    alerts.push({
+                        severity: 'warning',
+                        code: 'relay-forwarding-stalled',
+                        message: 'Relay is receiving SRT packets but forwarding no packets to SRS.',
+                        sinceMs: now,
+                    });
+                }
+            }
+            const previousLegs = legPacketSamples.get(pipeline.id) ?? new Map();
+            const currentLegs = new Map<
+                string,
+                {
+                    packets: number | null;
+                    noFlowSinceMs: number | null;
+                    recvLossTotal: number | null;
+                    recvDropTotal: number | null;
+                    retransTotal: number | null;
+                    belatedTotal: number | null;
+                }
+            >();
+            const legHealth = new Map<
+                string,
+                { health: 'ok' | 'warn' | 'error'; reason: string | null }
+            >();
+            for (const leg of relayInput.legs ?? []) {
+                const key = `${leg.ip}:${leg.port}`;
+                const packets = leg.recvUniquePacketsTotal ?? leg.recvPacketsTotal;
+                const previousLeg = previousLegs.get(key);
+                const noFlowSinceMs =
+                    leg.state === 'running' &&
+                    previousLeg &&
+                    packets !== null &&
+                    previousLeg.packets === packets
+                        ? (previousLeg.noFlowSinceMs ?? now)
+                        : null;
+                currentLegs.set(key, {
+                    packets,
+                    noFlowSinceMs,
+                    recvLossTotal: leg.recvLossTotal,
+                    recvDropTotal: leg.recvDropTotal,
+                    retransTotal: leg.retransTotal,
+                    belatedTotal: leg.belatedTotal,
+                });
+                let health: 'ok' | 'warn' | 'error' = 'ok';
+                let reason: string | null = null;
+                if (leg.state === 'broken' || leg.state === 'unknown') {
+                    health = 'error';
+                    reason = `Leg state is ${leg.state}.`;
+                } else if (leg.state === 'pending' || leg.state === 'idle') {
+                    health = 'warn';
+                    reason = `Leg is ${leg.state}.`;
+                }
+                if (noFlowSinceMs !== null && now - noFlowSinceMs >= 10_000) {
+                    health = health === 'error' ? health : 'warn';
+                    reason = 'Leg is connected but has stopped delivering packets.';
+                    alerts.push({
+                        severity: 'warning',
+                        code: 'bonded-leg-no-flow',
+                        message: `Bonded leg ${key} is connected but has stopped delivering packets.`,
+                        sinceMs: noFlowSinceMs,
+                    });
+                }
+                legHealth.set(key, { health, reason });
+            }
+            legPacketSamples.set(pipeline.id, currentLegs);
+            const pipelineLegHistory =
+                legHistory.get(pipeline.id) ?? new Map<string, LegHistorySeries>();
+            for (const leg of relayInput.legs ?? []) {
+                const key = `${leg.ip}:${leg.port}`;
+                const previousLeg = previousLegs.get(key);
+                const packets = leg.recvUniquePacketsTotal ?? leg.recvPacketsTotal;
+                const receivedDelta =
+                    packets !== null &&
+                    previousLeg?.packets !== null &&
+                    previousLeg?.packets !== undefined
+                        ? Math.max(0, packets - previousLeg.packets)
+                        : null;
+                const lossDelta =
+                    leg.recvLossTotal !== null &&
+                    previousLeg?.recvLossTotal !== null &&
+                    previousLeg?.recvLossTotal !== undefined
+                        ? Math.max(0, leg.recvLossTotal - previousLeg.recvLossTotal)
+                        : null;
+                const dropDelta =
+                    leg.recvDropTotal !== null &&
+                    previousLeg?.recvDropTotal !== null &&
+                    previousLeg?.recvDropTotal !== undefined
+                        ? Math.max(0, leg.recvDropTotal - previousLeg.recvDropTotal)
+                        : null;
+                const retransDelta =
+                    leg.retransTotal !== null &&
+                    previousLeg?.retransTotal !== null &&
+                    previousLeg?.retransTotal !== undefined
+                        ? Math.max(0, leg.retransTotal - previousLeg.retransTotal)
+                        : null;
+                const belatedDelta =
+                    leg.belatedTotal !== null &&
+                    previousLeg?.belatedTotal !== null &&
+                    previousLeg?.belatedTotal !== undefined
+                        ? Math.max(0, leg.belatedTotal - previousLeg.belatedTotal)
+                        : null;
+                const series = pipelineLegHistory.get(key) ?? {
+                    ip: leg.ip,
+                    port: leg.port,
+                    samples: [],
+                };
+                const sample: LegHistorySample = {
+                    ts: now,
+                    state: leg.state,
+                    health: legHealth.get(key)?.health ?? 'ok',
+                    recvRateMbps: leg.recvRateMbps,
+                    rttMs: leg.rttMs,
+                    latencyMs: leg.latencyMs,
+                    lossPct:
+                        receivedDelta && lossDelta !== null
+                            ? (lossDelta / receivedDelta) * 100
+                            : null,
+                    dropPct:
+                        receivedDelta && dropDelta !== null
+                            ? (dropDelta / receivedDelta) * 100
+                            : null,
+                    retransmissionPct:
+                        receivedDelta && retransDelta !== null
+                            ? (retransDelta / receivedDelta) * 100
+                            : null,
+                    belated: belatedDelta,
+                    receivedPackets: receivedDelta,
+                    lossPackets: lossDelta,
+                    dropPackets: dropDelta,
+                    retransmittedPackets: retransDelta,
+                };
+                series.samples.push(sample);
+                const windowSamples = series.samples.filter(
+                    (historySample) => historySample.ts >= now - LEG_HEALTH_WINDOW_MS,
+                );
+                const receivedPackets = windowSamples.reduce(
+                    (total, historySample) => total + (historySample.receivedPackets ?? 0),
+                    0,
+                );
+                const lossPackets = windowSamples.reduce(
+                    (total, historySample) => total + (historySample.lossPackets ?? 0),
+                    0,
+                );
+                const dropPackets = windowSamples.reduce(
+                    (total, historySample) => total + (historySample.dropPackets ?? 0),
+                    0,
+                );
+                const retransmittedPackets = windowSamples.reduce(
+                    (total, historySample) => total + (historySample.retransmittedPackets ?? 0),
+                    0,
+                );
+                const lossPct = receivedPackets > 0 ? (lossPackets / receivedPackets) * 100 : 0;
+                const dropPct = receivedPackets > 0 ? (dropPackets / receivedPackets) * 100 : 0;
+                const retransmissionPct =
+                    receivedPackets > 0 ? (retransmittedPackets / receivedPackets) * 100 : 0;
+                let health = legHealth.get(key)?.health ?? 'ok';
+                let reason = legHealth.get(key)?.reason ?? null;
+                if (receivedPackets >= 100 && (dropPct >= 5 || dropPackets >= 1000)) {
+                    health = 'error';
+                    reason = `Leg packet drops are ${dropPct.toFixed(1)}% over the last minute (${dropPackets} packets).`;
+                } else if (
+                    receivedPackets >= 100 &&
+                    (dropPct >= 1 || lossPct >= 1 || dropPackets >= 100 || lossPackets >= 100)
+                ) {
+                    health = health === 'error' ? health : 'warn';
+                    reason = `Leg packet quality is degraded over the last minute (${lossPct.toFixed(1)}% loss, ${dropPct.toFixed(1)}% drop).`;
+                } else if (receivedPackets >= 100 && retransmissionPct >= 5) {
+                    health = health === 'error' ? health : 'warn';
+                    reason = `Leg retransmissions are ${retransmissionPct.toFixed(1)}% over the last minute.`;
+                }
+                if (leg.latencyMs !== null && leg.latencyMs >= 1000) {
+                    health = health === 'error' ? health : 'warn';
+                    reason = `Leg latency is high (${Math.round(leg.latencyMs)} ms).`;
+                }
+                sample.health = health;
+                legHealth.set(key, { health, reason });
+                if (health !== 'ok' && reason) {
+                    alerts.push({
+                        severity: health === 'error' ? 'error' : 'warning',
+                        code: 'bonded-leg-quality',
+                        message: `Bonded leg ${key}: ${reason}`,
+                        sinceMs: windowSamples[0]?.ts ?? now,
+                    });
+                }
+                if (series.samples.length > LEG_HISTORY_MAX_SAMPLES) series.samples.shift();
+                pipelineLegHistory.set(key, series);
+            }
+            legHistory.set(pipeline.id, pipelineLegHistory);
             const publisher = s?.publish?.cid ? publisherByCid.get(s.publish.cid) : undefined;
             const localSrtPublisherConflict = outputRows.some((output) => {
                 if (output.pipelineId === pipeline.id) return false;
@@ -659,12 +1048,24 @@ export function createHealthService(
                 relayInputActive: rawBondingStatus.inputActive,
                 relayAcceptedBySrs,
             });
+            const rawLegs = rawBondingStatus.input?.legs ?? [];
             const bondingStatus: PipelineHealth['srtBonding'] = {
                 ...rawBondingStatus,
                 acceptedBySrs: relayAcceptedBySrs,
                 publishConflict: relayPublishConflict,
                 srsPublisher: srsPublisherInfo(publisher),
                 localSrtPublisherConflict,
+                input: {
+                    ...rawBondingStatus.input,
+                    legs: rawLegs.map((leg) => {
+                        const status = legHealth.get(`${leg.ip}:${leg.port}`);
+                        return {
+                            ...leg,
+                            health: status?.health ?? 'ok',
+                            healthReason: status?.reason ?? null,
+                        };
+                    }),
+                },
             };
 
             pipelinesHealth[String(pipeline.id)] = {
@@ -695,6 +1096,7 @@ export function createHealthService(
                     audioTracks: probedMedia?.audioTracks ?? [],
                 },
                 outputs: outputsHealth,
+                alerts,
                 srtBonding: bondingStatus,
             };
         }
@@ -716,6 +1118,40 @@ export function createHealthService(
     function registerRoutes(app: Express): void {
         app.get('/api/health', (_req, res) => {
             res.json(snapshot);
+        });
+        app.get('/api/health/pipelines/:pipelineId/legs/history', (req, res) => {
+            const pipelineId = Number(req.params.pipelineId);
+            if (
+                !Number.isInteger(pipelineId) ||
+                !db.listPipelines().some((p) => p.id === pipelineId)
+            ) {
+                res.status(404).json({ error: 'Pipeline not found' });
+                return;
+            }
+            const now = Date.now();
+            const requestedTo = Number(req.query.to);
+            const requestedFrom = Number(req.query.from);
+            const to = Number.isFinite(requestedTo) ? Math.min(requestedTo, now) : now;
+            const from = Number.isFinite(requestedFrom)
+                ? Math.max(requestedFrom, to - LEG_HISTORY_MAX_WINDOW_MS)
+                : to - LEG_HISTORY_MAX_WINDOW_MS;
+            const series = [...(legHistory.get(pipelineId)?.values() ?? [])].map((leg) => ({
+                ...leg,
+                samples: leg.samples.filter((sample) => sample.ts >= from && sample.ts <= to),
+            }));
+            const allSamples = [...(legHistory.get(pipelineId)?.values() ?? [])].flatMap(
+                (leg) => leg.samples,
+            );
+            const oldestTs =
+                allSamples.length > 0 ? Math.min(...allSamples.map((sample) => sample.ts)) : null;
+            res.json({
+                pipelineId,
+                from,
+                to,
+                oldestTs,
+                intervalMs: POLL_INTERVAL_MS,
+                legs: series,
+            });
         });
     }
 

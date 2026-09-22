@@ -11,7 +11,14 @@ import {
     fmtMbpsValue,
 } from '../core/utils.js';
 import { refreshAfterMutation } from './dashboard.js';
-import type { StreamKey, AudioTrackInfo, HostProbeTarget, ServerLogTail } from '../types.js';
+import type {
+    StreamKey,
+    AudioTrackInfo,
+    HostProbeTarget,
+    ServerLogTail,
+    LegHistoryData,
+    LegHistorySample,
+} from '../types.js';
 import { buildSrtOutputUrl, isSrtHostRequired, type SrtOutputSettings } from '../core/srt.js';
 
 const MAX_HOST_PROBE_TARGETS = 10;
@@ -20,6 +27,173 @@ const MAX_HOST_PROBE_TARGETS = 10;
 // the pipeline's input has ever connected (so nothing has been probed yet), so
 // the track list is a static range rather than derived from live probe data.
 const MAX_AUDIO_TRACKS = 50;
+const LEG_HISTORY_WINDOW_MS = 30 * 60 * 1000;
+const LEG_HISTORY_PAGE_STEP_MS = 10 * 60 * 1000;
+const legHistoryOffsets = new Map<string, number>();
+
+function formatLegChartTimeTick(ts: number): string {
+    const date = new Date(ts);
+    const minutes = date.getMinutes();
+    const minuteLabel = minutes.toString().padStart(2, '0');
+    if (minutes % 10 !== 0) return minuteLabel;
+    return `${date.getHours().toString().padStart(2, '0')}:${minuteLabel}`;
+}
+
+function legHistoryChart(
+    canvasId: string,
+    series: LegHistoryData['legs'],
+    value: (sample: LegHistorySample) => number | null,
+    maxValue: number,
+    formatValue: (value: number) => string,
+): void {
+    const canvas = document.getElementById(canvasId) as HTMLCanvasElement | null;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const width = canvas.clientWidth || 640;
+    const height = canvas.clientHeight || 130;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    ctx.scale(dpr, dpr);
+    const styles = getComputedStyle(canvas);
+    const color = styles.color || '#9ca3af';
+    const grid = 'rgba(156, 163, 175, 0.18)';
+    const left = 42;
+    const right = 8;
+    const top = 8;
+    const bottom = 22;
+    const plotW = Math.max(1, width - left - right);
+    const plotH = Math.max(1, height - top - bottom);
+    const allSamples = series.flatMap((leg) => leg.samples);
+    const minTs = Math.min(...allSamples.map((sample) => sample.ts));
+    const maxTs = Math.max(...allSamples.map((sample) => sample.ts));
+    const range = Math.max(1, maxTs - minTs);
+    const yMax =
+        maxValue > 0 ? maxValue : Math.max(1, ...allSamples.map((sample) => value(sample) ?? 0));
+    ctx.clearRect(0, 0, width, height);
+    ctx.font = '10px sans-serif';
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.65;
+    const spanMinutes = (maxTs - minTs) / 60_000;
+    const tickMinutes = spanMinutes <= 30 ? 1 : 5;
+    const tickIntervalMs = tickMinutes * 60_000;
+    const firstMinute = Math.ceil(minTs / tickIntervalMs) * tickIntervalMs;
+    ctx.textAlign = 'center';
+    for (let tickTs = firstMinute; tickTs <= maxTs; tickTs += tickIntervalMs) {
+        const x = left + ((tickTs - minTs) / range) * plotW;
+        ctx.strokeStyle = grid;
+        ctx.beginPath();
+        ctx.moveTo(x, top);
+        ctx.lineTo(x, height - bottom);
+        ctx.stroke();
+        ctx.fillText(formatLegChartTimeTick(tickTs), x, height - 5);
+    }
+    ctx.textAlign = 'start';
+    for (let i = 0; i <= 2; i++) {
+        const y = top + (plotH * i) / 2;
+        ctx.strokeStyle = grid;
+        ctx.beginPath();
+        ctx.moveTo(left, y);
+        ctx.lineTo(width - right, y);
+        ctx.stroke();
+        ctx.fillText(formatValue(yMax * (1 - i / 2)), 2, y + 3);
+    }
+    ctx.globalAlpha = 1;
+    const colors = ['#38bdf8', '#a78bfa', '#f59e0b', '#34d399', '#fb7185', '#f97316'];
+    series.forEach((leg, legIndex) => {
+        const points = leg.samples
+            .map((sample) => {
+                const current = value(sample);
+                if (current === null) return null;
+                return {
+                    x: left + ((sample.ts - minTs) / range) * plotW,
+                    y: top + (1 - Math.min(1, Math.max(0, current / yMax))) * plotH,
+                };
+            })
+            .filter((point): point is { x: number; y: number } => point !== null);
+        if (points.length === 0) return;
+        ctx.strokeStyle = colors[legIndex % colors.length];
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        points.forEach((point, index) => {
+            if (index === 0) ctx.moveTo(point.x, point.y);
+            else ctx.lineTo(point.x, point.y);
+        });
+        ctx.stroke();
+    });
+}
+
+function renderLegHistoryCharts(pipelineId: string, data: LegHistoryData): void {
+    const wrap = document.getElementById('srt-leg-history-content');
+    if (!wrap) return;
+    if (data.legs.length === 0 || data.legs.every((leg) => leg.samples.length === 0)) {
+        wrap.innerHTML =
+            '<p class="text-sm opacity-50">No bonded-leg history is available for this period.</p>';
+        return;
+    }
+    const fmt = (value: number) => (value >= 10 ? value.toFixed(0) : value.toFixed(1));
+    const legend = data.legs
+        .map(
+            (leg, index) =>
+                `<span class="inline-flex items-center gap-1 text-xs"><span class="inline-block h-2 w-2 rounded-full" style="background:${['#38bdf8', '#a78bfa', '#f59e0b', '#34d399', '#fb7185', '#f97316'][index % 6]}"></span>${escapeHtml(`${leg.ip}:${leg.port}`)}</span>`,
+        )
+        .join('');
+    wrap.innerHTML = `<div class="flex flex-wrap gap-x-3 gap-y-1 mb-2">${legend}</div>
+        <div class="grid grid-cols-1 gap-4">
+            <div><div class="text-xs opacity-60 mb-1">Packet loss / drop (%)</div><canvas id="srt-leg-loss-chart" class="w-full h-32 text-base-content"></canvas></div>
+            <div><div class="text-xs opacity-60 mb-1">Receive rate (Mbps)</div><canvas id="srt-leg-rate-chart" class="w-full h-32 text-base-content"></canvas></div>
+        </div>`;
+    legHistoryChart(
+        'srt-leg-loss-chart',
+        data.legs,
+        (sample) => Math.max(sample.lossPct ?? 0, sample.dropPct ?? 0),
+        5,
+        (value) => `${fmt(value)}%`,
+    );
+    legHistoryChart(
+        'srt-leg-rate-chart',
+        data.legs,
+        (sample) => sample.recvRateMbps,
+        0,
+        (value) => `${fmt(value)}`,
+    );
+}
+
+async function loadLegHistory(pipelineId: string): Promise<void> {
+    const offset = legHistoryOffsets.get(pipelineId) ?? 0;
+    const to = Date.now() - offset;
+    const from = to - LEG_HISTORY_WINDOW_MS;
+    const content = document.getElementById('srt-leg-history-content');
+    if (content) content.innerHTML = '<p class="text-sm opacity-50">Loading leg history…</p>';
+    const data = await api.getLegHistory(pipelineId, from, to);
+    if (!data || !document.getElementById('srt-leg-history-content')) return;
+    const range = document.getElementById('srt-leg-history-range');
+    if (range) {
+        const fmt = (ts: number) =>
+            new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        range.textContent = offset === 0 ? 'LIVE' : `${fmt(data.from)} – ${fmt(data.to)}`;
+    }
+    const back = document.getElementById('srt-leg-history-back') as HTMLButtonElement | null;
+    const forward = document.getElementById('srt-leg-history-forward') as HTMLButtonElement | null;
+    if (back) back.disabled = data.oldestTs === null || data.from <= data.oldestTs;
+    if (forward) forward.disabled = offset === 0;
+    renderLegHistoryCharts(pipelineId, data);
+}
+
+function renderLegHistorySection(pipelineId: string): string {
+    return `<div id="srt-leg-history-section" class="mt-1">
+        <div class="flex items-center justify-between gap-2 mb-2">
+            <div class="text-xs font-semibold uppercase opacity-50">Bonded leg history</div>
+            <div class="flex items-center gap-1">
+                <button id="srt-leg-history-back" type="button" class="btn btn-xs btn-ghost">&#8592; 10 min</button>
+                <span id="srt-leg-history-range" class="font-mono text-xs opacity-60 w-28 text-center">LIVE</span>
+                <button id="srt-leg-history-forward" type="button" class="btn btn-xs btn-ghost" disabled>10 min &#8594;</button>
+            </div>
+        </div>
+        <div id="srt-leg-history-content"><p class="text-sm opacity-50">Loading leg history…</p></div>
+    </div>`;
+}
 
 function hostProbeRowHtml(slot: number, target?: HostProbeTarget): string {
     return `<tr data-host-probe-row="${slot}">
@@ -1116,9 +1290,9 @@ function fmtRawCount(n: number | null | undefined): string {
 // surface a curated subset, this is the "show me everything" escape hatch.
 // Split from showSrtBondingDetails so the modal's refresh button can re-pull
 // the latest polled state.pipelines snapshot without reopening the dialog.
-function renderSrtBondingDetailsContent(pipelineId: string): void {
+function renderSrtBondingDetailsContent(pipelineId: string, target?: HTMLElement | null): void {
     const titleEl = document.getElementById('logs-modal-title');
-    const contentEl = document.getElementById('logs-modal-content');
+    const contentEl = target ?? document.getElementById('logs-modal-content');
     if (!contentEl) return;
 
     const pipeline = state.pipelines.find((p) => p.id === pipelineId);
@@ -1168,6 +1342,15 @@ function renderSrtBondingDetailsContent(pipelineId: string): void {
                       const legRows = [
                           srtDetailRow('IP', escapeHtml(leg.ip)),
                           srtDetailRow('Port', String(leg.port)),
+                          srtDetailRow(
+                              'Health',
+                              (
+                                  leg.health ?? (leg.state === 'running' ? 'ok' : 'warn')
+                              ).toUpperCase(),
+                          ),
+                          ...(leg.healthReason
+                              ? [srtDetailRow('Health issue', escapeHtml(leg.healthReason))]
+                              : []),
                           srtDetailRow('State', escapeHtml(leg.state)),
                           srtDetailRow('RTT', fmtMs(leg.rttMs)),
                           srtDetailRow('Latency', fmtMs(leg.latencyMs)),
@@ -1192,7 +1375,37 @@ function renderSrtBondingDetailsContent(pipelineId: string): void {
                   .join('');
 
     contentEl.innerHTML =
-        srtDetailSection('Input', inputRows) + srtDetailSection('Output', outputRows) + legsHtml;
+        renderLegHistorySection(pipelineId) +
+        srtDetailSection('Input', inputRows) +
+        srtDetailSection('Output', outputRows) +
+        legsHtml;
+    document.getElementById('srt-leg-history-back')?.addEventListener('click', () => {
+        legHistoryOffsets.set(
+            pipelineId,
+            (legHistoryOffsets.get(pipelineId) ?? 0) + LEG_HISTORY_PAGE_STEP_MS,
+        );
+        void loadLegHistory(pipelineId);
+    });
+    document.getElementById('srt-leg-history-forward')?.addEventListener('click', () => {
+        legHistoryOffsets.set(
+            pipelineId,
+            Math.max(0, (legHistoryOffsets.get(pipelineId) ?? 0) - LEG_HISTORY_PAGE_STEP_MS),
+        );
+        void loadLegHistory(pipelineId);
+    });
+    void loadLegHistory(pipelineId);
+}
+
+export function renderSrtBondingDetailsInline(pipelineId: string): void {
+    const target = document.getElementById('srt-bonding-details');
+    if (!target) return;
+    renderSrtBondingDetailsContent(pipelineId, target);
+    const graphs = document.getElementById('srt-bonding-graphs');
+    const history = target.querySelector('#srt-leg-history-section');
+    if (graphs && history) {
+        graphs.innerHTML = '';
+        graphs.append(history);
+    }
 }
 
 export function showSrtBondingDetails(pipelineId: string): void {
