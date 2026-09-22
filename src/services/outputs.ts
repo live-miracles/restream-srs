@@ -78,9 +78,15 @@ interface OutputProgress {
     lastProgressAtMs: number;
     lastOutputProgressAtMs: number;
     lastOutTimeMs: number | null;
+    lastOutTimeWallMs: number | null;
     lastTotalSize: number | null;
     lastBitrateKbps: number | null;
     stderrTail: string;
+    monitorMediaClock: boolean;
+    fastMediaSinceMs: number | null;
+    mediaClockWarning: string | null;
+    lastTimestampWarningAtMs: number | null;
+    lastTimestampWarning: string | null;
 }
 
 interface TcpSocket {
@@ -160,13 +166,17 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
     function getStats(outputId: string): OutputStats {
         const s = statuses.get(outputId) ?? { status: 'stopped' as const, pid: null };
         const usage = memoryUsage.get(outputId);
+        const p = progress.get(outputId);
+        const timingWarning = p ? timingWarningFor(p, Date.now()) : null;
         return {
             ...s,
-            bitrateKbps: progress.get(outputId)?.lastBitrateKbps ?? null,
+            bitrateKbps: p?.lastBitrateKbps ?? null,
             startedAtMs: startTimes.get(outputId) ?? null,
             failures: retryState.get(outputId)?.failures ?? 0,
             warningReason:
-                socketWarnings.get(outputId)?.reason ?? memoryWarnings.get(outputId) ?? null,
+                socketWarnings.get(outputId)?.reason ??
+                memoryWarnings.get(outputId) ??
+                timingWarning,
             memoryUsageBytes: usage?.rssBytes ?? null,
             memoryLimitBytes: usage?.limitBytes ?? null,
             cpuPercent: cpuUsage.get(outputId) ?? null,
@@ -284,13 +294,67 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
         // behavior, but error messages must label it as µs.
         const outTimeMs = parseProgressNumber(line, 'out_time_ms=');
         if (outTimeMs != null && (p.lastOutTimeMs == null || outTimeMs > p.lastOutTimeMs)) {
+            const now = p.lastProgressAtMs;
+            if (p.monitorMediaClock && p.lastOutTimeMs != null) {
+                const wallDeltaMs = now - (p.lastOutTimeWallMs ?? now);
+                const mediaDeltaMs = (outTimeMs - p.lastOutTimeMs) / 1000;
+                if (wallDeltaMs >= 500 && mediaDeltaMs >= 0) {
+                    const speed = mediaDeltaMs / wallDeltaMs;
+                    if (speed > 1.1) {
+                        p.fastMediaSinceMs ??= now;
+                        if (now - p.fastMediaSinceMs >= 10_000) {
+                            p.mediaClockWarning = `FFmpeg media clock is running fast (${speed.toFixed(2)}x realtime).`;
+                        }
+                    } else {
+                        p.fastMediaSinceMs = null;
+                        p.mediaClockWarning = null;
+                    }
+                }
+            }
             p.lastOutTimeMs = outTimeMs;
+            p.lastOutTimeWallMs = now;
             p.lastOutputProgressAtMs = p.lastProgressAtMs;
             return;
         }
 
         if (line.startsWith('bitrate=')) {
             p.lastBitrateKbps = parseBitrateKbps(line);
+        }
+    }
+
+    function timingWarningFor(p: OutputProgress, now: number): string | null {
+        if (p.mediaClockWarning) return p.mediaClockWarning;
+        if (
+            p.lastTimestampWarning &&
+            p.lastTimestampWarningAtMs !== null &&
+            now - p.lastTimestampWarningAtMs <= 30_000
+        ) {
+            return p.lastTimestampWarning;
+        }
+        if (p.monitorMediaClock && now - p.lastOutputProgressAtMs >= 15_000) {
+            return `FFmpeg media progress has stalled for ${Math.round((now - p.lastOutputProgressAtMs) / 1000)}s.`;
+        }
+        return null;
+    }
+
+    function noteTimestampWarning(outputId: string, stderr: string): void {
+        const p = progress.get(outputId);
+        if (!p) return;
+        const patterns = [
+            /timestamp discontinuity/i,
+            /non[- ]monotonous DTS/i,
+            /invalid DTS/i,
+            /corrupt input/i,
+            /non-existing PPS/i,
+            /decode_slice_header error/i,
+        ];
+        const line = stderr
+            .split(/\r?\n/)
+            .map((value) => value.trim())
+            .find((value) => patterns.some((pattern) => pattern.test(value)));
+        if (line) {
+            p.lastTimestampWarningAtMs = Date.now();
+            p.lastTimestampWarning = `FFmpeg reported: ${line}`;
         }
     }
 
@@ -677,6 +741,14 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
             lastTotalSize: null,
             lastBitrateKbps: null,
             stderrTail: '',
+            monitorMediaClock:
+                inputUrl.startsWith('srt://') &&
+                (output.url.startsWith('rtmp://') || output.url.startsWith('rtmps://')),
+            fastMediaSinceMs: null,
+            mediaClockWarning: null,
+            lastTimestampWarningAtMs: null,
+            lastTimestampWarning: null,
+            lastOutTimeWallMs: null,
         });
         console.log(green(`[outputs] ${output.id} (${output.name}) started pid=${child.pid}`));
 
@@ -694,7 +766,10 @@ export function createOutputService(db: Db, inputState: InputState): OutputServi
         child.stderr?.on('data', (d: Buffer) => {
             stderrTail = (stderrTail + d.toString()).slice(-STDERR_TAIL_BYTES);
             const p = progress.get(output.id);
-            if (p) p.stderrTail = stderrTail;
+            if (p) {
+                p.stderrTail = stderrTail;
+                noteTimestampWarning(output.id, d.toString());
+            }
         });
 
         child.on('error', (err) => {

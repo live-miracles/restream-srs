@@ -31,6 +31,8 @@ export interface SrtRelayLegStatus {
     undecryptTotal: number | null;
     reorderDistance: number | null;
     rcvBufMs: number | null;
+    health?: 'ok' | 'warn' | 'error';
+    healthReason?: string | null;
 }
 
 export interface SrtRelayInputStatus {

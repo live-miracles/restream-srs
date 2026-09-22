@@ -9,6 +9,7 @@ import type {
     MetricSample,
     SrsLogsData,
     LayoutOrderEntry,
+    LegHistoryData,
 } from '../types.js';
 
 let loadingCount = 0;
@@ -90,6 +91,10 @@ export const getHostProbes = (hours = 24) =>
     apiRequest<HostProbeOverview>(`/api/host-probes?hours=${hours}`);
 export const getSystemMetrics = () => apiRequest<SystemMetrics>('/api/metrics/system');
 export const getMetricsHistory = () => apiRequest<MetricSample[]>('/api/metrics/history');
+export const getLegHistory = (pipelineId: string, from: number, to: number) =>
+    apiRequest<LegHistoryData>(
+        `/api/health/pipelines/${encodeURIComponent(pipelineId)}/legs/history?from=${Math.round(from)}&to=${Math.round(to)}`,
+    );
 
 export const updateGeneralSettings = (name: string, publicHost: string) =>
     apiRequest<{ serverName: string; publicHost: string }>('/api/settings/general', {

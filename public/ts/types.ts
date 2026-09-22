@@ -144,6 +144,8 @@ export interface SrtBondingLeg {
     undecryptTotal: number | null;
     reorderDistance: number | null;
     rcvBufMs: number | null;
+    health?: 'ok' | 'warn' | 'error';
+    healthReason?: string | null;
 }
 
 export interface SrtBondingInputStatus {
@@ -256,7 +258,47 @@ export interface InputHealth {
 export interface PipelineHealth {
     input: InputHealth;
     outputs: Record<string, OutputStatus>;
+    alerts: PipelineAlert[];
     srtBonding: SrtBondingStatus;
+}
+
+export interface PipelineAlert {
+    severity: 'warning' | 'error';
+    code: string;
+    message: string;
+    sinceMs: number;
+}
+
+export interface LegHistorySample {
+    ts: number;
+    state: string;
+    health: 'ok' | 'warn' | 'error';
+    recvRateMbps: number | null;
+    rttMs: number | null;
+    latencyMs: number | null;
+    lossPct: number | null;
+    dropPct: number | null;
+    retransmissionPct: number | null;
+    belated: number | null;
+    receivedPackets?: number | null;
+    lossPackets?: number | null;
+    dropPackets?: number | null;
+    retransmittedPackets?: number | null;
+}
+
+export interface LegHistorySeries {
+    ip: string;
+    port: number;
+    samples: LegHistorySample[];
+}
+
+export interface LegHistoryData {
+    pipelineId: number;
+    from: number;
+    to: number;
+    oldestTs: number | null;
+    intervalMs: number;
+    legs: LegHistorySeries[];
 }
 
 export interface HealthData {
@@ -314,6 +356,7 @@ export interface PipelineView {
     rtmpPublishUrl: string;
     srtPublishUrl: string;
     input: InputHealth & { live: boolean };
+    alerts: PipelineAlert[];
     outs: OutputView[];
 }
 
