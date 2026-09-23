@@ -272,7 +272,9 @@ async function loadLegHistory(pipelineId: string, showLoading = true): Promise<v
                     : `<span class="font-mono text-xs opacity-60">${fmt(data.from)} – ${fmt(data.to)}</span>`;
         }
         const back = document.getElementById('srt-leg-history-back') as HTMLButtonElement | null;
-        const forward = document.getElementById('srt-leg-history-forward') as HTMLButtonElement | null;
+        const forward = document.getElementById(
+            'srt-leg-history-forward',
+        ) as HTMLButtonElement | null;
         if (back) back.disabled = data.oldestTs === null || data.from <= data.oldestTs;
         if (forward) forward.disabled = offset === 0;
         renderLegHistoryCharts(pipelineId, displayData);
