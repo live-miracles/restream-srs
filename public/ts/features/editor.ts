@@ -31,6 +31,7 @@ const LEG_HISTORY_WINDOW_MS = 30 * 60 * 1000;
 const LEG_HISTORY_PAGE_STEP_MS = 10 * 60 * 1000;
 const legHistoryOffsets = new Map<string, number>();
 const legHistoryCache = new Map<string, LegHistoryData>();
+const legHistoryRequestIds = new Map<string, number>();
 
 function formatLegChartTimeTick(ts: number): string {
     const date = new Date(ts);
@@ -232,6 +233,13 @@ function mergeLegHistory(
 }
 
 async function loadLegHistory(pipelineId: string, showLoading = true): Promise<void> {
+    const requestId = (legHistoryRequestIds.get(pipelineId) ?? 0) + 1;
+    legHistoryRequestIds.set(pipelineId, requestId);
+    const isCurrentRequest = (): boolean => {
+        if (legHistoryRequestIds.get(pipelineId) !== requestId) return false;
+        const details = document.getElementById('srt-bonding-details');
+        return !details?.dataset.pipelineId || details.dataset.pipelineId === pipelineId;
+    };
     const offset = legHistoryOffsets.get(pipelineId) ?? 0;
     const to = Date.now() - offset;
     const from = to - LEG_HISTORY_WINDOW_MS;
@@ -243,23 +251,39 @@ async function loadLegHistory(pipelineId: string, showLoading = true): Promise<v
     const cachedTimestamps =
         cached?.legs.flatMap((leg) => leg.samples.map((sample) => sample.ts)) ?? [];
     const latestCachedTs = cachedTimestamps.length > 0 ? Math.max(...cachedTimestamps) : undefined;
-    const data = await api.getLegHistory(pipelineId, from, to, latestCachedTs);
-    if (!data || !document.getElementById('srt-leg-history-content')) return;
-    const displayData = offset === 0 ? mergeLegHistory(pipelineId, data, from, to) : data;
-    const range = document.getElementById('srt-leg-history-range');
-    if (range) {
-        const fmt = (ts: number) =>
-            new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        range.innerHTML =
-            offset === 0
-                ? '<span class="badge badge-success badge-xs gap-1">LIVE</span>'
-                : `<span class="font-mono text-xs opacity-60">${fmt(data.from)} – ${fmt(data.to)}</span>`;
+    try {
+        const data = await api.getLegHistory(pipelineId, from, to, latestCachedTs);
+        if (!isCurrentRequest()) return;
+        const content = document.getElementById('srt-leg-history-content');
+        if (!content) return;
+        if (!data) {
+            content.innerHTML =
+                '<p class="text-sm text-error">Unable to load SRT input history. Please try again.</p>';
+            return;
+        }
+        const displayData = offset === 0 ? mergeLegHistory(pipelineId, data, from, to) : data;
+        const range = document.getElementById('srt-leg-history-range');
+        if (range) {
+            const fmt = (ts: number) =>
+                new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            range.innerHTML =
+                offset === 0
+                    ? '<span class="badge badge-success badge-xs gap-1">LIVE</span>'
+                    : `<span class="font-mono text-xs opacity-60">${fmt(data.from)} – ${fmt(data.to)}</span>`;
+        }
+        const back = document.getElementById('srt-leg-history-back') as HTMLButtonElement | null;
+        const forward = document.getElementById('srt-leg-history-forward') as HTMLButtonElement | null;
+        if (back) back.disabled = data.oldestTs === null || data.from <= data.oldestTs;
+        if (forward) forward.disabled = offset === 0;
+        renderLegHistoryCharts(pipelineId, displayData);
+    } catch {
+        if (!isCurrentRequest()) return;
+        const content = document.getElementById('srt-leg-history-content');
+        if (content) {
+            content.innerHTML =
+                '<p class="text-sm text-error">Unable to load SRT input history. Please try again.</p>';
+        }
     }
-    const back = document.getElementById('srt-leg-history-back') as HTMLButtonElement | null;
-    const forward = document.getElementById('srt-leg-history-forward') as HTMLButtonElement | null;
-    if (back) back.disabled = data.oldestTs === null || data.from <= data.oldestTs;
-    if (forward) forward.disabled = offset === 0;
-    renderLegHistoryCharts(pipelineId, displayData);
 }
 
 function renderLegHistorySection(pipelineId: string): string {
