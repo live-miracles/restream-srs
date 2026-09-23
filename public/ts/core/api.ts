@@ -54,10 +54,13 @@ const isMutating = (method: string) => !['GET', 'HEAD', 'OPTIONS'].includes(meth
 
 async function apiRequest<T>(
     url: string,
-    opts: { method?: string; body?: unknown; silent?: boolean } = {},
+    opts: { method?: string; body?: unknown; silent?: boolean; timeoutMs?: number } = {},
 ): Promise<T | null> {
     const method = opts.method?.toUpperCase() || 'GET';
     const fetchOpts: RequestInit = { method };
+    const controller = opts.timeoutMs ? new AbortController() : undefined;
+    if (controller) fetchOpts.signal = controller.signal;
+    const timeout = controller ? setTimeout(() => controller.abort(), opts.timeoutMs) : undefined;
     if (opts.body !== undefined) {
         fetchOpts.headers = { 'Content-Type': 'application/json' };
         fetchOpts.body = JSON.stringify(opts.body);
@@ -81,6 +84,7 @@ async function apiRequest<T>(
         setConnectionBanner(true);
         return null;
     } finally {
+        if (timeout) clearTimeout(timeout);
         if (showLoading) setLoading(false);
     }
 }
@@ -97,6 +101,7 @@ export const getMetricsHistory = (after?: number) =>
 export const getLegHistory = (pipelineId: string, from: number, to: number, after?: number) =>
     apiRequest<LegHistoryData>(
         `/api/health/pipelines/${encodeURIComponent(pipelineId)}/legs/history?from=${Math.round(from)}&to=${Math.round(to)}${after === undefined ? '' : `&after=${Math.round(after)}`}`,
+        { timeoutMs: 15_000 },
     );
 
 export const updateGeneralSettings = (name: string, publicHost: string) =>
