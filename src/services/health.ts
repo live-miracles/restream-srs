@@ -38,6 +38,7 @@ const MAX_SRS_EVENTS = 200;
 const LEG_HISTORY_MAX_SAMPLES = (60 * 60 * 1000) / POLL_INTERVAL_MS;
 const LEG_HISTORY_MAX_WINDOW_MS = 30 * 60 * 1000;
 const LEG_HEALTH_WINDOW_MS = 60 * 1000;
+const DIAGNOSTICS_SNAPSHOT_INTERVAL_MS = 60 * 1000;
 
 function counterDelta(current: number | null, previous: number | null | undefined): number | null {
     if (current === null || previous === null || previous === undefined) return null;
@@ -79,6 +80,10 @@ interface OutputHealth {
     memoryUsageBytes: number | null;
     memoryLimitBytes: number | null;
     cpuPercent: number | null;
+    lastOutTimeUs: number | null;
+    lastTotalSizeBytes: number | null;
+    progressAgeMs: number | null;
+    outputProgressAgeMs: number | null;
 }
 
 interface PipelineHealth {
@@ -372,6 +377,7 @@ export function createHealthService(
     // also covers a relay that has simply never been started (no bonding pipeline
     // configured), which would otherwise fire a spurious down event on every boot.
     let prevRelayFailed = false;
+    let lastDiagnosticsSnapshotAt = 0;
 
     function pushSrsEvent(source: 'srs' | 'relay', type: 'up' | 'down', message: string): void {
         srsEvents.push({ ts: Date.now(), source, type, message });
@@ -1136,6 +1142,86 @@ export function createHealthService(
             configRev: db.getConfigRev(),
             pipelines: pipelinesHealth,
         };
+
+        const snapshotAt = Date.now();
+        if (
+            diagnostics &&
+            snapshotAt - lastDiagnosticsSnapshotAt >= DIAGNOSTICS_SNAPSHOT_INTERVAL_MS
+        ) {
+            const pipelineDiagnostics: Record<string, unknown> = {};
+            for (const [pipelineId, pipelineHealth] of Object.entries(pipelinesHealth)) {
+                pipelineDiagnostics[pipelineId] = {
+                    input: {
+                        connected: pipelineHealth.input.connected,
+                        live: pipelineHealth.input.live,
+                        isSrt: pipelineHealth.input.isSrt,
+                        mediaOk: pipelineHealth.input.mediaOk,
+                        recvBitrateKbps: pipelineHealth.input.recvBitrateKbps,
+                        sendBitrateKbps: pipelineHealth.input.sendBitrateKbps,
+                    },
+                    bonding: {
+                        inputActive: pipelineHealth.srtBonding.inputActive,
+                        outputConnected: pipelineHealth.srtBonding.outputConnected,
+                        retryFailures: pipelineHealth.srtBonding.retryFailures,
+                        forwardedPackets: pipelineHealth.srtBonding.forwardedPackets,
+                        forwardedBytes: pipelineHealth.srtBonding.forwardedBytes,
+                        lastPacketAt: pipelineHealth.srtBonding.lastPacketAt,
+                        lastInputPacketAt: pipelineHealth.srtBonding.lastInputPacketAt,
+                        input: {
+                            recvPacketsTotal: pipelineHealth.srtBonding.input.recvPacketsTotal,
+                            recvUniquePacketsTotal:
+                                pipelineHealth.srtBonding.input.recvUniquePacketsTotal,
+                            recvLossTotal: pipelineHealth.srtBonding.input.recvLossTotal,
+                            recvDropTotal: pipelineHealth.srtBonding.input.recvDropTotal,
+                            retransTotal: pipelineHealth.srtBonding.input.retransTotal,
+                            recvRateMbps: pipelineHealth.srtBonding.input.recvRateMbps,
+                            latencyMs: pipelineHealth.srtBonding.input.latencyMs,
+                            legs: pipelineHealth.srtBonding.input.legs.map((leg) => ({
+                                ip: leg.ip,
+                                port: leg.port,
+                                state: leg.state,
+                                health: leg.health,
+                                healthReason: leg.healthReason,
+                                recvPacketsTotal: leg.recvPacketsTotal,
+                                recvUniquePacketsTotal: leg.recvUniquePacketsTotal,
+                                recvLossTotal: leg.recvLossTotal,
+                                recvDropTotal: leg.recvDropTotal,
+                                retransTotal: leg.retransTotal,
+                                recvRateMbps: leg.recvRateMbps,
+                                rttMs: leg.rttMs,
+                                latencyMs: leg.latencyMs,
+                            })),
+                        },
+                    },
+                    outputs: Object.fromEntries(
+                        Object.entries(pipelineHealth.outputs).map(([outputId, output]) => [
+                            outputId,
+                            {
+                                status: output.status,
+                                pid: output.pid,
+                                bitrateKbps: output.bitrateKbps,
+                                lastOutTimeUs: output.lastOutTimeUs,
+                                lastTotalSizeBytes: output.lastTotalSizeBytes,
+                                progressAgeMs: output.progressAgeMs,
+                                outputProgressAgeMs: output.outputProgressAgeMs,
+                                startedAtMs: output.startedAtMs,
+                                failures: output.failures,
+                                warningReason: output.warningReason,
+                                memoryUsageBytes: output.memoryUsageBytes,
+                                cpuPercent: output.cpuPercent,
+                            },
+                        ]),
+                    ),
+                    alerts: pipelineHealth.alerts,
+                };
+            }
+            diagnostics.event('health-snapshot', {
+                srsReachable,
+                relay: relayStats,
+                pipelines: pipelineDiagnostics,
+            });
+            lastDiagnosticsSnapshotAt = snapshotAt;
+        }
     }
 
     function start(): void {

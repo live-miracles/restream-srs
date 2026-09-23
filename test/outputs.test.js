@@ -762,6 +762,10 @@ describe('output service control surface', () => {
             memoryUsageBytes: null,
             memoryLimitBytes: null,
             cpuPercent: null,
+            lastOutTimeUs: null,
+            lastTotalSizeBytes: null,
+            progressAgeMs: null,
+            outputProgressAgeMs: null,
         });
 
         service.shutdown();
