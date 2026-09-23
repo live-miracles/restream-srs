@@ -39,9 +39,11 @@ export interface SrtRelayLegStatus {
 export interface SrtRelayInputStatus {
     recvPacketsTotal: number | null;
     recvUniquePacketsTotal: number;
-    recvLossTotal: number;
-    recvDropTotal: number;
-    retransTotal: number;
+    // Bonded group sockets do not expose deduplicated loss or receive-
+    // retransmission counters. Those values are available per leg instead.
+    recvLossTotal: number | null;
+    recvDropTotal: number | null;
+    retransTotal: number | null;
     rttMs: number | null;
     // Negotiated SRT buffering latency. For a bonded group this is derived as
     // the max latencyMs across legs (see SrtRelayLegStatus) since the group
@@ -116,9 +118,9 @@ interface RelayStatusResponseLeg {
 interface RelayStatusResponseInput {
     recvPacketsTotal?: number | null;
     recvUniquePacketsTotal?: number;
-    recvLossTotal?: number;
-    recvDropTotal?: number;
-    retransTotal?: number;
+    recvLossTotal?: number | null;
+    recvDropTotal?: number | null;
+    retransTotal?: number | null;
     rttMs?: number | null;
     latencyMs?: number | null;
     bandwidthMbps?: number | null;
@@ -209,9 +211,9 @@ function extractStreamResource(streamId: string): string | null {
 const EMPTY_INPUT_STATUS: SrtRelayInputStatus = {
     recvPacketsTotal: null,
     recvUniquePacketsTotal: 0,
-    recvLossTotal: 0,
-    recvDropTotal: 0,
-    retransTotal: 0,
+    recvLossTotal: null,
+    recvDropTotal: null,
+    retransTotal: null,
     rttMs: null,
     latencyMs: null,
     bandwidthMbps: null,
@@ -257,9 +259,9 @@ function parseInputStatus(input: RelayStatusResponseInput | undefined): SrtRelay
         recvPacketsTotal: numOrNull(input.recvPacketsTotal),
         recvUniquePacketsTotal:
             typeof input.recvUniquePacketsTotal === 'number' ? input.recvUniquePacketsTotal : 0,
-        recvLossTotal: typeof input.recvLossTotal === 'number' ? input.recvLossTotal : 0,
-        recvDropTotal: typeof input.recvDropTotal === 'number' ? input.recvDropTotal : 0,
-        retransTotal: typeof input.retransTotal === 'number' ? input.retransTotal : 0,
+        recvLossTotal: numOrNull(input.recvLossTotal),
+        recvDropTotal: numOrNull(input.recvDropTotal),
+        retransTotal: numOrNull(input.retransTotal),
         rttMs: numOrNull(input.rttMs),
         latencyMs: numOrNull(input.latencyMs),
         bandwidthMbps: numOrNull(input.bandwidthMbps),

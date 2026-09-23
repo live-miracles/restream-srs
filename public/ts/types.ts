@@ -151,9 +151,9 @@ export interface SrtBondingLeg {
 export interface SrtBondingInputStatus {
     recvPacketsTotal: number | null;
     recvUniquePacketsTotal: number;
-    recvLossTotal: number;
-    recvDropTotal: number;
-    retransTotal: number;
+    recvLossTotal: number | null;
+    recvDropTotal: number | null;
+    retransTotal: number | null;
     rttMs: number | null;
     latencyMs: number | null;
     bandwidthMbps: number | null;

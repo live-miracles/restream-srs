@@ -41,9 +41,9 @@ const EMPTY_BONDING: SrtBondingStatus = {
     input: {
         recvPacketsTotal: null,
         recvUniquePacketsTotal: 0,
-        recvLossTotal: 0,
-        recvDropTotal: 0,
-        retransTotal: 0,
+        recvLossTotal: null,
+        recvDropTotal: null,
+        retransTotal: null,
         rttMs: null,
         latencyMs: null,
         bandwidthMbps: null,

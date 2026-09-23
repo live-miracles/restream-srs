@@ -60,9 +60,9 @@ function historyLegs(input: SrtRelayInputStatus, inputActive: boolean): SrtRelay
         input.recvPacketsTotal !== null ||
         input.recvUniquePacketsTotal > 0 ||
         input.recvRateMbps !== null ||
-        input.recvLossTotal > 0 ||
-        input.recvDropTotal > 0 ||
-        input.retransTotal > 0;
+        (input.recvLossTotal ?? 0) > 0 ||
+        (input.recvDropTotal ?? 0) > 0 ||
+        (input.retransTotal ?? 0) > 0;
     if (!hasStats) return [];
     return [
         {
@@ -433,10 +433,10 @@ export function createHealthService(
     const relayInputSamples = new Map<
         number,
         {
-            recvLossTotal: number;
-            recvDropTotal: number;
+            recvLossTotal: number | null;
+            recvDropTotal: number | null;
             recvUniquePacketsTotal: number;
-            retransTotal: number;
+            retransTotal: number | null;
             belatedTotal: number | null;
             latencyMs: number | null;
             recvBitrateKbps: number | null;
@@ -839,29 +839,29 @@ export function createHealthService(
                 publisherChangedAt.delete(pipeline.id);
             }
             if (previousRelaySample && rawBondingStatus.inputActive) {
-                const dropped = Math.max(
-                    0,
-                    currentRelaySample.recvDropTotal - previousRelaySample.recvDropTotal,
+                const dropped = counterDelta(
+                    currentRelaySample.recvDropTotal,
+                    previousRelaySample.recvDropTotal,
                 );
-                const lost = Math.max(
-                    0,
-                    currentRelaySample.recvLossTotal - previousRelaySample.recvLossTotal,
+                const lost = counterDelta(
+                    currentRelaySample.recvLossTotal,
+                    previousRelaySample.recvLossTotal,
                 );
                 const received = Math.max(
                     0,
                     currentRelaySample.recvUniquePacketsTotal -
                         previousRelaySample.recvUniquePacketsTotal,
                 );
-                const lossRatio = received > 0 ? lost / received : 0;
-                const retransmitted = Math.max(
-                    0,
-                    currentRelaySample.retransTotal - previousRelaySample.retransTotal,
+                const lossRatio = received > 0 && lost !== null ? lost / received : 0;
+                const retransmitted = counterDelta(
+                    currentRelaySample.retransTotal,
+                    previousRelaySample.retransTotal,
                 );
                 const forwarded = Math.max(
                     0,
                     currentRelaySample.forwardedPackets - previousRelaySample.forwardedPackets,
                 );
-                if (dropped > 0) {
+                if (dropped !== null && dropped > 0) {
                     alerts.push({
                         severity: 'warning',
                         code: 'srt-packets-dropped',
@@ -876,7 +876,7 @@ export function createHealthService(
                         sinceMs: now,
                     });
                 }
-                if (received > 0 && retransmitted / received >= 0.05) {
+                if (received > 0 && retransmitted !== null && retransmitted / received >= 0.05) {
                     alerts.push({
                         severity: 'warning',
                         code: 'srt-retransmissions',
