@@ -26,6 +26,7 @@ import type {
     OutputView,
     PipelineView,
     SrtBondingLeg,
+    SrtBondingInputStatus,
     VideoInfo,
 } from '../types.js';
 import { updateLayoutOrder } from '../core/api.js';
@@ -159,6 +160,14 @@ function fmtLossRexmitDrop(
     drop: number | null | undefined,
 ): string {
     return `${loss != null ? formatCompactCount(loss) : '—'} / ${rexmit != null ? formatCompactCount(rexmit) : '—'} / ${drop != null ? formatCompactCount(drop) : '—'}`;
+}
+
+function fmtCompactNullableCount(n: number | null | undefined): string {
+    return n != null ? formatCompactCount(n) : '—';
+}
+
+function inputAggregateStatsAreDropOnly(input: SrtBondingInputStatus): boolean {
+    return input.recvLossTotal === null && input.retransTotal === null;
 }
 
 function setMetricSeverity(id: string, percent: number | null): void {
@@ -1373,13 +1382,14 @@ function renderOverview(): void {
             const legs = p.srtBonding.input.legs;
             const rowspan = legs.length > 1 ? ` rowspan="${legs.length}"` : '';
             const rowAttr = `class="hover" ${statusBg(rowError, rowWarn)}`;
+            const aggregateStatsAreDropOnly = inputAggregateStatsAreDropOnly(p.srtBonding.input);
             const sharedCells = `
                 <td class="font-semibold cursor-pointer hover:underline js-select-pipeline" data-id="${p.id}"${rowspan}>${escapeHtml(p.name)}</td>
                 <td${rowspan}>${overviewStatusBadge(inputSt)}</td>
                 <td${rowspan}>${overviewStatusBadge(outputSt)}</td>
                 <td${rowspan}>${renderOverviewIssues(relayIssues(p, relayProcessRunning, inputSt, outputSt))}</td>`;
             const totalsCells = `
-                <td class="font-mono text-xs" title="Loss / Rexmit / Drop"${rowspan}>${fmtLossRexmitDrop(p.srtBonding.input.recvLossTotal, p.srtBonding.input.retransTotal, p.srtBonding.input.recvDropTotal)}</td>`;
+                <td class="font-mono text-xs" title="${aggregateStatsAreDropOnly ? 'Deduplicated drop packets on the bonded group input.' : 'Loss / Rexmit / Drop on the input connection.'}"${rowspan}>${aggregateStatsAreDropOnly ? fmtCompactNullableCount(p.srtBonding.input.recvDropTotal) : fmtLossRexmitDrop(p.srtBonding.input.recvLossTotal, p.srtBonding.input.retransTotal, p.srtBonding.input.recvDropTotal)}</td>`;
 
             if (legs.length > 1) {
                 relayRows += legs
@@ -1711,7 +1721,7 @@ function renderOverview(): void {
         <h2 class="mb-2 text-lg font-bold">SRT Bonding Relay <span class="badge badge-neutral badge-sm ml-1">${activeRelayPipelines.length}</span></h2>
         <div class="overflow-x-auto mb-6">
             <table class="table table-sm table-relay">
-                ${thead(['Pipeline', 'Input', 'Output', 'Issues', '<span title="Loss / Rexmit / Drop">L / R / D</span>', 'State', 'Leg IP', 'Latency', 'RTT', 'Rate', '<span title="Loss / Rexmit / Drop">L / R / D</span>'])}
+                ${thead(['Pipeline', 'Input', 'Output', 'Issues', '<span title="Bonded group inputs show deduplicated Drop; non-bonded inputs show Loss / Rexmit / Drop">Input stats</span>', 'State', 'Leg IP', 'Latency', 'RTT', 'Rate', '<span title="Loss / Rexmit / Drop">L / R / D</span>'])}
                 <tbody>${relayRows}</tbody>
             </table>
         </div>
@@ -2253,6 +2263,7 @@ function renderPipelineInfo(selectedId: string | null): void {
     }
     if (bondingStats) {
         const b = pipeline.srtBonding;
+        const inputStatsAreDropOnly = inputAggregateStatsAreDropOnly(b.input);
         const rxPkts = b.input.recvUniquePacketsTotal || b.input.recvPacketsTotal || 0;
         const hasSessionStats =
             relayProcessRunning &&
@@ -2274,16 +2285,22 @@ function renderPipelineInfo(selectedId: string | null): void {
                               'Negotiated SRT buffering latency for the input. For a bonded group this is the max latency negotiated across legs.',
                           value: fmtMs(b.input.latencyMs),
                       },
-                      {
-                          label: 'L / R / D',
-                          labelTitle:
-                              'Group input: loss and receive retransmission are unavailable for a bonded group (shown as —); drop is the deduplicated group drop counter. Per-leg L / R / D is shown below.',
-                          value: fmtLossRexmitDrop(
-                              b.input.recvLossTotal,
-                              b.input.retransTotal,
-                              b.input.recvDropTotal,
-                          ),
-                      },
+                      inputStatsAreDropOnly
+                          ? {
+                                label: 'Drop',
+                                labelTitle:
+                                    'Deduplicated packet drops on the bonded group input. Loss and receive retransmission are available per leg below.',
+                                value: fmtCompactNullableCount(b.input.recvDropTotal),
+                            }
+                          : {
+                                label: 'L / R / D',
+                                labelTitle: 'Loss / Rexmit / Drop on the input connection.',
+                                value: fmtLossRexmitDrop(
+                                    b.input.recvLossTotal,
+                                    b.input.retransTotal,
+                                    b.input.recvDropTotal,
+                                ),
+                            },
                   ]
                 : []),
             ...(hasOutputStats
