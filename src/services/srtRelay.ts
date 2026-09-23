@@ -169,9 +169,20 @@ interface RelayStatusResponse {
 }
 
 const VALID_LEG_STATES: readonly SrtRelayLegState[] = ['pending', 'idle', 'running', 'broken'];
+const MAX_REASONABLE_BELATED_AVG_MS = 1_000_000_000;
 
 function numOrNull(v: unknown): number | null {
     return typeof v === 'number' ? v : null;
+}
+
+function belatedAvgOrNull(v: unknown): number | null {
+    const value = numOrNull(v);
+    return value !== null &&
+        Number.isFinite(value) &&
+        value >= 0 &&
+        value <= MAX_REASONABLE_BELATED_AVG_MS
+        ? value
+        : null;
 }
 
 function parseLegState(state: string | undefined): SrtRelayLegState {
@@ -195,7 +206,7 @@ function parseLeg(leg: RelayStatusResponseLeg): SrtRelayLegStatus {
         bandwidthMbps: numOrNull(leg.bandwidthMbps),
         recvRateMbps: numOrNull(leg.recvRateMbps),
         belatedTotal: numOrNull(leg.belatedTotal),
-        belatedAvgMs: numOrNull(leg.belatedAvgMs),
+        belatedAvgMs: belatedAvgOrNull(leg.belatedAvgMs),
         undecryptTotal: numOrNull(leg.undecryptTotal),
         reorderDistance: numOrNull(leg.reorderDistance),
         rcvBufMs: numOrNull(leg.rcvBufMs),
@@ -267,7 +278,7 @@ function parseInputStatus(input: RelayStatusResponseInput | undefined): SrtRelay
         bandwidthMbps: numOrNull(input.bandwidthMbps),
         recvRateMbps: numOrNull(input.recvRateMbps),
         belatedTotal: numOrNull(input.belatedTotal),
-        belatedAvgMs: numOrNull(input.belatedAvgMs),
+        belatedAvgMs: belatedAvgOrNull(input.belatedAvgMs),
         undecryptTotal: numOrNull(input.undecryptTotal),
         reorderDistance: numOrNull(input.reorderDistance),
         rcvBufMs: numOrNull(input.rcvBufMs),

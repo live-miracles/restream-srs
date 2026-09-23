@@ -274,6 +274,37 @@ describe('SRT relay service', () => {
         });
     });
 
+    test('normalizes invalid belated averages from libsrt to null', async () => {
+        global.fetch = async () =>
+            new Response(
+                JSON.stringify({
+                    pid: 12345,
+                    startedAtMs: Date.now() - 1000,
+                    updatedAtMs: Date.now(),
+                    streamStates: [
+                        {
+                            streamId: '#!::r=live/key01,m=publish',
+                            inputActive: true,
+                            input: {
+                                belatedAvgMs: 9.00201e15,
+                                legs: [{ belatedAvgMs: 9.00201e15 }],
+                            },
+                        },
+                    ],
+                }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } },
+            );
+
+        const service = createSrtRelayService();
+        cleanup.push(async () => service.shutdown());
+        service.start();
+
+        await waitFor(() => service.getStats().pid === 12345);
+        const stream = service.getStreamStatus('#!::r=live/key01,m=publish');
+        assert.equal(stream.input.belatedAvgMs, null);
+        assert.equal(stream.input.legs[0].belatedAvgMs, null);
+    });
+
     test('matches stream status by resource path when encoder streamid includes extra fields', async () => {
         global.fetch = async () =>
             new Response(

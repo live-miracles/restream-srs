@@ -1386,22 +1386,37 @@ function renderSrtBondingDetailsContent(pipelineId: string, target?: HTMLElement
 
     const { input, output } = pipeline.srtBonding;
 
-    const inputRows = [
-        srtDetailRow('Recv Packets Total', fmtRawCount(input.recvPacketsTotal)),
-        srtDetailRow('Recv Unique Packets Total', fmtRawCount(input.recvUniquePacketsTotal)),
-        srtDetailRow('Recv Loss Total', fmtRawCount(input.recvLossTotal)),
-        srtDetailRow('Recv Drop Total', fmtRawCount(input.recvDropTotal)),
-        srtDetailRow('Retransmit Total', fmtRawCount(input.retransTotal)),
-        srtDetailRow('RTT', fmtMs(input.rttMs)),
-        srtDetailRow('Latency', fmtMs(input.latencyMs)),
-        srtDetailRow('Bandwidth', fmtMbpsValue(input.bandwidthMbps)),
-        srtDetailRow('Recv Rate', fmtMbpsValue(input.recvRateMbps)),
-        srtDetailRow('Belated Total', fmtRawCount(input.belatedTotal)),
-        srtDetailRow('Belated Avg', fmtMs(input.belatedAvgMs)),
-        srtDetailRow('Undecrypt Total', fmtRawCount(input.undecryptTotal)),
-        srtDetailRow('Reorder Distance', fmtRawCount(input.reorderDistance)),
-        srtDetailRow('Recv Buffer', fmtMs(input.rcvBufMs)),
-    ].join('');
+    const inputRows = (
+        input.legs.length > 0
+            ? [
+                  srtDetailRow('Recv Packets Total', fmtRawCount(input.recvPacketsTotal)),
+                  srtDetailRow(
+                      'Recv Unique Packets Total',
+                      fmtRawCount(input.recvUniquePacketsTotal),
+                  ),
+                  srtDetailRow('Recv Drop Total', fmtRawCount(input.recvDropTotal)),
+                  srtDetailRow('Latency', fmtMs(input.latencyMs)),
+              ]
+            : [
+                  srtDetailRow('Recv Packets Total', fmtRawCount(input.recvPacketsTotal)),
+                  srtDetailRow(
+                      'Recv Unique Packets Total',
+                      fmtRawCount(input.recvUniquePacketsTotal),
+                  ),
+                  srtDetailRow('Recv Loss Total', fmtRawCount(input.recvLossTotal)),
+                  srtDetailRow('Recv Drop Total', fmtRawCount(input.recvDropTotal)),
+                  srtDetailRow('Retransmit Total', fmtRawCount(input.retransTotal)),
+                  srtDetailRow('RTT', fmtMs(input.rttMs)),
+                  srtDetailRow('Latency', fmtMs(input.latencyMs)),
+                  srtDetailRow('Bandwidth', fmtMbpsValue(input.bandwidthMbps)),
+                  srtDetailRow('Recv Rate', fmtMbpsValue(input.recvRateMbps)),
+                  srtDetailRow('Belated Total', fmtRawCount(input.belatedTotal)),
+                  srtDetailRow('Belated Avg', fmtMs(input.belatedAvgMs)),
+                  srtDetailRow('Undecrypt Total', fmtRawCount(input.undecryptTotal)),
+                  srtDetailRow('Reorder Distance', fmtRawCount(input.reorderDistance)),
+                  srtDetailRow('Recv Buffer', fmtMs(input.rcvBufMs)),
+              ]
+    ).join('');
 
     const outputRows = [
         srtDetailRow('Sent Packets Total', fmtRawCount(output.sentPacketsTotal)),
