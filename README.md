@@ -362,6 +362,9 @@ output starts/exits/restarts, SRS and relay transitions, input and bonded-leg
 transitions, and FFmpeg timestamp/media-clock warnings for seven days (the last
 ffmpeg stderr tail at exit is included on the exit event; raw stderr isn't
 streamed to diagnostics to keep incident volume from crowding out the window).
+Once per minute it also stores compact health snapshots containing SRT counters,
+leg rates/health, relay forwarding state, and FFmpeg output progress so an
+incident can be investigated after the live one-hour chart window has passed.
 Files are
 rotated daily or at 100 MB, whichever comes first, with a 5 GB total diagnostics
 cap that removes the oldest rotated files first. The installer configures

@@ -73,6 +73,10 @@ interface OutputStats {
     memoryUsageBytes: number | null;
     memoryLimitBytes: number | null;
     cpuPercent: number | null;
+    lastOutTimeUs: number | null;
+    lastTotalSizeBytes: number | null;
+    progressAgeMs: number | null;
+    outputProgressAgeMs: number | null;
 }
 
 interface OutputProgress {
@@ -185,6 +189,10 @@ export function createOutputService(
             memoryUsageBytes: usage?.rssBytes ?? null,
             memoryLimitBytes: usage?.limitBytes ?? null,
             cpuPercent: cpuUsage.get(outputId) ?? null,
+            lastOutTimeUs: p?.lastOutTimeMs ?? null,
+            lastTotalSizeBytes: p?.lastTotalSize ?? null,
+            progressAgeMs: p ? Date.now() - p.lastProgressAtMs : null,
+            outputProgressAgeMs: p ? Date.now() - p.lastOutputProgressAtMs : null,
         };
     }
 
