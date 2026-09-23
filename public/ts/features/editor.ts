@@ -149,6 +149,12 @@ function renderLegHistoryCharts(pipelineId: string, data: LegHistoryData): void 
     const hasDropTotals = data.legs.some((leg) =>
         leg.samples.some((sample) => sample.dropTotal != null),
     );
+    if (!hasLossTotals && !hasDropTotals) {
+        wrap.innerHTML =
+            '<p class="text-sm opacity-50">No SRT packet loss/drop history is available for this period.</p>';
+        delete wrap.dataset.chartMode;
+        return;
+    }
     const chartMode = `${hasLossTotals ? 'loss' : ''}${hasDropTotals ? 'drop' : ''}`;
     const legend = data.legs
         .map(
@@ -165,19 +171,11 @@ function renderLegHistoryCharts(pipelineId: string, data: LegHistoryData): void 
             : '';
         wrap.innerHTML = `<div class="flex flex-wrap gap-x-3 gap-y-1 mb-2">${legend}</div>
             <div class="grid grid-cols-1 gap-4">
-                <div><div class="text-xs opacity-60 mb-1">Receive rate (Mbps)</div><canvas id="srt-leg-rate-chart" class="w-full h-32 text-base-content"></canvas></div>
                 ${lossChart}
                 ${dropChart}
             </div>`;
         wrap.dataset.chartMode = chartMode;
     }
-    legHistoryChart(
-        'srt-leg-rate-chart',
-        data.legs,
-        (sample) => sample.recvRateMbps,
-        0,
-        (value) => fmt(value),
-    );
     if (hasLossTotals) {
         legHistoryChart(
             'srt-leg-loss-chart',

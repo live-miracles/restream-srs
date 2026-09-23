@@ -87,29 +87,6 @@ function historyLegs(input: SrtRelayInputStatus, inputActive: boolean): SrtRelay
     ];
 }
 
-function directSrtHistoryLeg(stream: SrsStream): SrtRelayLegStatus {
-    return {
-        ip: AGGREGATE_HISTORY_LEG_IP,
-        port: 0,
-        state: 'running',
-        rttMs: null,
-        latencyMs: null,
-        recvPacketsTotal: null,
-        recvUniquePacketsTotal: 0,
-        recvLossTotal: null,
-        recvDropTotal: null,
-        retransTotal: null,
-        bandwidthMbps: null,
-        recvRateMbps:
-            typeof stream.kbps?.recv_30s === 'number' ? stream.kbps.recv_30s / 1000 : null,
-        belatedTotal: null,
-        belatedAvgMs: null,
-        undecryptTotal: null,
-        reorderDistance: null,
-        rcvBufMs: null,
-    };
-}
-
 export interface InputHealth {
     connected: boolean;
     live: boolean;
@@ -1034,9 +1011,6 @@ export function createHealthService(
             const graphLegs = srtStream
                 ? [...historyLegs(relayInput, rawBondingStatus.inputActive)]
                 : [];
-            if (graphLegs.length === 0 && srtStream && s) {
-                graphLegs.push(directSrtHistoryLeg(s));
-            }
             if (relayInput.legs.length > 0) {
                 pipelineLegHistory.delete(AGGREGATE_HISTORY_LEG_IP);
             }
