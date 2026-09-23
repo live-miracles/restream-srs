@@ -438,8 +438,10 @@ function relayIssues(
     const issues: OverviewIssue[] = [];
     for (const alert of pipeline.alerts) {
         // The leg-specific version below includes the address and the precise
-        // reason, so avoid showing the generic no-flow alert twice.
-        if (alert.code === 'bonded-leg-no-flow') continue;
+        // reason, so avoid showing per-leg alerts twice in the combined list.
+        if (alert.code === 'bonded-leg-no-flow' || alert.code === 'bonded-leg-quality') {
+            continue;
+        }
         issues.push({ severity: alert.severity, message: alert.message });
     }
     const inputSeverity = inputSt === 'error' ? 'error' : 'warning';
