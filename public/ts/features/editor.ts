@@ -30,6 +30,7 @@ const MAX_AUDIO_TRACKS = 50;
 const LEG_HISTORY_WINDOW_MS = 30 * 60 * 1000;
 const LEG_HISTORY_PAGE_STEP_MS = 10 * 60 * 1000;
 const legHistoryOffsets = new Map<string, number>();
+const legHistoryCache = new Map<string, LegHistoryData>();
 
 function formatLegChartTimeTick(ts: number): string {
     const date = new Date(ts);
@@ -167,6 +168,41 @@ function renderLegHistoryCharts(pipelineId: string, data: LegHistoryData): void 
     );
 }
 
+function mergeLegHistory(
+    pipelineId: string,
+    data: LegHistoryData,
+    from: number,
+    to: number,
+): LegHistoryData {
+    const cached = legHistoryCache.get(pipelineId);
+    if (!cached) {
+        legHistoryCache.set(pipelineId, data);
+        return data;
+    }
+
+    const incomingByKey = new Map(data.legs.map((leg) => [`${leg.ip}:${leg.port}`, leg]));
+    const cachedByKey = new Map(cached.legs.map((leg) => [`${leg.ip}:${leg.port}`, leg]));
+    const keys = new Set([...cachedByKey.keys(), ...incomingByKey.keys()]);
+    const legs = [...keys].map((key) => {
+        const previous = cachedByKey.get(key);
+        const incoming = incomingByKey.get(key);
+        const samplesByTimestamp = new Map(
+            (previous?.samples ?? []).map((sample) => [sample.ts, sample]),
+        );
+        for (const sample of incoming?.samples ?? []) samplesByTimestamp.set(sample.ts, sample);
+        return {
+            ip: incoming?.ip ?? previous!.ip,
+            port: incoming?.port ?? previous!.port,
+            samples: [...samplesByTimestamp.values()]
+                .filter((sample) => sample.ts >= from && sample.ts <= to)
+                .sort((a, b) => a.ts - b.ts),
+        };
+    });
+    const merged = { ...data, from, to, legs };
+    legHistoryCache.set(pipelineId, merged);
+    return merged;
+}
+
 async function loadLegHistory(pipelineId: string, showLoading = true): Promise<void> {
     const offset = legHistoryOffsets.get(pipelineId) ?? 0;
     const to = Date.now() - offset;
@@ -175,8 +211,13 @@ async function loadLegHistory(pipelineId: string, showLoading = true): Promise<v
     if (content && showLoading) {
         content.innerHTML = '<p class="text-sm opacity-50">Loading leg history…</p>';
     }
-    const data = await api.getLegHistory(pipelineId, from, to);
+    const cached = offset === 0 ? legHistoryCache.get(pipelineId) : undefined;
+    const cachedTimestamps =
+        cached?.legs.flatMap((leg) => leg.samples.map((sample) => sample.ts)) ?? [];
+    const latestCachedTs = cachedTimestamps.length > 0 ? Math.max(...cachedTimestamps) : undefined;
+    const data = await api.getLegHistory(pipelineId, from, to, latestCachedTs);
     if (!data || !document.getElementById('srt-leg-history-content')) return;
+    const displayData = offset === 0 ? mergeLegHistory(pipelineId, data, from, to) : data;
     const range = document.getElementById('srt-leg-history-range');
     if (range) {
         const fmt = (ts: number) =>
@@ -190,7 +231,7 @@ async function loadLegHistory(pipelineId: string, showLoading = true): Promise<v
     const forward = document.getElementById('srt-leg-history-forward') as HTMLButtonElement | null;
     if (back) back.disabled = data.oldestTs === null || data.from <= data.oldestTs;
     if (forward) forward.disabled = offset === 0;
-    renderLegHistoryCharts(pipelineId, data);
+    renderLegHistoryCharts(pipelineId, displayData);
 }
 
 function renderLegHistorySection(pipelineId: string): string {

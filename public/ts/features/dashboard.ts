@@ -39,6 +39,13 @@ export async function refreshDashboard(): Promise<void> {
 
 let configStale = true;
 
+function mergeMetricsHistory(samples: import('../types.js').MetricSample[]): void {
+    if (samples.length === 0) return;
+    const byTimestamp = new Map(state.metricsHistory.map((sample) => [sample.ts, sample]));
+    for (const sample of samples) byTimestamp.set(sample.ts, sample);
+    state.metricsHistory = [...byTimestamp.values()].sort((a, b) => a.ts - b.ts);
+}
+
 // The configRev the currently loaded /api/config corresponds to. Each health poll
 // carries the server's current rev; when it no longer matches what we loaded, the
 // config was edited elsewhere (another dashboard client) and we surface a reload
@@ -87,11 +94,12 @@ async function fetchAndRender(): Promise<void> {
     configStale = false;
 
     const inOverview = !getUrlParam('p');
+    const latestMetricTs = state.metricsHistory.at(-1)?.ts;
     const [configResult, healthResult, metricsResult, historyResult] = await Promise.all([
         doConfig ? getConfig() : Promise.resolve(null),
         getHealth(),
         getSystemMetrics(),
-        inOverview ? getMetricsHistory() : Promise.resolve(null),
+        inOverview ? getMetricsHistory(latestMetricTs) : Promise.resolve(null),
     ]);
 
     if (configResult) {
@@ -132,7 +140,7 @@ async function fetchAndRender(): Promise<void> {
                 : 'SRT bonding relay is not running — bonded SRT input unavailable';
     }
     if (metricsResult) state.metrics = metricsResult;
-    if (historyResult) state.metricsHistory = historyResult;
+    if (historyResult) mergeMetricsHistory(historyResult);
     state.pipelines = parsePipelines(state.config, state.health);
     renderPipelines();
     renderMetrics();

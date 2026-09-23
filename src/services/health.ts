@@ -1163,9 +1163,16 @@ export function createHealthService(
             const from = Number.isFinite(requestedFrom)
                 ? Math.max(requestedFrom, to - LEG_HISTORY_MAX_WINDOW_MS)
                 : to - LEG_HISTORY_MAX_WINDOW_MS;
+            const requestedAfter = Number(req.query.after);
+            const after = Number.isFinite(requestedAfter) ? requestedAfter : null;
             const series = [...(legHistory.get(pipelineId)?.values() ?? [])].map((leg) => ({
                 ...leg,
-                samples: leg.samples.filter((sample) => sample.ts >= from && sample.ts <= to),
+                samples: leg.samples.filter(
+                    (sample) =>
+                        sample.ts >= from &&
+                        sample.ts <= to &&
+                        (after === null || sample.ts > after),
+                ),
             }));
             const allSamples = [...(legHistory.get(pipelineId)?.values() ?? [])].flatMap(
                 (leg) => leg.samples,

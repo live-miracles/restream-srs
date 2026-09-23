@@ -119,7 +119,14 @@ function loadHarness(t, { dfOutput, dfError, fetchImpl, relayPid, procStatusByPi
     registerMetricsApi(app, makeFakeSrtRelayService(relayPid));
     return {
         system: () => dispatch(app, 'GET', '/api/metrics/system'),
-        history: () => dispatch(app, 'GET', '/api/metrics/history'),
+        history: (after) =>
+            dispatch(
+                app,
+                'GET',
+                after === undefined
+                    ? '/api/metrics/history'
+                    : `/api/metrics/history?after=${after}`,
+            ),
     };
 }
 
@@ -153,6 +160,18 @@ describe('Metrics API integration', () => {
         assert.equal(typeof sample.cpu, 'number');
         assert.equal(typeof sample.ramUsed, 'number');
         assert.equal(typeof sample.ramTotal, 'number');
+    });
+
+    test('GET /api/metrics/history?after= returns only newer samples', async (t) => {
+        const { history } = loadHarness(t, {});
+        const initial = await history();
+        const latestTs = initial.body.at(-1).ts;
+
+        const atCursor = await history(latestTs);
+        assert.deepEqual(atCursor.body, []);
+
+        const beforeCursor = await history(latestTs - 1);
+        assert.deepEqual(beforeCursor.body, initial.body);
     });
 
     test('disk stats parse valid `df -B1 /` output into totalBytes/usedBytes', async (t) => {
