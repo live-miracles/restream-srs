@@ -90,10 +90,13 @@ export const getHealth = () => apiRequest<HealthData>('/api/health');
 export const getHostProbes = (hours = 24) =>
     apiRequest<HostProbeOverview>(`/api/host-probes?hours=${hours}`);
 export const getSystemMetrics = () => apiRequest<SystemMetrics>('/api/metrics/system');
-export const getMetricsHistory = () => apiRequest<MetricSample[]>('/api/metrics/history');
-export const getLegHistory = (pipelineId: string, from: number, to: number) =>
+export const getMetricsHistory = (after?: number) =>
+    apiRequest<MetricSample[]>(
+        after === undefined ? '/api/metrics/history' : `/api/metrics/history?after=${after}`,
+    );
+export const getLegHistory = (pipelineId: string, from: number, to: number, after?: number) =>
     apiRequest<LegHistoryData>(
-        `/api/health/pipelines/${encodeURIComponent(pipelineId)}/legs/history?from=${Math.round(from)}&to=${Math.round(to)}`,
+        `/api/health/pipelines/${encodeURIComponent(pipelineId)}/legs/history?from=${Math.round(from)}&to=${Math.round(to)}${after === undefined ? '' : `&after=${Math.round(after)}`}`,
     );
 
 export const updateGeneralSettings = (name: string, publicHost: string) =>

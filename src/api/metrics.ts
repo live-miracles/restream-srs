@@ -8,10 +8,10 @@ import type { SrtRelayService } from '../services/srtRelay.js';
 
 const DISK_STATS_INTERVAL_MS = 30_000;
 const NET_STATS_INTERVAL_MS = 3_000;
-const SAMPLE_INTERVAL_MS = 10_000;
+const SAMPLE_INTERVAL_MS = 5_000;
 const PROC_STATS_INTERVAL_MS = 10_000;
 const PROC_STATS_FETCH_TIMEOUT_MS = 2000;
-const HISTORY_MAX = 720; // 2 hours at 10 s — client trims to desired window
+const HISTORY_MAX = 1440; // 2 hours at 5 s — client trims to desired window
 
 let prevCpu = os.cpus().map((c) => c.times);
 
@@ -222,7 +222,14 @@ export function registerMetricsApi(app: Express, srtRelayService: SrtRelayServic
         });
     });
 
-    app.get('/api/metrics/history', (_req, res) => {
-        res.json(metricsHistory);
+    app.get('/api/metrics/history', (req, res) => {
+        // The dashboard keeps samples it has already received. On regular
+        // refreshes it asks only for samples newer than its latest timestamp;
+        // omitting/invalidating `after` preserves the initial full-history API.
+        const requestedAfter = typeof req.query.after === 'string' ? Number(req.query.after) : NaN;
+        const samples = Number.isFinite(requestedAfter)
+            ? metricsHistory.filter((sample) => sample.ts > requestedAfter)
+            : metricsHistory;
+        res.json(samples);
     });
 }
