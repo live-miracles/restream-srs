@@ -54,10 +54,7 @@ const AGGREGATE_HISTORY_LEG_IP = 'SRT input';
 // bonded SRT connection by older relay builds. Keep the real per-leg data when
 // it is available, but expose the aggregate as one history series so the
 // dashboard still has something to graph.
-function historyLegs(
-    input: SrtRelayInputStatus,
-    inputActive: boolean,
-): SrtRelayLegStatus[] {
+function historyLegs(input: SrtRelayInputStatus, inputActive: boolean): SrtRelayLegStatus[] {
     if (input.legs.length > 0 || !inputActive) return input.legs;
     const hasStats =
         input.recvPacketsTotal !== null ||
