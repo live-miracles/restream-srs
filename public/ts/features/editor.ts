@@ -124,6 +124,12 @@ function legHistoryChart(
             else ctx.lineTo(point.x, point.y);
         });
         ctx.stroke();
+        if (points.length === 1) {
+            ctx.fillStyle = ctx.strokeStyle;
+            ctx.beginPath();
+            ctx.arc(points[0].x, points[0].y, 2.5, 0, Math.PI * 2);
+            ctx.fill();
+        }
     });
 }
 
@@ -132,40 +138,64 @@ function renderLegHistoryCharts(pipelineId: string, data: LegHistoryData): void 
     if (!wrap) return;
     if (data.legs.length === 0 || data.legs.every((leg) => leg.samples.length === 0)) {
         wrap.innerHTML =
-            '<p class="text-sm opacity-50">No SRT leg history is available for this period.</p>';
+            '<p class="text-sm opacity-50">No SRT input history is available for this period.</p>';
+        delete wrap.dataset.chartMode;
         return;
     }
     const fmt = (value: number) => (value >= 10 ? value.toFixed(0) : value.toFixed(1));
+    const hasLossTotals = data.legs.some((leg) =>
+        leg.samples.some((sample) => sample.lossTotal != null),
+    );
+    const hasDropTotals = data.legs.some((leg) =>
+        leg.samples.some((sample) => sample.dropTotal != null),
+    );
+    const chartMode = `${hasLossTotals ? 'loss' : ''}${hasDropTotals ? 'drop' : ''}`;
     const legend = data.legs
         .map(
             (leg, index) =>
                 `<span class="inline-flex items-center gap-1 text-xs"><span class="inline-block h-2 w-2 rounded-full" style="background:${['#38bdf8', '#a78bfa', '#f59e0b', '#34d399', '#fb7185', '#f97316'][index % 6]}"></span>${escapeHtml(leg.ip)}</span>`,
         )
         .join('');
-    if (
-        !document.getElementById('srt-leg-loss-chart') ||
-        !document.getElementById('srt-leg-drop-chart')
-    ) {
+    if (wrap.dataset.chartMode !== chartMode) {
+        const lossChart = hasLossTotals
+            ? '<div><div class="text-xs opacity-60 mb-1">Cumulative packet loss</div><canvas id="srt-leg-loss-chart" class="w-full h-32 text-base-content"></canvas></div>'
+            : '';
+        const dropChart = hasDropTotals
+            ? '<div><div class="text-xs opacity-60 mb-1">Cumulative packet drops</div><canvas id="srt-leg-drop-chart" class="w-full h-32 text-base-content"></canvas></div>'
+            : '';
         wrap.innerHTML = `<div class="flex flex-wrap gap-x-3 gap-y-1 mb-2">${legend}</div>
             <div class="grid grid-cols-1 gap-4">
-                <div><div class="text-xs opacity-60 mb-1">Cumulative packet loss</div><canvas id="srt-leg-loss-chart" class="w-full h-32 text-base-content"></canvas></div>
-                <div><div class="text-xs opacity-60 mb-1">Cumulative packet drops</div><canvas id="srt-leg-drop-chart" class="w-full h-32 text-base-content"></canvas></div>
+                <div><div class="text-xs opacity-60 mb-1">Receive rate (Mbps)</div><canvas id="srt-leg-rate-chart" class="w-full h-32 text-base-content"></canvas></div>
+                ${lossChart}
+                ${dropChart}
             </div>`;
+        wrap.dataset.chartMode = chartMode;
     }
     legHistoryChart(
-        'srt-leg-loss-chart',
+        'srt-leg-rate-chart',
         data.legs,
-        (sample) => sample.lossTotal ?? null,
+        (sample) => sample.recvRateMbps,
         0,
         (value) => fmt(value),
     );
-    legHistoryChart(
-        'srt-leg-drop-chart',
-        data.legs,
-        (sample) => sample.dropTotal ?? null,
-        0,
-        (value) => fmt(value),
-    );
+    if (hasLossTotals) {
+        legHistoryChart(
+            'srt-leg-loss-chart',
+            data.legs,
+            (sample) => sample.lossTotal ?? null,
+            0,
+            (value) => fmt(value),
+        );
+    }
+    if (hasDropTotals) {
+        legHistoryChart(
+            'srt-leg-drop-chart',
+            data.legs,
+            (sample) => sample.dropTotal ?? null,
+            0,
+            (value) => fmt(value),
+        );
+    }
 }
 
 function mergeLegHistory(
@@ -237,7 +267,7 @@ async function loadLegHistory(pipelineId: string, showLoading = true): Promise<v
 function renderLegHistorySection(pipelineId: string): string {
     return `<div id="srt-leg-history-section" class="mt-1">
         <div class="mb-2 flex items-center justify-center gap-2 px-1">
-            <div class="text-xs font-semibold uppercase opacity-50">SRT Legs History</div>
+            <div class="text-xs font-semibold uppercase opacity-50">SRT Input History</div>
             <div class="flex items-center gap-1">
                 <button id="srt-leg-history-back" type="button" class="btn btn-xs btn-ghost">&#8592; 10 min</button>
                 <span id="srt-leg-history-range" class="inline-flex w-28 justify-center"><span class="badge badge-success badge-xs gap-1">LIVE</span></span>

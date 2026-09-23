@@ -2207,6 +2207,8 @@ function renderPipelineInfo(selectedId: string | null): void {
     const bondingInputActive = pipeline.srtBonding.inputActive;
     const bondingOutputConnected = pipeline.srtBonding.outputConnected;
     const hasActiveBondingConnection = bondingInputActive || bondingOutputConnected;
+    const hasActiveSrtInput = pipeline.input.connected && pipeline.input.isSrt;
+    const showSrtInputGraphs = hasActiveBondingConnection || hasActiveSrtInput;
     const relayProcessRunning = state.health.srtRelay?.status === 'running';
     const bondingHost = state.config.publicHost || 'localhost';
     const bondingPortValue = state.health.srtRelay?.port ?? 10081;
@@ -2219,7 +2221,7 @@ function renderPipelineInfo(selectedId: string | null): void {
             : '');
     const bondingGraphs = document.getElementById('srt-bonding-graphs');
     const bondingStatsCard = document.getElementById('srt-bonding-stats-card');
-    bondingGraphs?.classList.toggle('hidden', !hasActiveBondingConnection);
+    bondingGraphs?.classList.toggle('hidden', !showSrtInputGraphs);
     bondingStatsCard?.classList.toggle('hidden', !hasActiveBondingConnection);
     bondingCard?.classList.remove('opacity-60');
     if (bondingDot && bondingDotFill) {
@@ -2354,7 +2356,7 @@ function renderPipelineInfo(selectedId: string | null): void {
     }
 
     void import('../features/editor.js').then((ed) => {
-        if (hasActiveBondingConnection) {
+        if (showSrtInputGraphs) {
             ed.renderSrtBondingDetailsInline(pipeline.id);
         } else {
             const details = document.getElementById('srt-bonding-details');
