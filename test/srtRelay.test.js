@@ -100,7 +100,13 @@ const EMPTY_OUTPUT = {
 // opposed to EMPTY_INPUT above, which is a mocked payload that explicitly
 // reports zeroes) — recvPacketsTotal stays null rather than 0 since no data
 // ever flowed.
-const UNREPORTED_INPUT = { ...EMPTY_INPUT, recvPacketsTotal: null };
+const UNREPORTED_INPUT = {
+    ...EMPTY_INPUT,
+    recvPacketsTotal: null,
+    recvLossTotal: null,
+    recvDropTotal: null,
+    retransTotal: null,
+};
 
 describe('SRT relay service', () => {
     const cleanup = [];

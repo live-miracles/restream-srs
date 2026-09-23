@@ -1330,9 +1330,9 @@ function renderOverview(): void {
             p.srtBonding.forwardedPackets > 0 ||
             (p.srtBonding.input.recvPacketsTotal ?? 0) > 0 ||
             p.srtBonding.input.recvUniquePacketsTotal > 0 ||
-            p.srtBonding.input.retransTotal > 0 ||
-            p.srtBonding.input.recvLossTotal > 0 ||
-            p.srtBonding.input.recvDropTotal > 0,
+            (p.srtBonding.input.retransTotal ?? 0) > 0 ||
+            (p.srtBonding.input.recvLossTotal ?? 0) > 0 ||
+            (p.srtBonding.input.recvDropTotal ?? 0) > 0,
     );
     const relayProblemCount = activeRelayPipelines.filter(
         (p) =>
@@ -2255,7 +2255,8 @@ function renderPipelineInfo(selectedId: string | null): void {
         const b = pipeline.srtBonding;
         const rxPkts = b.input.recvUniquePacketsTotal || b.input.recvPacketsTotal || 0;
         const hasSessionStats =
-            relayProcessRunning && (bondingInputActive || rxPkts > 0 || b.input.retransTotal > 0);
+            relayProcessRunning &&
+            (bondingInputActive || rxPkts > 0 || (b.input.retransTotal ?? 0) > 0);
         const hasOutputStats =
             relayProcessRunning && (bondingOutputConnected || b.output.sentPacketsTotal > 0);
         const items = [
@@ -2276,7 +2277,7 @@ function renderPipelineInfo(selectedId: string | null): void {
                       {
                           label: 'L / R / D',
                           labelTitle:
-                              'Loss / Rexmit / Drop packets on the upstream bonded SRT input receiver.',
+                              'Group input: loss and receive retransmission are unavailable for a bonded group (shown as —); drop is the deduplicated group drop counter. Per-leg L / R / D is shown below.',
                           value: fmtLossRexmitDrop(
                               b.input.recvLossTotal,
                               b.input.retransTotal,
