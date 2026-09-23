@@ -18,6 +18,8 @@ import type {
     SrtRelayService,
     SrtRelayStats,
     SrtRelayStreamStatus,
+    SrtRelayInputStatus,
+    SrtRelayLegStatus,
     SrtRelayLegState,
 } from './srtRelay.js';
 import { inputPullUrl, type InputProtocol, type InputState } from './inputState.js';
@@ -43,6 +45,72 @@ const DIAGNOSTICS_SNAPSHOT_INTERVAL_MS = 60 * 1000;
 function counterDelta(current: number | null, previous: number | null | undefined): number | null {
     if (current === null || previous === null || previous === undefined) return null;
     return current >= previous ? current - previous : current;
+}
+
+const AGGREGATE_HISTORY_LEG_IP = 'SRT input';
+
+// Some SRT sessions are reported by the relay with aggregate input statistics
+// but no `legs` array. This is the representation used for a single/non-
+// bonded SRT connection by older relay builds. Keep the real per-leg data when
+// it is available, but expose the aggregate as one history series so the
+// dashboard still has something to graph.
+function historyLegs(
+    input: SrtRelayInputStatus,
+    inputActive: boolean,
+): SrtRelayLegStatus[] {
+    if (input.legs.length > 0 || !inputActive) return input.legs;
+    const hasStats =
+        input.recvPacketsTotal !== null ||
+        input.recvUniquePacketsTotal > 0 ||
+        input.recvRateMbps !== null ||
+        input.recvLossTotal > 0 ||
+        input.recvDropTotal > 0 ||
+        input.retransTotal > 0;
+    if (!hasStats) return [];
+    return [
+        {
+            ip: AGGREGATE_HISTORY_LEG_IP,
+            port: 0,
+            state: 'running',
+            rttMs: input.rttMs,
+            latencyMs: input.latencyMs,
+            recvPacketsTotal: input.recvPacketsTotal,
+            recvUniquePacketsTotal: input.recvUniquePacketsTotal,
+            recvLossTotal: input.recvLossTotal,
+            recvDropTotal: input.recvDropTotal,
+            retransTotal: input.retransTotal,
+            bandwidthMbps: input.bandwidthMbps,
+            recvRateMbps: input.recvRateMbps,
+            belatedTotal: input.belatedTotal,
+            belatedAvgMs: input.belatedAvgMs,
+            undecryptTotal: input.undecryptTotal,
+            reorderDistance: input.reorderDistance,
+            rcvBufMs: input.rcvBufMs,
+        },
+    ];
+}
+
+function directSrtHistoryLeg(stream: SrsStream): SrtRelayLegStatus {
+    return {
+        ip: AGGREGATE_HISTORY_LEG_IP,
+        port: 0,
+        state: 'running',
+        rttMs: null,
+        latencyMs: null,
+        recvPacketsTotal: null,
+        recvUniquePacketsTotal: 0,
+        recvLossTotal: null,
+        recvDropTotal: null,
+        retransTotal: null,
+        bandwidthMbps: null,
+        recvRateMbps:
+            typeof stream.kbps?.recv_30s === 'number' ? stream.kbps.recv_30s / 1000 : null,
+        belatedTotal: null,
+        belatedAvgMs: null,
+        undecryptTotal: null,
+        reorderDistance: null,
+        rcvBufMs: null,
+    };
 }
 
 export interface InputHealth {
@@ -966,7 +1034,17 @@ export function createHealthService(
             legPacketSamples.set(pipeline.id, currentLegs);
             const pipelineLegHistory =
                 legHistory.get(pipeline.id) ?? new Map<string, LegHistorySeries>();
-            for (const leg of relayInput.legs) {
+            const graphLegs = srtStream
+                ? [...historyLegs(relayInput, rawBondingStatus.inputActive)]
+                : [];
+            if (graphLegs.length === 0 && srtStream && s) {
+                graphLegs.push(directSrtHistoryLeg(s));
+            }
+            if (relayInput.legs.length > 0) {
+                pipelineLegHistory.delete(AGGREGATE_HISTORY_LEG_IP);
+            }
+            const trackedLegs = graphLegs.length > 0 ? graphLegs : relayInput.legs;
+            for (const leg of trackedLegs) {
                 const key = leg.ip;
                 const transportKey = `${leg.ip}:${leg.port}`;
                 const previousLeg = previousLegs.get(key);
