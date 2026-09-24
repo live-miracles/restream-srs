@@ -1526,7 +1526,12 @@ export function renderSrtBondingDetailsInline(pipelineId: string): void {
         target.dataset.pipelineId === pipelineId &&
         !!document.getElementById('srt-leg-history-section');
     if (alreadyRendered) {
-        void loadLegHistory(pipelineId, false);
+        // Poll refreshes re-render the live dashboard every five seconds. Do
+        // not restart a paged historical request on each poll, otherwise a
+        // slow request can be perpetually superseded before it renders.
+        if ((legHistoryOffsets.get(pipelineId) ?? 0) === 0) {
+            void loadLegHistory(pipelineId, false);
+        }
         return;
     }
     target.dataset.pipelineId = pipelineId;
