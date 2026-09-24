@@ -32,6 +32,7 @@ const LEG_HISTORY_PAGE_STEP_MS = 10 * 60 * 1000;
 const legHistoryOffsets = new Map<string, number>();
 const legHistoryCache = new Map<string, LegHistoryData>();
 const legHistoryRequestIds = new Map<string, number>();
+const legHistoryInFlight = new Set<string>();
 
 function formatLegChartTimeTick(ts: number): string {
     const date = new Date(ts);
@@ -233,6 +234,11 @@ function mergeLegHistory(
 }
 
 async function loadLegHistory(pipelineId: string, showLoading = true): Promise<void> {
+    const offset = legHistoryOffsets.get(pipelineId) ?? 0;
+    const requestKey = `${pipelineId}:${offset}`;
+    if (legHistoryInFlight.has(requestKey)) return;
+    legHistoryInFlight.add(requestKey);
+
     const requestId = (legHistoryRequestIds.get(pipelineId) ?? 0) + 1;
     legHistoryRequestIds.set(pipelineId, requestId);
     const isCurrentRequest = (): boolean => {
@@ -240,7 +246,6 @@ async function loadLegHistory(pipelineId: string, showLoading = true): Promise<v
         const details = document.getElementById('srt-bonding-details');
         return !details?.dataset.pipelineId || details.dataset.pipelineId === pipelineId;
     };
-    const offset = legHistoryOffsets.get(pipelineId) ?? 0;
     const to = Date.now() - offset;
     const from = to - LEG_HISTORY_WINDOW_MS;
     const content = document.getElementById('srt-leg-history-content');
@@ -285,6 +290,8 @@ async function loadLegHistory(pipelineId: string, showLoading = true): Promise<v
             content.innerHTML =
                 '<p class="text-sm text-error">Unable to load SRT input history. Please try again.</p>';
         }
+    } finally {
+        legHistoryInFlight.delete(requestKey);
     }
 }
 
