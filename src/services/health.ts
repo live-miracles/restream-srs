@@ -40,6 +40,10 @@ const MAX_SRS_EVENTS = 200;
 const LEG_HISTORY_MAX_SAMPLES = (60 * 60 * 1000) / POLL_INTERVAL_MS;
 const LEG_HISTORY_MAX_WINDOW_MS = 30 * 60 * 1000;
 const LEG_HEALTH_WINDOW_MS = 60 * 1000;
+// One second is a reasonable buffering target for long-distance or bonded
+// SRT, so warn only when the negotiated latency exceeds it with some margin.
+// Sudden latency spikes are still reported independently below.
+const SRT_HIGH_LATENCY_WARN_MS = 1500;
 const DIAGNOSTICS_SNAPSHOT_INTERVAL_MS = 60 * 1000;
 
 function counterDelta(current: number | null, previous: number | null | undefined): number | null {
@@ -902,7 +906,7 @@ export function createHealthService(
                 }
                 if (
                     currentRelaySample.latencyMs !== null &&
-                    (currentRelaySample.latencyMs >= 1000 ||
+                    (currentRelaySample.latencyMs >= SRT_HIGH_LATENCY_WARN_MS ||
                         (previousRelaySample.latencyMs !== null &&
                             currentRelaySample.latencyMs >=
                                 previousRelaySample.latencyMs * 1.5 + 100))
@@ -1097,7 +1101,7 @@ export function createHealthService(
                     health = health === 'error' ? health : 'warn';
                     reason = `Leg retransmissions are ${retransmissionPct.toFixed(1)}% over the last minute.`;
                 }
-                if (leg.latencyMs !== null && leg.latencyMs >= 1000) {
+                if (leg.latencyMs !== null && leg.latencyMs >= SRT_HIGH_LATENCY_WARN_MS) {
                     health = health === 'error' ? health : 'warn';
                     reason = `Leg latency is high (${Math.round(leg.latencyMs)} ms).`;
                 }
