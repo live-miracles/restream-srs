@@ -11,6 +11,11 @@ import { red, yellow, green } from '../utils/ansiColor.js';
 import type { Db, Output } from '../types.js';
 import type { InputState } from './inputState.js';
 import type { DiagnosticsLogger } from '../utils/diagnostics.js';
+import {
+    destinationSocketWarning,
+    parseTcpSocketSnapshot,
+    type TcpSocket,
+} from './outputSockets.js';
 
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000];
 // Outputs retry indefinitely — an input can be down for hours during a major
@@ -53,16 +58,6 @@ function memoryLimitBytesFor(videoEncoding: string, highRes: boolean): number {
     return scaledMb * 1024 * 1024;
 }
 
-const TCP_HEALTHY_STATES = new Set(['ESTAB', 'ESTABLISHED']);
-const TCP_BAD_STATES = new Set([
-    'CLOSE-WAIT',
-    'CLOSING',
-    'FIN-WAIT-1',
-    'FIN-WAIT-2',
-    'LAST-ACK',
-    'TIME-WAIT',
-]);
-
 interface OutputStats {
     status: 'running' | 'stopped' | 'failed';
     pid: number | null;
@@ -92,12 +87,6 @@ interface OutputProgress {
     mediaClockWarning: string | null;
     lastTimestampWarningAtMs: number | null;
     lastTimestampWarning: string | null;
-}
-
-interface TcpSocket {
-    state: string;
-    peerAddress: string;
-    peerPort: number;
 }
 
 interface SocketWarning {
@@ -486,49 +475,6 @@ export function createOutputService(
         ].join('\n');
     }
 
-    function parseEndpoint(endpoint: string): { address: string; port: number } | null {
-        const bracket = endpoint.match(/^\[([^\]]+)\]:(\d+)$/);
-        if (bracket) return { address: bracket[1], port: Number(bracket[2]) };
-        const idx = endpoint.lastIndexOf(':');
-        if (idx === -1) return null;
-        const port = Number(endpoint.slice(idx + 1));
-        return Number.isFinite(port) ? { address: endpoint.slice(0, idx), port } : null;
-    }
-
-    function isLocalAddress(address: string): boolean {
-        const normalized = address.toLowerCase().replace(/^\[|\]$/g, '');
-        return (
-            normalized === '::1' ||
-            normalized === 'localhost' ||
-            normalized.startsWith('127.') ||
-            normalized === '::ffff:7f00:1' ||
-            normalized.startsWith('::ffff:127.')
-        );
-    }
-
-    function parseTcpSocketSnapshot(stdout: string): Map<number, TcpSocket[]> {
-        const byPid = new Map<number, TcpSocket[]>();
-        for (const line of stdout.split('\n')) {
-            const trimmed = line.trim();
-            if (!trimmed) continue;
-            const parts = trimmed.split(/\s+/);
-            if (parts.length < 5) continue;
-            const state = parts[0];
-            const peer = parseEndpoint(parts[4]);
-            if (peer == null) continue;
-
-            const pidMatches = [...trimmed.matchAll(/pid=(\d+)/g)];
-            for (const match of pidMatches) {
-                const pid = Number(match[1]);
-                if (!Number.isFinite(pid)) continue;
-                const sockets = byPid.get(pid) ?? [];
-                sockets.push({ state, peerAddress: peer.address, peerPort: peer.port });
-                byPid.set(pid, sockets);
-            }
-        }
-        return byPid;
-    }
-
     function refreshTcpSocketSnapshot(): void {
         if (socketSnapshotInProgress) return;
         if (![...processes.values()].some((proc) => proc.pid != null)) return;
@@ -548,57 +494,6 @@ export function createOutputService(
                 tcpSocketSnapshotUsable = true;
             },
         );
-    }
-
-    function requiredRtmpSocket(output: Output): { port: number; local: boolean } | null {
-        const url = output.url;
-        if (!url.startsWith('rtmp://') && !url.startsWith('rtmps://')) return null;
-        let port: number;
-        let local: boolean;
-        try {
-            const parsed = new URL(url);
-            port = parsed.port ? Number(parsed.port) : parsed.protocol === 'rtmps:' ? 443 : 1935;
-            local = isLocalAddress(parsed.hostname);
-        } catch {
-            port = url.startsWith('rtmps://') ? 443 : 1935;
-            local = false;
-        }
-        // Local RTMP sockets are ambiguous: the ffmpeg input pull and output push
-        // both connect to local SRS, so leave local relays to the progress watchdog.
-        if (local) return null;
-        return { port, local };
-    }
-
-    function socketMatchesRequirement(
-        socket: TcpSocket,
-        requirement: { port: number; local: boolean },
-    ): boolean {
-        return (
-            socket.peerPort === requirement.port &&
-            isLocalAddress(socket.peerAddress) === requirement.local
-        );
-    }
-
-    function destinationSocketWarning(output: Output, proc: ChildProcess): string | null {
-        if (!tcpSocketSnapshotUsable) return null;
-        if (proc.pid == null) return null;
-        const requirement = requiredRtmpSocket(output);
-        if (requirement == null) return null;
-
-        const sockets = tcpSocketsByPid.get(proc.pid) ?? [];
-        const bad = sockets.find(
-            (s) => socketMatchesRequirement(s, requirement) && TCP_BAD_STATES.has(s.state),
-        );
-        if (bad) return `RTMP socket ${bad.state} on destination port ${requirement.port}`;
-
-        const healthy = sockets.some(
-            (s) => socketMatchesRequirement(s, requirement) && TCP_HEALTHY_STATES.has(s.state),
-        );
-        if (!healthy) {
-            return `RTMP socket missing (destination port ${requirement.port} not established)`;
-        }
-
-        return null;
     }
 
     function recordSocketWarning(outputId: string, reason: string, now: number): SocketWarning {
@@ -676,7 +571,12 @@ export function createOutputService(
             }
 
             if (now - startedAtMs >= OUTPUT_SOCKET_WARMUP_MS) {
-                const socketWarning = destinationSocketWarning(output, proc);
+                const socketWarning = destinationSocketWarning(
+                    output,
+                    proc.pid ?? null,
+                    tcpSocketsByPid,
+                    tcpSocketSnapshotUsable,
+                );
                 if (socketWarning) {
                     if (maybeKillForSocketWarning(output, proc, socketWarning, now)) continue;
                 } else {

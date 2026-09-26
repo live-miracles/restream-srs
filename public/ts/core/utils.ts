@@ -75,6 +75,19 @@ export function fmtMbpsValue(v: number | null | undefined): string {
     return v != null ? formatBitrate(v * 1000) : '—';
 }
 
+export function formatLocalTime(ts: number): string {
+    return new Date(ts).toLocaleTimeString(undefined, { hour12: false });
+}
+
+export function formatLocalDateTime(ts: number): string {
+    return new Date(ts).toLocaleString();
+}
+
+export function formatClockTime(ts: number): string {
+    const d = new Date(ts);
+    return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+}
+
 export function maskStreamKey(key: string | null | undefined): string {
     const k = String(key ?? '');
     const idx = k.indexOf('_');
