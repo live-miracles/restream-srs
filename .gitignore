@@ -5,6 +5,7 @@ node_modules/
 dist/
 public/js/
 public/output.css
+public/ui/
 data.db
 *.sqlite
 .env

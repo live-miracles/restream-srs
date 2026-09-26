@@ -132,7 +132,7 @@ describe('Pipeline CRUD', () => {
 
     // The UI deliberately allows this and flags it with a "duplicate stream
     // key" warning instead of rejecting it outright (same treatment as
-    // duplicate output destination URLs) — see public/ts/features/render.ts.
+    // duplicate output destination URLs) — see the Svelte dashboard output view.
     test('updatePipeline allows reassigning to a key another pipeline already holds', () => {
         const db = makeDb();
         const p1 = db.createPipeline();

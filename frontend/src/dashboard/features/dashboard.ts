@@ -4,12 +4,12 @@ import {
     getHostProbes,
     getSystemMetrics,
     getMetricsHistory,
-    isServerUnreachable,
 } from '../core/api.js';
 import { parsePipelines } from '../core/pipeline.js';
 import { state } from '../core/state.js';
-import { renderPipelines, renderMetrics } from './render.js';
 import { getUrlParam } from '../core/utils.js';
+import { publishDashboardSnapshot } from '../store.js';
+import { dashboardUi } from '../ui.js';
 
 let refreshInFlight: Promise<void> | null = null;
 let refreshQueued = false;
@@ -85,8 +85,13 @@ export async function refreshHostProbes(hours = 6): Promise<void> {
     const hostProbesResult = await getHostProbes(hours);
     if (hostProbesResult) {
         state.hostProbes = hostProbesResult;
+        publishDashboardSnapshot(
+            state.config as import('../types.js').ConfigData,
+            state.metrics,
+            state.pipelines,
+            state.hostProbes,
+        );
     }
-    renderPipelines();
 }
 
 async function fetchAndRender(): Promise<void> {
@@ -109,8 +114,6 @@ async function fetchAndRender(): Promise<void> {
             state.streamKeys = configResult.streamKeys;
         }
         if (configResult.serverName) {
-            const el = document.getElementById('server-name-display');
-            if (el) el.textContent = configResult.serverName;
             document.title = configResult.serverName;
         }
     }
@@ -118,32 +121,20 @@ async function fetchAndRender(): Promise<void> {
         state.health = healthResult;
         resyncConfigIfChanged(healthResult.configRev);
     }
-    // Recompute even when health couldn't be fetched: if the server itself is
-    // unreachable, the connection banner already covers it, so suppress the
-    // SRS-down banner to avoid showing two alerts at once.
-    const showSrsBanner = !isServerUnreachable() && !!state.health && !state.health.srsReachable;
-    const srsBanner = document.getElementById('srs-banner');
-    srsBanner?.classList.toggle('hidden', !showSrsBanner);
-    srsBanner?.classList.toggle('flex', showSrsBanner);
-    const showSrtRelayBanner =
-        !isServerUnreachable() &&
-        !!state.health.srtRelay &&
-        state.health.srtRelay.status !== 'running';
-    const srtRelayBanner = document.getElementById('srt-relay-banner');
-    const srtRelayBannerText = document.getElementById('srt-relay-banner-text');
-    srtRelayBanner?.classList.toggle('hidden', !showSrtRelayBanner);
-    srtRelayBanner?.classList.toggle('flex', showSrtRelayBanner);
-    if (srtRelayBannerText) {
-        srtRelayBannerText.textContent =
-            state.health.srtRelay?.lastError && state.health.srtRelay.status !== 'running'
-                ? `SRT bonding relay is not responding: ${state.health.srtRelay.lastError}`
-                : 'SRT bonding relay is not running — bonded SRT input unavailable';
-    }
+    dashboardUi.update((current) => ({
+        ...current,
+        srsReachable: state.health.srsReachable ?? null,
+        srtRelay: state.health.srtRelay ?? null,
+    }));
     if (metricsResult) state.metrics = metricsResult;
     if (historyResult) mergeMetricsHistory(historyResult);
     state.pipelines = parsePipelines(state.config, state.health);
-    renderPipelines();
-    renderMetrics();
+    publishDashboardSnapshot(
+        state.config as import('../types.js').ConfigData,
+        state.metrics,
+        state.pipelines,
+        state.hostProbes,
+    );
 }
 
 const POLL_MS = 5000;
@@ -155,16 +146,33 @@ function startPolling(ms: number): void {
     pollTimer = setInterval(() => void refreshDashboard(), ms);
 }
 
-document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
-        startPolling(HIDDEN_POLL_MS);
-    } else {
-        startPolling(POLL_MS);
-        void refreshDashboard();
-    }
-});
+export interface DashboardPolling {
+    ready: Promise<void>;
+    stop: () => void;
+}
 
-void (async () => {
-    await refreshDashboard();
-    startPolling(document.hidden ? HIDDEN_POLL_MS : POLL_MS);
-})();
+export function startDashboardPolling(): DashboardPolling {
+    const onVisibilityChange = (): void => {
+        if (document.hidden) {
+            startPolling(HIDDEN_POLL_MS);
+        } else {
+            startPolling(POLL_MS);
+            void refreshDashboard();
+        }
+    };
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    const ready = refreshDashboard().finally(() => {
+        startPolling(document.hidden ? HIDDEN_POLL_MS : POLL_MS);
+    });
+
+    const stop = (): void => {
+        document.removeEventListener('visibilitychange', onVisibilityChange);
+        if (pollTimer) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+        }
+    };
+
+    return { ready, stop };
+}

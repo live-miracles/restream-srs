@@ -4,6 +4,11 @@ export interface StreamKey {
     key: string;
 }
 
+export type LogRequest =
+    | { kind: 'pipeline'; pipelineId: string }
+    | { kind: 'output'; pipelineId: string; outputId: string }
+    | { kind: 'relay'; pipelineId: string };
+
 export interface Pipeline {
     id: string;
     name: string;

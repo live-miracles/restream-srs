@@ -1,5 +1,5 @@
 // Same SGR color codes SRS's own console output uses, and that the dashboard's
-// log viewer (public/ts/features/editor.ts, ANSI_FG_CLASS) already parses into
+// log viewer already parses into
 // color for every journal tail it renders — including our own
 // restream-srs.service tail. Applied unconditionally, not gated on isTTY: the
 // two consumers are a human running `journalctl` in a real terminal and that
