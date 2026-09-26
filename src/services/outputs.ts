@@ -112,6 +112,14 @@ export interface OutputService {
     stopAndWait(outputId: string): Promise<void>;
     restartPipelineOutputs(pipelineId: number, staggerBase?: number): number;
     clearRetryState(outputId: string): void;
+    // Lets a service that publishes an output outside this service's own
+    // process management (the translation mixer) report that output's real
+    // status, so getStats() reflects reality instead of always 'stopped'.
+    reportExternalStatus(
+        outputId: string,
+        status: 'running' | 'stopped' | 'failed',
+        pid: number | null,
+    ): void;
     shutdown(): void;
 }
 
@@ -268,6 +276,11 @@ export function createOutputService(
         try {
             const output = db.getOutput(outputId);
             if (!output || output.desiredState !== 'running') return;
+            // Translation outputs are published by the translation mixer, not by this
+            // service — see the same check in start(). Without it, a retry/reconnect
+            // (e.g. restartPipelineOutputs() after the source comes back online) would
+            // spawn a second ffmpeg pushing to the same destination as the mixer.
+            if (output.audioEncoding === 'translation') return;
             if (statuses.get(outputId)?.status === 'running') return;
             // Don't spawn a doomed ffmpeg against a dead input; re-check until ready.
             if (!inputState.isReady(output.pipelineId)) {
@@ -770,12 +783,13 @@ export function createOutputService(
 
         const pipeline = db.getPipeline(output.pipelineId);
         if (!pipeline) throw new Error('Pipeline not found');
+        const sourcePipeline = pipeline;
         // Pull the input back the same way it was published. Default to RTMP until known.
-        const inputUrl = inputState.pullUrl(output.pipelineId, pipeline.streamKey);
+        const inputUrl = inputState.pullUrl(sourcePipeline.id, sourcePipeline.streamKey);
         const args = buildFfmpegArgs(
             inputUrl,
             output.url,
-            output.audioEncoding,
+            output.audioEncoding === 'translation' ? 'copy' : output.audioEncoding,
             output.videoEncoding,
         );
 
@@ -918,6 +932,8 @@ export function createOutputService(
     return {
         getStats,
 
+        reportExternalStatus: setStatus,
+
         // Double-start safety here relies on startJob() being synchronous up to and
         // including spawn()+setStatus('running'): there is no await before the process
         // is registered, so a second concurrent start() always observes status
@@ -930,6 +946,9 @@ export function createOutputService(
             const output = db.getOutput(outputId);
             if (!output) throw new Error('Output not found');
             if (!validateOutputUrl(output.url)) throw new Error('Invalid output URL');
+            // Translation outputs are published by the translation mixer
+            // directly to this output URL; they do not need a second pull.
+            if (output.audioEncoding === 'translation') return;
             clearRetry(outputId);
             getRetry(outputId).failures = 0;
             // Input not live yet — keep the output "running" (desiredState) but
@@ -978,6 +997,9 @@ export function createOutputService(
             let scheduled = 0;
             for (const output of outputs) {
                 if (output.desiredState !== 'running') continue;
+                // Translation outputs are restarted by the translation mixer's own
+                // reconcile loop, not by this service.
+                if (output.audioEncoding === 'translation') continue;
                 if (statuses.get(output.id)?.status === 'running') {
                     continue;
                 }

@@ -73,8 +73,13 @@ export function registerPipelineApi(
         const outputs = db.listOutputsForPipeline(id);
         await Promise.all(outputs.map((o) => outputService.stopAndWait(o.id)));
 
-        db.deletePipeline(id);
-        return res.json({ ok: true });
+        try {
+            db.deletePipeline(id);
+            return res.json({ ok: true });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'could not delete pipeline';
+            return res.status(409).json({ error: message });
+        }
     });
 
     app.get('/api/pipelines/:id/logs', (req, res) => {

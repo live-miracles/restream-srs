@@ -683,6 +683,37 @@ describe('output service control surface', () => {
         delete require.cache[require.resolve('../src/utils/appConfig')];
     });
 
+    test('start() never spawns for a translation-audio output', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        db.getOutput('out1').audioEncoding = 'translation';
+        const createOutputService = loadOutputService(t, proc, { progressStallMs: 60_000 });
+        const service = createOutputService(db, makeReadyInputState());
+
+        await service.start('out1');
+        assert.equal(service.getStats('out1').status, 'stopped');
+
+        service.shutdown();
+    });
+
+    test('reportExternalStatus lets another service (the translation mixer) report real status', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const createOutputService = loadOutputService(t, proc, { progressStallMs: 60_000 });
+        const service = createOutputService(db, makeReadyInputState());
+
+        service.reportExternalStatus('out1', 'running', 4242);
+        assert.equal(service.getStats('out1').status, 'running');
+        assert.equal(service.getStats('out1').pid, 4242);
+        assert.ok(service.getStats('out1').startedAtMs);
+
+        service.reportExternalStatus('out1', 'stopped', null);
+        assert.equal(service.getStats('out1').status, 'stopped');
+        assert.equal(service.getStats('out1').pid, null);
+
+        service.shutdown();
+    });
+
     test('start() throws for an unknown output id and never spawns', async (t) => {
         const proc = new FakeFfmpeg();
         const db = makeDb();
@@ -977,6 +1008,48 @@ describe('restartPipelineOutputs', () => {
         assert.equal(service.getStats('a').failures, 0);
         assert.equal(service.getStats('b').status, 'running');
         assert.equal(service.getStats('b').failures, 0);
+
+        service.shutdown();
+    });
+
+    test('never spawns ffmpeg for a translation-audio output — the mixer owns those', async (t) => {
+        // Regression test: restartPipelineOutputs() runs on every source-pipeline
+        // reconnect (see health.ts) and previously reached startJob() for
+        // translation outputs too, since only start() (not tryStart()) carried the
+        // audioEncoding === 'translation' guard. That spawned a second ffmpeg
+        // pushing straight to the same destination the translation mixer already
+        // publishes to.
+        const spawned = [];
+        const createOutputService = loadOutputService(
+            t,
+            () => {
+                const p = new FakeFfmpeg(1000 + spawned.length);
+                spawned.push(p);
+                return p;
+            },
+            { progressStallMs: 60_000 },
+        );
+        const db = makeMultiDb([
+            makeOutput('a', { desiredState: 'running' }),
+            makeOutput('mix', { desiredState: 'running', audioEncoding: 'translation' }),
+        ]);
+        const service = createOutputService(db, makeReadyInputState());
+
+        const scheduled = service.restartPipelineOutputs(1, 0);
+        assert.equal(
+            scheduled,
+            1,
+            'the translation output must not count toward scheduled restarts',
+        );
+
+        await sleep(700);
+        assert.equal(spawned.length, 1, 'only the plain output should have spawned ffmpeg');
+        assert.equal(service.getStats('a').status, 'running');
+        assert.equal(
+            service.getStats('mix').status,
+            'stopped',
+            'translation outputs are not tracked by this service at all',
+        );
 
         service.shutdown();
     });

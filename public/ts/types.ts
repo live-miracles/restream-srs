@@ -54,6 +54,19 @@ export interface Output {
     videoEncoding: string;
     url: string;
     audioEncoding: string;
+    translation: {
+        translatorPipelineId: number;
+        translationDelayMs: number;
+        voiceThresholdDb: number;
+        duckVolumePercent: number;
+        duckDurationMs: number;
+        restoreSilenceMs: number;
+        restoreVolumePercent: number;
+        restoreDurationMs: number;
+        restoreSilence2Ms: number;
+        restoreVolume2Percent: number;
+        restoreDuration2Ms: number;
+    } | null;
     lastError: string | null;
     hasErrorHistory: boolean;
 }
@@ -72,6 +85,19 @@ export interface OutputPayload {
     videoEncoding: string;
     url: string;
     audioEncoding: string;
+    translation?: {
+        translatorPipelineId: number;
+        translationDelayMs?: number;
+        voiceThresholdDb?: number;
+        duckVolumePercent?: number;
+        duckDurationMs?: number;
+        restoreSilenceMs?: number;
+        restoreVolumePercent?: number;
+        restoreDurationMs?: number;
+        restoreSilence2Ms?: number;
+        restoreVolume2Percent?: number;
+        restoreDuration2Ms?: number;
+    } | null;
 }
 
 export interface VideoInfo {

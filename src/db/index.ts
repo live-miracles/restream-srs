@@ -11,6 +11,8 @@ import type {
     OutputErrorRecord,
     OutputErrorKind,
     Db,
+    TranslationConfig,
+    TranslationInput,
 } from '../types.js';
 
 const PIPELINE_SELECT = `
@@ -72,6 +74,22 @@ function rowToPipeline(row: Record<string, unknown>): Pipeline {
         name: row.name as string,
         streamKey: row.stream_key as string,
         streamKeyId: row.stream_key_id as number,
+    };
+}
+
+function normalizeTranslationConfig(input: TranslationInput): TranslationConfig {
+    return {
+        translatorPipelineId: input.translatorPipelineId,
+        translationDelayMs: input.translationDelayMs ?? 800,
+        voiceThresholdDb: input.voiceThresholdDb ?? -20,
+        duckVolumePercent: input.duckVolumePercent ?? 6,
+        duckDurationMs: input.duckDurationMs ?? 900,
+        restoreSilenceMs: input.restoreSilenceMs ?? 2000,
+        restoreVolumePercent: input.restoreVolumePercent ?? 32,
+        restoreDurationMs: input.restoreDurationMs ?? 1000,
+        restoreSilence2Ms: input.restoreSilence2Ms ?? 4000,
+        restoreVolume2Percent: input.restoreVolume2Percent ?? 52,
+        restoreDuration2Ms: input.restoreDuration2Ms ?? 2000,
     };
 }
 
@@ -194,6 +212,14 @@ export function createDb(dbPath?: string): Db {
 
     function rowToOutput(row: Record<string, unknown>): Output {
         const errorHistory = parseOutputErrorHistory(row.last_error as string | null);
+        let translation: TranslationConfig | null = null;
+        if (typeof row.translation_config === 'string' && row.translation_config) {
+            try {
+                translation = JSON.parse(row.translation_config) as TranslationConfig;
+            } catch {
+                translation = null;
+            }
+        }
         return {
             id: row.id as string,
             pipelineId: row.pipeline_id as number,
@@ -203,6 +229,7 @@ export function createDb(dbPath?: string): Db {
             videoEncoding: (row.encoding as string) || 'copy',
             url: row.url as string,
             audioEncoding: (row.audio_encoding as string) || 'copy',
+            translation,
             ...deriveOutputErrorFields(errorHistory),
         };
     }
@@ -255,12 +282,14 @@ export function createDb(dbPath?: string): Db {
         videoEncoding = 'copy',
         url,
         audioEncoding = 'copy',
+        translation,
     }: {
         pipelineId: number;
         name: string;
         videoEncoding?: string;
         url: string;
         audioEncoding?: string;
+        translation?: TranslationInput | null;
     }): string {
         const seqRow = sqlite
             .prepare(
@@ -271,9 +300,19 @@ export function createDb(dbPath?: string): Db {
         const id = `${pipelineId}-${seq}`;
         sqlite
             .prepare(
-                'INSERT INTO outputs (id, pipeline_id, seq, name, desired_state, encoding, url, audio_encoding) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                'INSERT INTO outputs (id, pipeline_id, seq, name, desired_state, encoding, url, audio_encoding, translation_config) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
             )
-            .run(id, pipelineId, seq, name, 'stopped', videoEncoding, url, audioEncoding);
+            .run(
+                id,
+                pipelineId,
+                seq,
+                name,
+                'stopped',
+                videoEncoding,
+                url,
+                audioEncoding,
+                translation ? JSON.stringify(normalizeTranslationConfig(translation)) : null,
+            );
         return id;
     }
 
@@ -434,12 +473,30 @@ export function createDb(dbPath?: string): Db {
             return getOutputsByPipeline(pipelineId);
         },
 
-        updateOutput(id: string, { name, videoEncoding, url, audioEncoding }): Output | null {
+        updateOutput(
+            id: string,
+            { name, videoEncoding, url, audioEncoding, translation },
+        ): Output | null {
+            const existing = getOutputById(id);
+            if (!existing) return null;
             sqlite
                 .prepare(
-                    'UPDATE outputs SET name = ?, encoding = ?, url = ?, audio_encoding = ? WHERE id = ?',
+                    'UPDATE outputs SET name = ?, encoding = ?, url = ?, audio_encoding = ?, translation_config = ? WHERE id = ?',
                 )
-                .run(name, videoEncoding, url, audioEncoding, id);
+                .run(
+                    name,
+                    videoEncoding,
+                    url,
+                    audioEncoding,
+                    translation === undefined
+                        ? existing.translation
+                            ? JSON.stringify(existing.translation)
+                            : null
+                        : translation
+                          ? JSON.stringify(normalizeTranslationConfig(translation))
+                          : null,
+                    id,
+                );
             bumpConfigRev();
             return getOutputById(id);
         },
@@ -453,6 +510,8 @@ export function createDb(dbPath?: string): Db {
         },
 
         deleteOutput(id: string): boolean {
+            const output = getOutputById(id);
+            if (!output) return false;
             const result = sqlite.prepare('DELETE FROM outputs WHERE id = ?').run(id);
             if (result.changes > 0) bumpConfigRev();
             return result.changes > 0;

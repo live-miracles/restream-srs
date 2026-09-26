@@ -31,7 +31,8 @@
     "dependencies": {
         "better-sqlite3": "13.0.3",
         "compression": "^1.8.1",
-        "express": "5.1.0"
+        "express": "5.1.0",
+        "zeromq": "^6.5.0"
     },
     "devDependencies": {
         "@tailwindcss/cli": "4.1.18",

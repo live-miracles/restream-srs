@@ -2,6 +2,7 @@ import * as api from '../core/api.js';
 import { state } from '../core/state.js';
 import {
     setUrlParam,
+    getUrlParam,
     maskStreamKey,
     withBusy,
     copyText,
@@ -18,6 +19,7 @@ import type {
     ServerLogTail,
     LegHistoryData,
     LegHistorySample,
+    Output,
 } from '../types.js';
 import { buildSrtOutputUrl, isSrtHostRequired, type SrtOutputSettings } from '../core/srt.js';
 
@@ -899,8 +901,11 @@ let currentSinkTracks: AudioTrackInfo[] = [];
 // output doesn't silently reset its track to copy.
 function audioOptionsHtml(tracks: AudioTrackInfo[], selected: string): string {
     const byIndex = new Map(tracks.map((t) => [t.index, t] as const));
-    const options = [`<option value="copy"${selected === 'copy' ? ' selected' : ''}>copy</option>`];
-    let matched = selected === 'copy';
+    const options = [
+        `<option value="copy"${selected === 'copy' ? ' selected' : ''}>copy</option>`,
+        `<option value="translation"${selected === 'translation' ? ' selected' : ''}>translation</option>`,
+    ];
+    let matched = selected === 'copy' || selected === 'translation';
     for (let i = 0; i < MAX_AUDIO_TRACKS; i++) {
         const val = String(i);
         if (val === selected) matched = true;
@@ -1000,6 +1005,77 @@ function pipelineTracks(pipelineId: string): AudioTrackInfo[] {
     return state.pipelines.find((p) => p.id === pipelineId)?.input.audioTracks ?? [];
 }
 
+function renderOutputTranslationControls(
+    pipelineId: string,
+    translation: Output['translation'] | null,
+): void {
+    const container = document.getElementById('out-translation-container');
+    if (!container) return;
+    const mix = translation;
+    const options = state.pipelines
+        .filter((pipeline) => pipeline.id !== pipelineId)
+        .map(
+            (pipeline) =>
+                `<option value="${pipeline.id}" ${mix?.translatorPipelineId === Number(pipeline.id) ? 'selected' : ''}>${escapeHtml(pipeline.name)}</option>`,
+        )
+        .join('');
+    container.classList.toggle('hidden', mix === null);
+    container.innerHTML = `
+      <div id="out-translation-fields" class="rounded-box bg-base-200 flex flex-wrap items-end gap-2 px-2 py-2">
+          <fieldset class="fieldset min-w-56 flex-1">
+            <legend class="fieldset-legend">Translator Pipeline</legend>
+            <select id="out-translation-pipeline-input" class="select select-sm w-full">
+              <option value="">Select translator pipeline</option>${options}
+            </select>
+          </fieldset>
+          <fieldset class="fieldset min-w-40 flex-1">
+            <legend class="fieldset-legend">Translation Delay (ms)</legend>
+            <input id="out-translation-delay-input" class="input input-sm w-full" type="number" min="0" max="5000" value="${mix?.translationDelayMs ?? 800}" />
+          </fieldset>
+          <fieldset class="fieldset min-w-40 flex-1">
+            <legend class="fieldset-legend">Voice Threshold (dB)</legend>
+            <input id="out-translation-threshold-input" class="input input-sm w-full" type="number" min="-100" max="0" step="1" value="${mix?.voiceThresholdDb ?? -20}" />
+          </fieldset>
+          <fieldset class="fieldset min-w-40 flex-1">
+            <legend class="fieldset-legend">Source While Speaking (%)</legend>
+            <input id="out-translation-duck-volume-input" class="input input-sm w-full" type="number" min="0" max="100" step="1" value="${mix?.duckVolumePercent ?? 6}" />
+          </fieldset>
+          <fieldset class="fieldset min-w-40 flex-1">
+            <legend class="fieldset-legend">Restore 1 After (ms)</legend>
+            <input id="out-translation-restore-silence-input" class="input input-sm w-full" type="number" min="0" max="30000" value="${mix?.restoreSilenceMs ?? 2000}" />
+          </fieldset>
+          <fieldset class="fieldset min-w-40 flex-1">
+            <legend class="fieldset-legend">Restore 1 Volume (%)</legend>
+            <input id="out-translation-restore-volume-input" class="input input-sm w-full" type="number" min="0" max="100" step="1" value="${mix?.restoreVolumePercent ?? 32}" />
+          </fieldset>
+          <fieldset class="fieldset min-w-40 flex-1">
+            <legend class="fieldset-legend">Restore 1 Fade (ms)</legend>
+            <input id="out-translation-restore-duration-input" class="input input-sm w-full" type="number" min="0" max="30000" value="${mix?.restoreDurationMs ?? 1000}" />
+          </fieldset>
+          <fieldset class="fieldset min-w-40 flex-1">
+            <legend class="fieldset-legend">Duck Fade (ms)</legend>
+            <input id="out-translation-duck-duration-input" class="input input-sm w-full" type="number" min="0" max="30000" value="${mix?.duckDurationMs ?? 900}" />
+          </fieldset>
+          <fieldset class="fieldset min-w-40 flex-1">
+            <legend class="fieldset-legend">Restore 2 After (ms)</legend>
+            <input id="out-translation-restore-silence2-input" class="input input-sm w-full" type="number" min="0" max="60000" value="${mix?.restoreSilence2Ms ?? 4000}" />
+          </fieldset>
+          <fieldset class="fieldset min-w-40 flex-1">
+            <legend class="fieldset-legend">Restore 2 Volume (%)</legend>
+            <input id="out-translation-restore-volume2-input" class="input input-sm w-full" type="number" min="0" max="100" step="1" value="${mix?.restoreVolume2Percent ?? 52}" />
+          </fieldset>
+          <fieldset class="fieldset min-w-40 flex-1">
+            <legend class="fieldset-legend">Restore 2 Fade (ms)</legend>
+            <input id="out-translation-restore-duration2-input" class="input input-sm w-full" type="number" min="0" max="60000" value="${mix?.restoreDuration2Ms ?? 2000}" />
+          </fieldset>
+        ${options ? '' : '<p class="w-full text-xs opacity-60">Create another pipeline for the translator feed first.</p>'}
+      </div>`;
+    document.getElementById('out-audio-encoding-input')?.addEventListener('change', (event) => {
+        const enabled = (event.target as HTMLSelectElement).value === 'translation';
+        container.classList.toggle('hidden', !enabled);
+    });
+}
+
 export function openAddOutput(pipelineId: string): void {
     const modal = outModal();
     const pipeline = state.pipelines.find((p) => p.id === pipelineId);
@@ -1024,6 +1100,7 @@ export function openAddOutput(pipelineId: string): void {
     } else {
         populateDestinationDetected(pipelineTracks(pipelineId), CUSTOM_RTMP_IDX, '', 'copy');
     }
+    renderOutputTranslationControls(pipelineId, previous?.translation ?? null);
     (document.getElementById('out-modal-title') as HTMLElement).textContent = 'Add Output';
     (document.getElementById('out-save-btn') as HTMLButtonElement).disabled = false;
     (document.getElementById('out-running-hint') as HTMLElement).classList.add('hidden');
@@ -1051,6 +1128,10 @@ export function openEditOutput(pipelineId: string, outId: string): void {
         url: output.url,
         audioEncoding: output.audioEncoding,
     });
+    renderOutputTranslationControls(
+        pipelineId,
+        output.audioEncoding === 'translation' ? output.translation : null,
+    );
     (document.getElementById('out-modal-title') as HTMLElement).textContent = 'Edit Output';
 
     const isRunning = output.desiredState === 'running';
@@ -1142,6 +1223,90 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
         .value;
     const audioEncoding = (document.getElementById('out-audio-encoding-input') as HTMLSelectElement)
         .value;
+    const translationEnabled = audioEncoding === 'translation';
+    const translatorPipelineId = Number(
+        (document.getElementById('out-translation-pipeline-input') as HTMLSelectElement | null)
+            ?.value,
+    );
+    const translation =
+        translationEnabled && Number.isInteger(translatorPipelineId)
+            ? {
+                  translatorPipelineId,
+                  translationDelayMs: Number(
+                      (document.getElementById('out-translation-delay-input') as HTMLInputElement)
+                          .value,
+                  ),
+                  voiceThresholdDb: Number(
+                      (
+                          document.getElementById(
+                              'out-translation-threshold-input',
+                          ) as HTMLInputElement
+                      ).value,
+                  ),
+                  duckVolumePercent: Number(
+                      (
+                          document.getElementById(
+                              'out-translation-duck-volume-input',
+                          ) as HTMLInputElement
+                      ).value,
+                  ),
+                  duckDurationMs: Number(
+                      (
+                          document.getElementById(
+                              'out-translation-duck-duration-input',
+                          ) as HTMLInputElement
+                      ).value,
+                  ),
+                  restoreSilenceMs: Number(
+                      (
+                          document.getElementById(
+                              'out-translation-restore-silence-input',
+                          ) as HTMLInputElement
+                      ).value,
+                  ),
+                  restoreVolumePercent: Number(
+                      (
+                          document.getElementById(
+                              'out-translation-restore-volume-input',
+                          ) as HTMLInputElement
+                      ).value,
+                  ),
+                  restoreDurationMs: Number(
+                      (
+                          document.getElementById(
+                              'out-translation-restore-duration-input',
+                          ) as HTMLInputElement
+                      ).value,
+                  ),
+                  restoreSilence2Ms: Number(
+                      (
+                          document.getElementById(
+                              'out-translation-restore-silence2-input',
+                          ) as HTMLInputElement
+                      ).value,
+                  ),
+                  restoreVolume2Percent: Number(
+                      (
+                          document.getElementById(
+                              'out-translation-restore-volume2-input',
+                          ) as HTMLInputElement
+                      ).value,
+                  ),
+                  restoreDuration2Ms: Number(
+                      (
+                          document.getElementById(
+                              'out-translation-restore-duration2-input',
+                          ) as HTMLInputElement
+                      ).value,
+                  ),
+              }
+            : null;
+    const restoreSilence2Input = document.getElementById(
+        'out-translation-restore-silence2-input',
+    ) as HTMLInputElement | null;
+    const translationTimingValid =
+        !translation || translation.restoreSilence2Ms >= translation.restoreSilenceMs;
+    restoreSilence2Input?.classList.toggle('input-error', !translationTimingValid);
     const serverIdx = parseInt(
         (document.getElementById('out-server-input') as HTMLSelectElement).value,
     );
@@ -1194,10 +1359,10 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
         }
     }
 
-    if (!name || !destinationValid) return;
+    if (!name || !destinationValid || !translationTimingValid) return;
 
     await withBusy(btn, async () => {
-        const payload = { name, videoEncoding, url, audioEncoding };
+        const payload = { name, videoEncoding, url, audioEncoding, translation };
         const result = outId
             ? await api.updateOutput(pipelineId, outId, payload)
             : await api.createOutput(pipelineId, payload);

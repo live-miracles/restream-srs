@@ -36,6 +36,7 @@ export function setupDatabaseSchema(db: Database.Database): void {
             url             TEXT NOT NULL DEFAULT '',
             audio_encoding  TEXT NOT NULL DEFAULT 'copy',
             last_error      TEXT,
+            translation_config TEXT,
             FOREIGN KEY(pipeline_id) REFERENCES pipelines(id) ON DELETE CASCADE
         )`,
     ).run();

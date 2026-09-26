@@ -17,3 +17,4 @@ diagnostics/
 *.wav
 *.mkv
 /docs
+.codex/translation-mixing-feature-plan.md

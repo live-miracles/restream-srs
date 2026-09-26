@@ -11,6 +11,34 @@ export interface Pipeline {
     streamKeyId: number;
 }
 
+export interface TranslationConfig {
+    translatorPipelineId: number;
+    translationDelayMs: number;
+    voiceThresholdDb: number;
+    duckVolumePercent: number;
+    duckDurationMs: number;
+    restoreSilenceMs: number;
+    restoreVolumePercent: number;
+    restoreDurationMs: number;
+    restoreSilence2Ms: number;
+    restoreVolume2Percent: number;
+    restoreDuration2Ms: number;
+}
+
+export interface TranslationInput {
+    translatorPipelineId: number;
+    translationDelayMs?: number;
+    voiceThresholdDb?: number;
+    duckVolumePercent?: number;
+    duckDurationMs?: number;
+    restoreSilenceMs?: number;
+    restoreVolumePercent?: number;
+    restoreDurationMs?: number;
+    restoreSilence2Ms?: number;
+    restoreVolume2Percent?: number;
+    restoreDuration2Ms?: number;
+}
+
 export interface HostProbeTarget {
     slot: number;
     label: string;
@@ -68,6 +96,7 @@ export interface Output {
     videoEncoding: string;
     url: string;
     audioEncoding: string;
+    translation: TranslationConfig | null;
     lastError: string | null;
     hasErrorHistory: boolean;
 }
@@ -95,6 +124,7 @@ export interface Db {
         videoEncoding?: string;
         url: string;
         audioEncoding?: string;
+        translation?: TranslationInput | null;
     }): Output;
     // All-or-nothing batch create (single transaction, single configRev bump).
     createOutputs(
@@ -122,6 +152,7 @@ export interface Db {
             videoEncoding: string;
             url: string;
             audioEncoding: string;
+            translation?: TranslationInput | null;
         },
     ): Output | null;
     setOutputDesiredState(id: string, desiredState: 'running' | 'stopped'): Output | null;
