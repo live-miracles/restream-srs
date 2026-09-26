@@ -3,7 +3,7 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildSrtOutputUrl, isSrtHostRequired } = require('../public/ts/core/srt');
+const { buildSrtOutputUrl, isSrtHostRequired } = require('../frontend/src/lib/srt');
 
 describe('SRT output form rules', () => {
     test('listener mode allows an empty host and binds the default interfaces', () => {

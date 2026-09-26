@@ -379,8 +379,14 @@ bonded-input status.
 
 **4. Start the app** (terminal 3):
 ```bash
-npm run dev           # tsx watch + tsc watch + tailwind watch
+npm run dev           # Express backend + Vite frontend with hot reload
 ```
+
+The development command runs the Express control plane on the configured app
+port (8080 by default) and the Vite frontend server on port 5173. Vite proxies
+API, HLS, and static asset requests to Express. Set `RESTREAM_BACKEND_URL` if
+the backend is running on a different development URL. Production uses the
+Vite-built static files served by Express; Vite is not a production API server.
 
 ---
 

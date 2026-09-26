@@ -11,6 +11,7 @@ import type {
     LayoutOrderEntry,
     LegHistoryData,
 } from '../types.js';
+import { dashboardUi, showUiError } from '../ui.js';
 
 let loadingCount = 0;
 let serverUnreachable = false;
@@ -22,32 +23,20 @@ export function isServerUnreachable(): boolean {
 function setConnectionBanner(unreachable: boolean): void {
     if (unreachable === serverUnreachable) return;
     serverUnreachable = unreachable;
-    const banner = document.getElementById('connection-banner');
-    banner?.classList.toggle('hidden', !unreachable);
-    banner?.classList.toggle('flex', unreachable);
+    dashboardUi.update((current) => ({ ...current, serverUnreachable: unreachable }));
 }
 
 function setLoading(active: boolean): void {
-    const el = document.getElementById('saving-badge');
     if (active) {
         loadingCount++;
-        el?.classList.remove('hidden');
-        el?.classList.add('flex');
     } else {
         loadingCount = Math.max(0, loadingCount - 1);
-        if (loadingCount === 0) {
-            el?.classList.add('hidden');
-            el?.classList.remove('flex');
-        }
     }
+    dashboardUi.update((current) => ({ ...current, saving: loadingCount > 0 }));
 }
 
 export function showError(msg: unknown): void {
-    const el = document.getElementById('error-msg');
-    const alert = document.getElementById('error-alert');
-    if (el) el.textContent = String(msg);
-    alert?.classList.remove('hidden');
-    setTimeout(() => alert?.classList.add('hidden'), 5000);
+    showUiError(msg);
 }
 
 const isMutating = (method: string) => !['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase());

@@ -1,6 +1,3 @@
-import { escapeHtml } from '../core/utils.js';
-import type { PipelineView } from '../types.js';
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const Hls: any;
 
@@ -375,12 +372,9 @@ function setPreviewAudioTrack(trackIndex: number): void {
     }
 }
 
-export function previewTrackChange(): void {
+export function previewTrackChange(trackIndex = 0): void {
     if (!previewPipelineId) return;
-    const sel = document.getElementById('preview-audio-select') as HTMLSelectElement | null;
-    if (!sel) return;
-    const trackIndex = sel.value === '' ? 0 : Math.max(0, parseInt(sel.value));
-    setPreviewAudioTrack(trackIndex);
+    setPreviewAudioTrack(Math.max(0, trackIndex));
 }
 
 // ── Player controls ───────────────────────────────────
@@ -449,26 +443,4 @@ document.addEventListener('keydown', (e) => {
 
 export function getPreviewPipelineId(): string | null {
     return previewPipelineId;
-}
-
-export function populatePreviewTrackSelect(pipeline: PipelineView): void {
-    const sel = document.getElementById('preview-audio-select') as HTMLSelectElement | null;
-    if (!sel) return;
-    const tracks = pipeline.input.audioTracks;
-    if (tracks.length <= 1) {
-        sel.classList.add('hidden');
-        sel.innerHTML = '';
-        return;
-    }
-    const prev = sel.value;
-    const opts: string[] = [];
-    for (const t of tracks) {
-        const label = escapeHtml([t.language, t.title].filter(Boolean).join(' '));
-        opts.push(
-            `<option value="${t.index}">Track ${t.index + 1}${label ? ` (${label})` : ''}</option>`,
-        );
-    }
-    sel.innerHTML = opts.join('');
-    if (prev && tracks.some((t) => String(t.index) === prev)) sel.value = prev;
-    sel.classList.remove('hidden');
 }

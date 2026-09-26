@@ -112,11 +112,12 @@ app.use(
 );
 
 const publicDir = path.join(__dirname, '..', 'public');
+const uiDir = path.join(publicDir, 'ui');
 
 const serveIndexOrRedirect = (req: express.Request, res: express.Response): void => {
     if (checkIsAuthenticated(req)) {
         res.setHeader('Cache-Control', 'no-store');
-        res.sendFile(path.join(publicDir, 'index.html'));
+        res.sendFile(path.join(uiDir, 'index.html'));
     } else {
         res.redirect('/login');
     }
@@ -130,9 +131,25 @@ app.get('/login', (req, res) => {
         res.redirect('/');
     } else {
         res.setHeader('Cache-Control', 'no-store');
-        res.sendFile(path.join(publicDir, 'login.html'));
+        res.sendFile(path.join(uiDir, 'login.html'));
     }
 });
+
+app.use(
+    '/',
+    express.static(uiDir, {
+        setHeaders(res, filePath) {
+            if (filePath.endsWith('.js') || filePath.endsWith('.css')) {
+                res.setHeader(
+                    'Cache-Control',
+                    'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0',
+                );
+                res.setHeader('Pragma', 'no-cache');
+                res.setHeader('Expires', '0');
+            }
+        },
+    }),
+);
 
 app.use(
     '/',
