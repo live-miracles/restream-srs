@@ -149,6 +149,33 @@ describe('Pipeline CRUD', () => {
     });
 });
 
+describe('Translation output settings', () => {
+    test('stores translation settings directly on individual outputs', () => {
+        const db = makeDb();
+        const source = db.createPipeline();
+        const french = db.createPipeline();
+        const spanish = db.createPipeline();
+        const frenchOutput = db.createOutput({
+            pipelineId: source.id,
+            name: 'French',
+            url: 'rtmp://french',
+            translation: { translatorPipelineId: french.id, translationDelayMs: 700 },
+        });
+        const spanishOutput = db.createOutput({
+            pipelineId: source.id,
+            name: 'Spanish',
+            url: 'rtmp://spanish',
+            translation: { translatorPipelineId: spanish.id, translationDelayMs: 1200 },
+        });
+
+        assert.equal(frenchOutput.translation.translatorPipelineId, french.id);
+        assert.equal(frenchOutput.translation.translationDelayMs, 700);
+        assert.equal(spanishOutput.translation.translatorPipelineId, spanish.id);
+        assert.equal(spanishOutput.translation.translationDelayMs, 1200);
+        assert.equal(db.listPipelines().length, 3);
+    });
+});
+
 describe('regenerateStreamKeys', () => {
     test('replaces every key value but keeps slot count and ordering', () => {
         const db = makeDb();

@@ -139,6 +139,110 @@ export function buildFfmpegArgs(
     return args;
 }
 
+export interface TranslationMixerConfig {
+    videoEncoding: string;
+    translationDelayMs: number;
+    voiceThresholdDb: number;
+    controlPort: number;
+    duckVolumePercent: number;
+    duckDurationMs: number;
+    restoreSilenceMs: number;
+    restoreVolumePercent: number;
+    restoreDurationMs: number;
+    restoreSilence2Ms: number;
+    restoreVolume2Percent: number;
+    restoreDuration2Ms: number;
+}
+
+export function volumePercentToAmplitude(volumePercent: number): number {
+    const volume = Math.min(100, Math.max(0, volumePercent));
+    return volume / 100;
+}
+
+// Build one upstream program stream for a translation mix. The source input
+// owns the video; the translator input contributes audio only. The translator
+// is split so its immediate copy drives the sidechain while its audible copy
+// is delayed to compensate for the translator's lead/arrival timing.
+export function buildTranslationMixerArgs(
+    sourceInputUrl: string,
+    translatorInputUrl: string | null,
+    outputUrl: string,
+    config: TranslationMixerConfig,
+): string[] {
+    const common = [
+        '-nostats',
+        '-loglevel',
+        'warning',
+        '-stats_period',
+        '3',
+        '-fflags',
+        '+discardcorrupt',
+        '-err_detect',
+        'crccheck+bitstream',
+        '-rw_timeout',
+        String(INPUT_TIMEOUT_US),
+    ];
+    const args = [...common];
+    const videoArgs = (ENCODINGS[config.videoEncoding] ?? ENCODINGS.copy).args;
+    const formatArgs = outputUrl.startsWith('srt://') ? ['-f', 'mpegts'] : ['-f', 'flv'];
+    if (sourceInputUrl.startsWith('srt://')) args.push('-readrate', '1');
+    args.push('-i', sourceInputUrl);
+
+    if (!translatorInputUrl) {
+        args.push(
+            '-map',
+            '0:v:0?',
+            '-map',
+            '0:a:0?',
+            ...videoArgs,
+            '-c:a',
+            'aac',
+            '-b:a',
+            '128k',
+            '-ar',
+            '48000',
+            '-ac',
+            '2',
+            '-progress',
+            'pipe:1',
+            ...formatArgs,
+            outputUrl,
+        );
+        return args;
+    }
+
+    if (translatorInputUrl.startsWith('srt://')) args.push('-readrate', '1');
+    args.push('-i', translatorInputUrl);
+    const delay = Math.max(0, Math.round(config.translationDelayMs));
+    args.push(
+        '-filter_complex',
+        `[0:a]aresample=48000:async=1:first_pts=0[source];` +
+            `[source]volume@source_gain=1,azmq=bind_address=tcp\\\\://127.0.0.1\\\\:${config.controlPort}[source_controlled];` +
+            `[1:a]aresample=48000:async=1:first_pts=0,asplit=2[translator_audio][translator_meter];` +
+            `[translator_audio]adelay=${delay}:all=1[translator_delayed];` +
+            `[translator_meter]astats=metadata=1:reset=0.1,ametadata=mode=print:file=pipe\\\\:3,anullsink;` +
+            `[source_controlled][translator_delayed]amix=inputs=2:duration=longest:dropout_transition=0.2[mixed_audio]`,
+        '-map',
+        '0:v:0?',
+        '-map',
+        '[mixed_audio]',
+        ...videoArgs,
+        '-c:a',
+        'aac',
+        '-b:a',
+        '128k',
+        '-ar',
+        '48000',
+        '-ac',
+        '2',
+        '-progress',
+        'pipe:1',
+        ...formatArgs,
+        outputUrl,
+    );
+    return args;
+}
+
 export function validateOutputUrl(url: string): boolean {
     return url.startsWith('rtmp://') || url.startsWith('rtmps://') || url.startsWith('srt://');
 }
@@ -149,6 +253,7 @@ export function validateAudioEncoding(value: unknown): string | null {
     // by a raw API call and silently reinterpret them as 'copy' rather than
     // rejecting them.
     if (value === undefined || value === null || value === '' || value === 'copy') return 'copy';
+    if (value === 'translation') return 'translation';
     if (typeof value !== 'string') return null;
     const parts = value.split(',').map((s) => s.trim());
     if (!parts.every((p) => /^\d+$/.test(p))) return null;

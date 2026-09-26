@@ -27,6 +27,7 @@ import { registerVersionApi } from './api/version.js';
 import { readAppConfig } from './utils/appConfig.js';
 import { createHostProbeService } from './services/hostProbes.js';
 import { createDiagnosticsLogger } from './utils/diagnostics.js';
+import { createTranslationMixerService } from './services/translationMixer.js';
 
 const app = express();
 const PORT = readAppConfig().port;
@@ -64,6 +65,12 @@ const healthService = createHealthService(
 );
 const previewService = createPreviewService(db, inputState);
 const hostProbeService = createHostProbeService(db);
+const translationMixerService = createTranslationMixerService(
+    db,
+    inputState,
+    outputService,
+    diagnostics,
+);
 
 // Unauthenticated routes
 registerSrsHooks(app, db);
@@ -153,6 +160,7 @@ async function main(): Promise<void> {
     await initializePassword(db);
 
     srtRelayService.start();
+    translationMixerService.start();
     healthService.start();
     hostProbeService.start();
 
@@ -167,6 +175,7 @@ function shutdown(signal: string): void {
     shuttingDown = true;
     console.log(`[server] ${signal} received, killing media jobs`);
     outputService.shutdown();
+    translationMixerService.shutdown();
     healthService.shutdown();
     srtRelayService.shutdown();
     previewService.shutdown();

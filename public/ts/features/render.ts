@@ -2098,7 +2098,6 @@ function renderPipelineInfo(selectedId: string | null): void {
     const inHostView = view === 'hosts';
     const inLogsView = view === 'logs';
     const inSettingsView = view === 'settings';
-
     if (inHostView) {
         col?.classList.add('hidden');
         outsCol?.classList.add('hidden');
@@ -2169,7 +2168,6 @@ function renderPipelineInfo(selectedId: string | null): void {
     const inputHtml = renderInputStats(pipeline.input);
     if (statsContainer) statsContainer.classList.toggle('hidden', !pipeline.input.connected);
     if (statsEl) statsEl.innerHTML = inputHtml;
-
     const masked = maskStreamKey(pipeline.streamKey);
     const rtmpEl = document.getElementById('rtmp-publish-url');
     const srtEl = document.getElementById('srt-publish-url');
@@ -2503,6 +2501,11 @@ function renderOutputCard(
             .join('+');
         badges.push(
             `<span class="badge badge-xs badge-accent badge-soft whitespace-nowrap">${label}</span>`,
+        );
+    }
+    if (o.translation !== null) {
+        badges.push(
+            '<span class="badge badge-sm badge-secondary badge-soft whitespace-nowrap">translation</span>',
         );
     }
     if (uptimeMs !== null) {

@@ -232,6 +232,72 @@ ffmpeg -re -stream_loop -1 -i video.mp4 \
   -f mpegts 'srt://localhost:10080?streamid=#!::r=live/<stream-key>,m=publish&passphrase=<passphrase>&pbkeylen=16'
 ```
 
+## Translation outputs
+
+A translation output is configured directly on an output. The output's normal
+pipeline is the **source** stream: it supplies the video and source audio. A
+second, user-selected pipeline supplies translator audio. The mixer publishes
+the resulting stream directly to that output's destination, so each output can
+have its own translator and settings.
+
+The output must use the `translation` audio encoding and be started by the
+user. The mixer does not create pipelines or start translator inputs
+automatically. If the translator disconnects or is not live, the output keeps
+publishing source audio only; when the translator becomes live again, the
+translated mix is resumed.
+
+### Signal flow and timing
+
+The translator audio is delayed before it is mixed into the output. The mixer
+measures the translator's undelayed audio to detect speech, then uses that
+advance time to reduce the source volume before the translated speech becomes
+audible. This avoids the source remaining at full volume during the first part
+of each translated sentence.
+
+```
+                                      ┌─► meter / voice detection
+Translator pipeline ──audio───────────┤
+                                      └─► delay ───────────────┐
+                                                               │
+Source pipeline ──video────────────────────────────────────────┼─► output
+                 audio ──► source gain / ducking ──────────────┘
+
+Source volume
+───────●                             ●─────────
+        \                           /
+         \                   ●─────●
+          \                 /
+           ●───────────────●
+           T1              T2      T3
+
+T1: translator speech is detected; source volume fades down.
+T2: translator becomes silent; source restores to the first level.
+T3: extended silence; source restores to the second level.
+```
+
+The delay should be long enough for the mixer to detect speech before the
+delayed translator audio reaches the output. It is normally paired with the
+duck fade duration: for example, an 800 ms translation delay and a 900 ms
+source duck fade provide time for the source to move down smoothly. Increasing
+the delay gives more warning but also increases translation latency. The
+translation delay and all fade/restore timings are configurable per output.
+
+### Translation settings
+
+| Setting | Meaning |
+|---------|---------|
+| Translator Pipeline | Pipeline carrying translator audio |
+| Translation Delay (ms) | Delay applied to audible translator audio |
+| Voice Threshold (dB) | Speech detection threshold; enter a non-positive value such as `-20` |
+| Source While Speaking (%) | Source volume while the translator is speaking |
+| Restore 1 After / Volume / Fade | First restore delay, target source volume, and fade time |
+| Duck Fade | Time used to reduce source volume when speech starts |
+| Restore 2 After / Volume / Fade | Second restore delay, target source volume, and fade time |
+
+Volume values are entered as normal percentages from `0` to `100` and are
+converted directly to FFmpeg gain. For example, `6` means `0.06` gain, or 6%
+of the source amplitude. There is no vMix-specific conversion in this system.
+
 ---
 
 ## API

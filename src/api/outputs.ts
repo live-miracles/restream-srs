@@ -1,6 +1,6 @@
 import type { Express } from 'express';
 import { validateOutputUrl, validateAudioEncoding, ENCODINGS } from '../utils/ffmpeg.js';
-import type { Db } from '../types.js';
+import type { Db, TranslationInput } from '../types.js';
 import type { OutputService } from '../services/outputs.js';
 import type { HealthService } from '../services/health.js';
 import { cyan } from '../utils/ansiColor.js';
@@ -26,6 +26,66 @@ function parseDestination(
     return { url, audioEncoding };
 }
 
+function parseTranslation(body: unknown): TranslationInput | null | undefined | { error: string } {
+    const raw = (body as Record<string, unknown> | null | undefined)?.translation;
+    if (raw === undefined) return undefined;
+    if (raw === null || raw === false) return null;
+    if (typeof raw !== 'object') return { error: 'translation must be an object or null' };
+    const value = raw as Record<string, unknown>;
+    const rawTranslatorPipelineId = value.translatorPipelineId;
+    const translatorPipelineId = Number(rawTranslatorPipelineId);
+    if (
+        (typeof rawTranslatorPipelineId !== 'number' &&
+            typeof rawTranslatorPipelineId !== 'string') ||
+        String(rawTranslatorPipelineId).trim() === '' ||
+        !Number.isInteger(translatorPipelineId) ||
+        translatorPipelineId <= 0
+    ) {
+        return { error: 'translation translatorPipelineId is required' };
+    }
+    const numeric = (key: string, min: number, max: number): number | string => {
+        if (value[key] === undefined) return '';
+        const n = Number(value[key]);
+        return Number.isFinite(n) && n >= min && n <= max ? n : `${key} is invalid`;
+    };
+    const delay = numeric('translationDelayMs', 0, 5000);
+    const thresholdDb = numeric('voiceThresholdDb', -100, 0);
+    const duckVolumePercent = numeric('duckVolumePercent', 0, 100);
+    const duckDurationMs = numeric('duckDurationMs', 0, 30000);
+    const restoreSilenceMs = numeric('restoreSilenceMs', 0, 30000);
+    const restoreVolumePercent = numeric('restoreVolumePercent', 0, 100);
+    const restoreDurationMs = numeric('restoreDurationMs', 0, 30000);
+    const restoreSilence2Ms = numeric('restoreSilence2Ms', 0, 60000);
+    const restoreVolume2Percent = numeric('restoreVolume2Percent', 0, 100);
+    const restoreDuration2Ms = numeric('restoreDuration2Ms', 0, 60000);
+    if (typeof delay === 'string') return { error: delay };
+    if (typeof thresholdDb === 'string') return { error: thresholdDb };
+    if (typeof duckVolumePercent === 'string') return { error: duckVolumePercent };
+    if (typeof duckDurationMs === 'string') return { error: duckDurationMs };
+    if (typeof restoreSilenceMs === 'string') return { error: restoreSilenceMs };
+    if (typeof restoreVolumePercent === 'string') return { error: restoreVolumePercent };
+    if (typeof restoreDurationMs === 'string') return { error: restoreDurationMs };
+    if (typeof restoreSilence2Ms === 'string') return { error: restoreSilence2Ms };
+    if (restoreSilence2Ms < restoreSilenceMs) {
+        return { error: 'restoreSilence2Ms must be greater than or equal to restoreSilenceMs' };
+    }
+    if (typeof restoreVolume2Percent === 'string') return { error: restoreVolume2Percent };
+    if (typeof restoreDuration2Ms === 'string') return { error: restoreDuration2Ms };
+    return {
+        translatorPipelineId,
+        ...(value.translationDelayMs === undefined ? {} : { translationDelayMs: delay }),
+        ...(value.voiceThresholdDb === undefined ? {} : { voiceThresholdDb: thresholdDb }),
+        ...(value.duckVolumePercent === undefined ? {} : { duckVolumePercent }),
+        ...(value.duckDurationMs === undefined ? {} : { duckDurationMs }),
+        ...(value.restoreSilenceMs === undefined ? {} : { restoreSilenceMs }),
+        ...(value.restoreVolumePercent === undefined ? {} : { restoreVolumePercent }),
+        ...(value.restoreDurationMs === undefined ? {} : { restoreDurationMs }),
+        ...(value.restoreSilence2Ms === undefined ? {} : { restoreSilence2Ms }),
+        ...(value.restoreVolume2Percent === undefined ? {} : { restoreVolume2Percent }),
+        ...(value.restoreDuration2Ms === undefined ? {} : { restoreDuration2Ms }),
+    };
+}
+
 export function registerOutputApi(
     app: Express,
     db: Db,
@@ -46,14 +106,43 @@ export function registerOutputApi(
         if (!ENCODINGS[videoEncoding])
             return res.status(400).json({ error: `unknown videoEncoding: ${videoEncoding}` });
         if ('error' in parsed) return res.status(400).json({ error: parsed.error });
+        const translation = parseTranslation(req.body);
+        if (translation && 'error' in translation) return res.status(400).json(translation);
+        if (translation && !db.getPipeline(translation.translatorPipelineId)) {
+            return res.status(400).json({ error: 'translation translator pipeline not found' });
+        }
+        if (translation && translation.translatorPipelineId === pipelineId) {
+            return res
+                .status(400)
+                .json({ error: 'translation translator must be another pipeline' });
+        }
+        if (parsed.audioEncoding === 'translation' && !translation) {
+            return res
+                .status(400)
+                .json({ error: 'translation audio requires translation settings' });
+        }
+        if (parsed.audioEncoding !== 'translation' && translation) {
+            return res
+                .status(400)
+                .json({ error: 'translation settings require translation audio' });
+        }
 
-        const output = db.createOutput({
-            pipelineId,
-            name,
-            videoEncoding,
-            url: parsed.url,
-            audioEncoding: parsed.audioEncoding,
-        });
+        let output: ReturnType<Db['createOutput']>;
+        try {
+            output = db.createOutput({
+                pipelineId,
+                name,
+                videoEncoding,
+                url: parsed.url,
+                audioEncoding: parsed.audioEncoding,
+                translation,
+            });
+        } catch (error) {
+            console.error('[outputs] failed to create output:', error);
+            return res.status(500).json({
+                error: error instanceof Error ? error.message : 'could not create output',
+            });
+        }
         console.log(cyan(`[outputs] user add requested: ${output.id} (${output.name})`));
         return res.status(201).json(output);
     });
@@ -160,13 +249,49 @@ export function registerOutputApi(
         if (!ENCODINGS[videoEncoding])
             return res.status(400).json({ error: `unknown videoEncoding: ${videoEncoding}` });
         if ('error' in parsed) return res.status(400).json({ error: parsed.error });
+        const parsedTranslation = parseTranslation(req.body);
+        if (parsedTranslation && 'error' in parsedTranslation)
+            return res.status(400).json(parsedTranslation);
+        // Preserve an existing translation when an older client omits the
+        // optional field, but always clear it when switching to normal audio.
+        const translation =
+            parsedTranslation === undefined && parsed.audioEncoding === 'translation'
+                ? output.translation
+                : parsedTranslation;
+        if (translation && !db.getPipeline(translation.translatorPipelineId)) {
+            return res.status(400).json({ error: 'translation translator pipeline not found' });
+        }
+        if (translation && translation.translatorPipelineId === output.pipelineId) {
+            return res
+                .status(400)
+                .json({ error: 'translation translator must be another pipeline' });
+        }
+        if (parsed.audioEncoding === 'translation' && !translation) {
+            return res
+                .status(400)
+                .json({ error: 'translation audio requires translation settings' });
+        }
+        if (parsed.audioEncoding !== 'translation' && translation) {
+            return res
+                .status(400)
+                .json({ error: 'translation settings require translation audio' });
+        }
 
-        const updated = db.updateOutput(outId, {
-            name,
-            videoEncoding,
-            url: parsed.url,
-            audioEncoding: parsed.audioEncoding,
-        });
+        let updated: ReturnType<Db['updateOutput']>;
+        try {
+            updated = db.updateOutput(outId, {
+                name,
+                videoEncoding,
+                url: parsed.url,
+                audioEncoding: parsed.audioEncoding,
+                translation,
+            });
+        } catch (error) {
+            console.error('[outputs] failed to update output:', error);
+            return res.status(500).json({
+                error: error instanceof Error ? error.message : 'could not update output',
+            });
+        }
         console.log(cyan(`[outputs] user update requested: ${outId} (${name})`));
         return res.json(updated);
     });

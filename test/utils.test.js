@@ -33,6 +33,8 @@ fs.writeFileSync(
 
 const {
     buildFfmpegArgs,
+    buildTranslationMixerArgs,
+    volumePercentToAmplitude,
     validateOutputUrl,
     validateAudioEncoding,
 } = require('../src/utils/ffmpeg');
@@ -208,6 +210,73 @@ describe('buildFfmpegArgs', () => {
         const url = 'srt://host:10080?mode=caller&latency=240000&streamid=x';
         const args = buildFfmpegArgs('rtmp://in', url, 'copy');
         assert.ok(args.includes(url));
+    });
+});
+
+describe('buildTranslationMixerArgs', () => {
+    test('maps app percentage values directly to amplitude', () => {
+        assert.equal(volumePercentToAmplitude(6), 0.06);
+        assert.equal(volumePercentToAmplitude(32), 0.32);
+        assert.equal(volumePercentToAmplitude(52), 0.52);
+        assert.equal(volumePercentToAmplitude(100), 1);
+    });
+
+    test('publishes source-only audio/video when translator is unavailable', () => {
+        const args = buildTranslationMixerArgs('rtmp://source', null, 'rtmp://mixed', {
+            videoEncoding: 'copy',
+            translationDelayMs: 800,
+            voiceThresholdDb: -20,
+            controlPort: 31001,
+            duckVolumePercent: 6,
+            duckDurationMs: 900,
+            restoreSilenceMs: 2000,
+            restoreVolumePercent: 32,
+            restoreDurationMs: 1000,
+            restoreSilence2Ms: 4000,
+            restoreVolume2Percent: 52,
+            restoreDuration2Ms: 2000,
+        });
+        assert.deepEqual(
+            args.filter((value, index) => value === '-map' || args[index - 1] === '-map'),
+            ['-map', '0:v:0?', '-map', '0:a:0?'],
+        );
+        assert.ok(args.includes('-c:v'));
+        assert.equal(args[args.indexOf('-c:v') + 1], 'copy');
+        assert.equal(args[args.indexOf('-c:a') + 1], 'aac');
+        assert.equal(args.at(-1), 'rtmp://mixed');
+    });
+
+    test('builds a two-input sidechain mix with delayed translator audio', () => {
+        const args = buildTranslationMixerArgs('srt://source', 'srt://translator', 'rtmp://mixed', {
+            videoEncoding: 'copy',
+            translationDelayMs: 800,
+            voiceThresholdDb: -20,
+            controlPort: 31001,
+            duckVolumePercent: 6,
+            duckDurationMs: 900,
+            restoreSilenceMs: 2000,
+            restoreVolumePercent: 32,
+            restoreDurationMs: 1000,
+            restoreSilence2Ms: 4000,
+            restoreVolume2Percent: 52,
+            restoreDuration2Ms: 2000,
+        });
+        assert.equal(args.filter((value) => value === '-i').length, 2);
+        assert.deepEqual(
+            args.slice(args.indexOf('srt://source') - 3, args.indexOf('srt://source') - 1),
+            ['-readrate', '1'],
+        );
+        assert.deepEqual(
+            args.slice(args.indexOf('srt://translator') - 3, args.indexOf('srt://translator') - 1),
+            ['-readrate', '1'],
+        );
+        const filter = args[args.indexOf('-filter_complex') + 1];
+        assert.match(filter, /adelay=800:all=1/);
+        assert.match(filter, /volume@source_gain=1/);
+        assert.match(filter, /azmq=bind_address/);
+        assert.match(filter, /ametadata=mode=print/);
+        assert.match(filter, /amix=inputs=2/);
+        assert.equal(args[args.indexOf('-map', args.indexOf('-filter_complex')) + 1], '0:v:0?');
     });
 });
 
