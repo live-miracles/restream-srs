@@ -141,6 +141,10 @@ function formatOutputMemory(o: OutputView): string | null {
     return formatBytesCompact(o.memoryUsageBytes);
 }
 
+function formatOutputName(name: string): string {
+    return name.length > 30 ? `${name.slice(0, 27)}...` : name;
+}
+
 function memorySeverityClass(percent: number | null): string {
     if (percent !== null && percent >= METRIC_ERROR_PERCENT) return 'text-error font-semibold';
     if (percent !== null && percent >= METRIC_WARN_PERCENT) return 'text-warning font-semibold';
@@ -1392,7 +1396,7 @@ function renderOverview(): void {
                 <td${rowspan}>${renderOverviewIssues(relayIssues(p, relayProcessRunning, inputSt, outputSt))}</td>
                 <td class="font-mono text-xs"${rowspan}>${p.input.live ? formatUptime(p.input.uptimeMs) : '—'}</td>`;
             const totalsCells = `
-                <td class="font-mono text-xs" title="${aggregateStatsAreDropOnly ? 'Deduplicated drop packets on the bonded group input.' : 'Loss / Rexmit / Drop on the input connection.'}"${rowspan}>${aggregateStatsAreDropOnly ? fmtCompactNullableCount(p.srtBonding.input.recvDropTotal) : fmtLossRexmitDrop(p.srtBonding.input.recvLossTotal, p.srtBonding.input.retransTotal, p.srtBonding.input.recvDropTotal)}</td>`;
+                <td class="font-mono text-xs" title="${aggregateStatsAreDropOnly ? 'Deduplicated drop packets on the bonded group input. Loss and receive retransmission are unavailable for the bonded aggregate.' : 'Loss / Rexmit / Drop on the input connection.'}"${rowspan}>${aggregateStatsAreDropOnly ? fmtLossRexmitDrop(null, null, p.srtBonding.input.recvDropTotal) : fmtLossRexmitDrop(p.srtBonding.input.recvLossTotal, p.srtBonding.input.retransTotal, p.srtBonding.input.recvDropTotal)}</td>`;
 
             if (legs.length > 1) {
                 relayRows += legs
@@ -1482,7 +1486,7 @@ function renderOverview(): void {
                 const protocolLabel = o.url ? (o.url.startsWith('srt://') ? 'SRT' : 'RTMP') : null;
                 const spec = streamSpec(media?.video ?? null, null, media?.audio ?? null);
                 outputRows += `<tr class="hover" ${statusBg(st === 'error', st === 'warn')}>
-                    <td class="overview-name-col cursor-pointer hover:underline js-select-pipeline" data-id="${p.id}"><span class="opacity-40 text-xs">${escapeHtml(p.name)} ·</span> ${escapeHtml(o.name)} ${errorBadge}</td>
+                    <td class="overview-name-col cursor-pointer hover:underline js-select-pipeline" data-id="${p.id}" title="${escapeHtml(o.name)}"><span class="opacity-40 text-xs">${escapeHtml(p.name)} ·</span> ${escapeHtml(formatOutputName(o.name))} ${errorBadge}</td>
                     <td>${badge}</td>
                     <td>${renderOverviewIssues(outputIssues(o, p.input))}</td>
                     <td class="font-mono text-xs">${outUptimeMs !== null ? formatUptime(outUptimeMs) : '—'}</td>
@@ -1724,7 +1728,7 @@ function renderOverview(): void {
         <h2 class="mb-2 text-lg font-bold">SRT Bonding Relay <span class="badge badge-neutral badge-sm ml-1">${activeRelayPipelines.length}</span></h2>
         <div class="overflow-x-auto mb-6">
             <table class="table table-sm table-relay">
-                ${thead(['Pipeline', 'Input', 'Output', 'Issues', 'Uptime', '<span title="Bonded group inputs show deduplicated Drop; non-bonded inputs show Loss / Rexmit / Drop">Input stats</span>', 'State', 'Leg IP', 'Latency', 'RTT', 'Rate', '<span title="Loss / Rexmit / Drop">L / R / D</span>'])}
+                ${thead(['Pipeline', 'Input', 'Output', 'Issues', 'Uptime', '<span title="Bonded group inputs show deduplicated Drop; non-bonded inputs show Loss / Rexmit / Drop">Input L / R / D</span>', 'State', 'Leg IP', 'Latency', 'RTT', 'Rate', '<span title="Loss / Rexmit / Drop">L / R / D</span>'])}
                 <tbody>${relayRows}</tbody>
             </table>
         </div>
@@ -2287,10 +2291,10 @@ function renderPipelineInfo(selectedId: string | null): void {
                       },
                       inputStatsAreDropOnly
                           ? {
-                                label: 'Drop',
+                                label: 'L / R / D',
                                 labelTitle:
-                                    'Deduplicated packet drops on the bonded group input. Loss and receive retransmission are available per leg below.',
-                                value: fmtCompactNullableCount(b.input.recvDropTotal),
+                                    'Deduplicated packet drops on the bonded group input. Loss and receive retransmission are unavailable for the bonded aggregate.',
+                                value: fmtLossRexmitDrop(null, null, b.input.recvDropTotal),
                             }
                           : {
                                 label: 'L / R / D',
@@ -2495,17 +2499,15 @@ function renderOutputCard(
         );
     }
     if (o.audioEncoding !== 'copy') {
-        const label = o.audioEncoding
-            .split(',')
-            .map((t) => `T${parseInt(t) + 1}`)
-            .join('+');
+        const label =
+            o.audioEncoding === 'translation'
+                ? 'translation'
+                : o.audioEncoding
+                      .split(',')
+                      .map((t) => `T${parseInt(t) + 1}`)
+                      .join('+');
         badges.push(
             `<span class="badge badge-xs badge-accent badge-soft whitespace-nowrap">${label}</span>`,
-        );
-    }
-    if (o.translation !== null) {
-        badges.push(
-            '<span class="badge badge-sm badge-secondary badge-soft whitespace-nowrap">translation</span>',
         );
     }
     if (uptimeMs !== null) {
@@ -2615,7 +2617,7 @@ function renderOutputCard(
                     data-action="${isStopped ? 'start' : 'stop'}" data-out-id="${o.id}"${isPending ? ' disabled' : ''}>
                     ${isStopped ? 'Start' : 'Stop'}
                 </button>
-                <span class="js-output-drag-handle cursor-grab" draggable="true" title="Drag to reorder">${escapeHtml(o.name)}</span>
+                <span class="js-output-drag-handle cursor-grab" draggable="true" title="${escapeHtml(o.name)}">${escapeHtml(formatOutputName(o.name))}</span>
             </div>
             ${badges.join('')}
             ${inlineSink}
