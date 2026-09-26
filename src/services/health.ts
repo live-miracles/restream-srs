@@ -1,4 +1,3 @@
-import { execFile } from 'child_process';
 import type { ChildProcess } from 'child_process';
 import type { Express } from 'express';
 import {
@@ -10,7 +9,6 @@ import {
     type SrsStreamAudio,
     type AudioTrackInfo,
 } from '../utils/srs.js';
-import { readAppConfig } from '../utils/appConfig.js';
 import { readSrsConfigValues } from '../utils/srsConfig.js';
 import type { Db } from '../types.js';
 import type { OutputService } from './outputs.js';
@@ -24,9 +22,10 @@ import type {
 } from './srtRelay.js';
 import { inputPullUrl, type InputProtocol, type InputState } from './inputState.js';
 import type { DiagnosticsLogger } from '../utils/diagnostics.js';
+import { isProbeUsable, probeError, runFfprobe, type ProbeResult } from './mediaProbe.js';
 
-const FFPROBE_CMD = readAppConfig().ffprobePath;
-const FFPROBE_TIMEOUT_MS = 15000;
+export { isProbeUsable };
+
 const FFPROBE_FAILED_REFRESH_MS = 30000;
 // Stagger concurrent ffprobe launches instead of capping concurrency with a
 // semaphore. The real risk is the thundering-herd burst (all N pipelines firing
@@ -195,12 +194,6 @@ export interface SrsEvent {
     message: string;
 }
 
-interface ProbeResult {
-    video: SrsStreamVideo | null;
-    audio: SrsStreamAudio | null;
-    audioTracks: AudioTrackInfo[];
-}
-
 interface ProbeStatus {
     result: ProbeResult | null;
     startedAt: number;
@@ -213,11 +206,6 @@ interface SrsPublisherInfo {
     id: string;
     ip: string | null;
     type: string | null;
-}
-
-export function isProbeUsable(result: ProbeResult | null): boolean {
-    const video = result?.video;
-    return !!video?.codec && video.width > 0 && video.height > 0;
 }
 
 export function isLoopbackIp(ip: string | null | undefined): boolean {
@@ -292,11 +280,6 @@ export function hasBondedRelayPublishConflict(params: {
     return params.inputConnected && params.relayInputActive && !params.relayAcceptedBySrs;
 }
 
-function formatTimeOfDay(ts: number): string {
-    const d = new Date(ts);
-    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
-}
-
 function formatDuration(totalSeconds: number): string {
     const h = Math.floor(totalSeconds / 3600);
     const m = Math.floor((totalSeconds % 3600) / 60);
@@ -306,100 +289,6 @@ function formatDuration(totalSeconds: number): string {
     if (h > 0 || m > 0) parts.push(`${m}m`);
     parts.push(`${s}s`);
     return parts.join(' ');
-}
-
-function probeError(result: ProbeResult | null, checkedAt: number): string {
-    const prefix = formatTimeOfDay(checkedAt);
-    if (!result) return `${prefix} ffprobe did not detect a readable media stream`;
-    const video = result.video;
-    if (!video) return `${prefix} ffprobe did not detect a video stream`;
-    if (!video.codec) return `${prefix} ffprobe detected video without codec metadata`;
-    if (video.width <= 0 || video.height <= 0)
-        return `${prefix} ffprobe detected video without dimensions`;
-    return `${prefix} ffprobe media validation failed`;
-}
-
-// ffprobe reports each mpegts elementary stream's PID as a hex string (e.g.
-// "0x65"); RTMP/FLV sources have no PID concept and leave this field absent.
-function parseMpegtsPid(id: unknown): number | null {
-    if (typeof id !== 'string') return null;
-    const pid = Number.parseInt(id, 16);
-    return Number.isFinite(pid) ? pid : null;
-}
-
-function parseFrameRate(str: unknown): number | null {
-    if (!str) return null;
-    const parts = String(str).split('/');
-    if (parts.length !== 2) return null;
-    const num = Number(parts[0]);
-    const den = Number(parts[1]);
-    if (!den || !Number.isFinite(num) || !Number.isFinite(den)) return null;
-    const fps = num / den;
-    return Number.isFinite(fps) && fps > 0 ? Number(fps.toFixed(3)) : null;
-}
-
-function runFfprobe(
-    url: string,
-    onChild?: (child: ChildProcess) => void,
-): Promise<ProbeResult | null> {
-    return new Promise((resolve) => {
-        const child = execFile(
-            FFPROBE_CMD,
-            ['-v', 'quiet', '-print_format', 'json', '-show_streams', url],
-            { timeout: FFPROBE_TIMEOUT_MS, killSignal: 'SIGKILL' },
-            (err, stdout) => {
-                if (err) {
-                    resolve(null);
-                    return;
-                }
-                try {
-                    const data = JSON.parse(stdout) as { streams?: Record<string, unknown>[] };
-                    const streams = data.streams || [];
-                    const vs = streams.find((s) => s.codec_type === 'video') ?? null;
-                    const audioStreams = streams.filter((s) => s.codec_type === 'audio');
-                    const as_ = audioStreams[0] ?? null;
-                    const audioTracks: AudioTrackInfo[] = audioStreams.map((s, idx) => {
-                        const tags = (s.tags ?? {}) as Record<string, string>;
-                        return {
-                            index: idx,
-                            codec: (s.codec_name as string) || '',
-                            sampleRate: s.sample_rate ? Number(s.sample_rate) : 0,
-                            channels: (s.channels as number) || 0,
-                            profile: (s.profile as string) || '',
-                            language: tags.language ?? null,
-                            title: tags.title ?? null,
-                            pid: parseMpegtsPid(s.id),
-                        };
-                    });
-                    resolve({
-                        video: vs
-                            ? {
-                                  codec: (vs.codec_name as string) || '',
-                                  width: (vs.width as number) || 0,
-                                  height: (vs.height as number) || 0,
-                                  fps: parseFrameRate(vs.r_frame_rate),
-                                  profile: (vs.profile as string) || '',
-                                  level: vs.level != null ? String(Number(vs.level) / 10) : '',
-                                  fieldOrder: (vs.field_order as string) || null,
-                              }
-                            : null,
-                        audio: as_
-                            ? {
-                                  codec: (as_.codec_name as string) || '',
-                                  sample_rate: as_.sample_rate ? Number(as_.sample_rate) : 0,
-                                  channel: (as_.channels as number) || 0,
-                                  profile: (as_.profile as string) || '',
-                              }
-                            : null,
-                        audioTracks,
-                    });
-                } catch {
-                    resolve(null);
-                }
-            },
-        );
-        onChild?.(child);
-    });
 }
 
 export function createHealthService(

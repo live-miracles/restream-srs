@@ -9,6 +9,7 @@ import {
     maskSecret,
     fmtMs,
     fmtMbpsValue,
+    formatClockTime,
     LOW_BITRATE_KBPS,
     STATUS_COLOR_GOOD,
     STATUS_COLOR_WARN,
@@ -30,12 +31,17 @@ import type {
     VideoInfo,
 } from '../types.js';
 import { updateLayoutOrder } from '../core/api.js';
+import { dupTooltip, formatOutputName, renderOutputCard, type DupRef } from './output-card.js';
+import { renderBondedLegs, renderBondingStats } from './srt-bonding-view.js';
+import { CHART_SCROLL_STEP_MS, CHART_WINDOW_MS, chartCard, drawChart } from './dashboard-charts.js';
+import { renderHostConnectionsOverview } from './host-connections-view.js';
 import {
-    stopCurrentPreview,
-    populatePreviewTrackSelect,
-    getPreviewPipelineId,
-    syncPreviewControls,
-} from './preview.js';
+    formatUptime,
+    inputStatusMessage,
+    renderCompactMetaRow,
+    renderInputStats,
+} from './input-stats-view.js';
+import { renderMetrics as renderMetricsView, renderPreview } from './metrics-view.js';
 
 declare global {
     interface Window {
@@ -139,10 +145,6 @@ function outputMemoryPercent(o: OutputView): number | null {
 function formatOutputMemory(o: OutputView): string | null {
     if (o.memoryUsageBytes == null) return null;
     return formatBytesCompact(o.memoryUsageBytes);
-}
-
-function formatOutputName(name: string): string {
-    return name.length > 30 ? `${name.slice(0, 27)}...` : name;
 }
 
 function memorySeverityClass(percent: number | null): string {
@@ -953,277 +955,6 @@ function renderPipelineList(): void {
 
 // ── Pipeline info (middle column) ─────────────────────
 
-function formatUptime(ms: number | null): string {
-    if (ms === null) return '—';
-    const s = Math.floor(ms / 1000);
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    const sec = s % 60;
-    return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${sec}s` : `${sec}s`;
-}
-
-function formatMediaProbeStatus(input: InputHealth): string | null {
-    if (input.mediaCheckedAt) {
-        return `Last ffprobe ${new Date(input.mediaCheckedAt).toLocaleTimeString(undefined, { hour12: false })}`;
-    }
-    if (input.mediaProbeStartedAt) {
-        return `ffprobe started ${new Date(input.mediaProbeStartedAt).toLocaleTimeString(undefined, { hour12: false })}`;
-    }
-    if (input.connected && !input.live) return 'ffprobe not run yet';
-    return null;
-}
-
-function inputStatusMessage(input: InputHealth): string {
-    if (input.mediaError) return input.mediaError;
-    if (input.mediaOk === null)
-        return 'Waiting for ffprobe to finish and return the input encoding.';
-    return 'Input connected, waiting for valid media.';
-}
-
-function renderMediaProbeNotice(input: InputHealth): string {
-    const message = inputStatusMessage(input);
-    const toneClass = input.mediaError ? 'text-error' : input.live ? 'opacity-50' : 'text-warning';
-    const probeStatus = input.mediaError ? null : formatMediaProbeStatus(input);
-    return `<p class="text-xs ${toneClass} mt-2">${escapeHtml(message)}${probeStatus ? ` <span class="opacity-60">${escapeHtml(probeStatus)}</span>` : ''}</p>`;
-}
-
-function renderInputStats(input: InputHealth): string {
-    if (!input.connected) return '';
-    // mediaError takes priority over `!live` below: for RTMP inputs, SRS keeps
-    // reporting its own (stale) demuxed video/audio metadata even while our
-    // ffprobe re-check is actively failing, so falling through to the stats
-    // row below on video-truthy would silently hide a live ffprobe failure.
-    // SRT inputs never populate that fallback (srt_to_rtmp is off), which is
-    // why this only ever masked errors on RTMP-sourced pipelines.
-    if (!input.live || input.mediaError || input.mediaOk === null) {
-        return renderMediaProbeNotice(input);
-    }
-
-    const v = input.video;
-    const a = input.audio;
-    const compactStat = (label: string, val: string | number | null | undefined) =>
-        `<span class="input-meta-item"><span class="input-meta-label">${label}</span><span class="input-meta-value">${val ?? '—'}</span></span>`;
-
-    return `
-        ${
-            v
-                ? `
-        <div class="input-meta-row input-meta-row-sm my-0.5">
-            ${compactStat('IP', input.publisherIp)}
-            ${compactStat('In', formatBitrate(displayInputBitrateKbps(input)))}
-            ${compactStat('Codec', v.codec)}
-            ${compactStat('Size', v.width && v.height ? `${v.width}×${v.height}` : null)}
-            ${compactStat('FPS', v.fps != null ? v.fps : null)}
-            ${compactStat('Scan', fmtFieldOrder(v.fieldOrder))}
-            ${compactStat('Prof', v.profile || null)}
-            ${compactStat('Lvl', v.level || null)}
-        </div>`
-                : renderMediaProbeNotice(input)
-        }
-        ${
-            input.audioTracks.length > 0
-                ? `
-        <h3 class="mt-3 text-sm font-semibold opacity-60">Audio <span class="font-normal">(${input.audioTracks.length} track${input.audioTracks.length > 1 ? 's' : ''})</span></h3>
-        <table class="table table-xs mt-1">
-            <thead><tr><th>#</th>${input.audioTracks.some((t) => t.pid != null) ? '<th>PID</th>' : ''}<th>Codec</th><th>Profile</th><th>Ch</th><th>Freq</th>${input.audioTracks.some((t) => t.language || t.title) ? '<th>Label</th>' : ''}</tr></thead>
-            <tbody>
-                ${input.audioTracks
-                    .map((t) => {
-                        const label = escapeHtml([t.language, t.title].filter(Boolean).join(' — '));
-                        return `<tr>
-                        <td class="font-mono">${t.index + 1}</td>
-                        ${input.audioTracks.some((x) => x.pid != null) ? `<td class="font-mono">${t.pid ?? '—'}</td>` : ''}
-                        <td>${t.codec || '—'}</td>
-                        <td>${t.profile || '—'}</td>
-                        <td>${t.channels || '—'}</td>
-                        <td>${t.sampleRate ? `${(t.sampleRate / 1000).toFixed(1)} kHz` : '—'}</td>
-                        ${input.audioTracks.some((x) => x.language || x.title) ? `<td class="opacity-60">${label || ''}</td>` : ''}
-                    </tr>`;
-                    })
-                    .join('')}
-            </tbody>
-        </table>`
-                : a
-                  ? `
-        <h3 class="mt-3 text-sm font-semibold opacity-60">Audio</h3>
-        <div class="mt-1">
-            ${renderCompactMetaRow([
-                { label: 'Codec', value: a.codec },
-                { label: 'Profile', value: a.profile || null },
-                {
-                    label: 'Sample Rate',
-                    value: a.sample_rate ? `${(a.sample_rate / 1000).toFixed(1)} kHz` : null,
-                },
-                { label: 'Channels', value: a.channel },
-            ])}
-        </div>`
-                  : ''
-        }
-    `;
-}
-
-function renderCompactMetaRow(
-    items: Array<{
-        label: string;
-        labelTitle?: string;
-        value: string | number | null | undefined;
-    }>,
-    className = '',
-): string {
-    return `<div class="input-meta-row ${className}">${items
-        .map(
-            (item) =>
-                `<span class="input-meta-item"><span class="input-meta-label"${
-                    item.labelTitle ? ` title="${item.labelTitle.replace(/"/g, '&quot;')}"` : ''
-                }>${item.label}</span><span class="input-meta-value">${item.value ?? '—'}</span></span>`,
-        )
-        .join('')}</div>`;
-}
-
-const CHART_WINDOW_MS = 15 * 60 * 1000;
-const CHART_SCROLL_STEP_MS = 10 * 60 * 1000;
-
-function roundUpNice(v: number): number {
-    if (v <= 0) return 1;
-    const exp = Math.pow(10, Math.floor(Math.log10(v)));
-    const f = v / exp;
-    return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * exp;
-}
-
-function formatChartTimeTick(ts: number): string {
-    const d = new Date(ts);
-    const minutes = d.getMinutes();
-    const mm = minutes.toString().padStart(2, '0');
-    if (minutes % 10 !== 0) return mm;
-    return `${d.getHours().toString().padStart(2, '0')}:${mm}`;
-}
-
-function drawChart(
-    id: string,
-    samples: MetricSample[],
-    extract: (s: MetricSample) => number,
-    maxHint: number,
-    color: string,
-    fmtY: (v: number) => string,
-): void {
-    const canvas = document.getElementById(id) as HTMLCanvasElement | null;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const dpr = window.devicePixelRatio || 1;
-    const displayW = canvas.clientWidth || 500;
-    const displayH = canvas.clientHeight || 160;
-    canvas.width = displayW * dpr;
-    canvas.height = displayH * dpr;
-    ctx.scale(dpr, dpr);
-
-    const W = displayW;
-    const H = displayH;
-    const mL = 50;
-    const mR = 8;
-    const mT = 6;
-    const mB = 22;
-    const cW = W - mL - mR;
-    const cH = H - mT - mB;
-
-    ctx.clearRect(0, 0, W, H);
-
-    // Theme-aware colours derived from the canvas's computed text colour
-    const base = getComputedStyle(canvas).color;
-    const toRgba = (c: string, a: number) =>
-        c.startsWith('rgb(')
-            ? c.replace('rgb(', 'rgba(').replace(')', `, ${a})`)
-            : `rgba(128,128,128,${a})`;
-    const gridColor = toRgba(base, 0.35);
-    const labelColor = toRgba(base, 0.9);
-
-    ctx.font = '10px ui-monospace, monospace';
-
-    const values = samples.length >= 2 ? samples.map(extract) : [];
-    const rawMax = values.length ? Math.max(maxHint, ...values, 0.001) : maxHint || 1;
-    const peak = roundUpNice(rawMax);
-
-    const cx = (i: number) => mL + (i / Math.max(samples.length - 1, 1)) * cW;
-    const cy = (v: number) => mT + cH - (v / peak) * cH;
-
-    // Y axis — 4 equal ticks
-    for (let i = 0; i <= 4; i++) {
-        const v = (peak / 4) * i;
-        const y = cy(v);
-        ctx.beginPath();
-        ctx.setLineDash([3, 4]);
-        ctx.moveTo(mL, y);
-        ctx.lineTo(W - mR, y);
-        ctx.strokeStyle = gridColor;
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.fillStyle = labelColor;
-        ctx.textAlign = 'right';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(fmtY(v), mL - 5, y);
-    }
-
-    if (values.length < 2) return;
-
-    // X axis — labels at round-minute boundaries
-    const firstTs = samples[0].ts;
-    const lastTs = samples[samples.length - 1].ts;
-    const spanMs = lastTs - firstTs;
-    const spanMin = spanMs / 60_000;
-    const stepMin = spanMin <= 30 ? 1 : 5;
-    const stepMs = stepMin * 60_000;
-    const firstLabel = Math.ceil(firstTs / stepMs) * stepMs;
-
-    for (let ts = firstLabel; ts <= lastTs + 1; ts += stepMs) {
-        const frac = (ts - firstTs) / spanMs;
-        if (frac < 0 || frac > 1) continue;
-        const x = mL + frac * cW;
-        ctx.beginPath();
-        ctx.setLineDash([3, 4]);
-        ctx.moveTo(x, mT);
-        ctx.lineTo(x, H - mB);
-        ctx.strokeStyle = gridColor;
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.fillStyle = labelColor;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
-        ctx.fillText(formatChartTimeTick(ts), x, H - mB + 5);
-    }
-
-    // Fill under curve
-    ctx.beginPath();
-    ctx.moveTo(cx(0), cy(values[0]));
-    for (let i = 1; i < values.length; i++) ctx.lineTo(cx(i), cy(values[i]));
-    ctx.lineTo(cx(values.length - 1), H - mB);
-    ctx.lineTo(cx(0), H - mB);
-    ctx.closePath();
-    ctx.fillStyle = color + '28';
-    ctx.fill();
-
-    // Line
-    ctx.beginPath();
-    ctx.moveTo(cx(0), cy(values[0]));
-    for (let i = 1; i < values.length; i++) ctx.lineTo(cx(i), cy(values[i]));
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1.5;
-    ctx.lineJoin = 'round';
-    ctx.stroke();
-}
-
-function chartCard(id: string, label: string, currentVal: string): string {
-    return `<div class="bg-base-300 rounded-xl p-3">
-        <div class="mb-2 flex items-center justify-between">
-            <span class="text-xs font-semibold opacity-60">${label}</span>
-            <span class="font-mono text-xs">${currentVal}</span>
-        </div>
-        <canvas id="${id}" style="width:100%;height:160px;display:block"></canvas>
-    </div>`;
-}
-
 function renderOverview(): void {
     const overviewEl = document.getElementById('overview-col');
     if (!overviewEl) return;
@@ -1522,14 +1253,10 @@ function renderOverview(): void {
     const atLive = offset === 0;
     const atStart = offset >= maxOffset && maxOffset > 0;
 
-    const fmtTs = (ts: number) => {
-        const d = new Date(ts);
-        return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
-    };
     const rangeLabel = `<span class="inline-flex justify-center w-28">${
         atLive
             ? `<span class="badge badge-success badge-xs gap-1">LIVE</span>`
-            : `<span class="font-mono text-xs opacity-60">${fmtTs(windowStart)} – ${fmtTs(windowEnd)}</span>`
+            : `<span class="font-mono text-xs opacity-60">${formatClockTime(windowStart)} – ${formatClockTime(windowEnd)}</span>`
     }</span>`;
 
     const chartsHtml = `
@@ -1790,307 +1517,6 @@ function renderOverview(): void {
     };
 }
 
-function drawProbeChart(
-    id: string,
-    samples: Array<{ ts: number; ok: boolean; latencyMs: number | null }>,
-    windowStart: number,
-    windowEnd: number,
-    intervalMs: number,
-): void {
-    const canvas = document.getElementById(id) as HTMLCanvasElement | null;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const dpr = window.devicePixelRatio || 1;
-    const displayW = canvas.clientWidth || 480;
-    const displayH = canvas.clientHeight || 110;
-    canvas.width = displayW * dpr;
-    canvas.height = displayH * dpr;
-    ctx.scale(dpr, dpr);
-
-    ctx.clearRect(0, 0, displayW, displayH);
-    const base = getComputedStyle(canvas).color;
-    const toRgba = (c: string, a: number): string => {
-        if (c.startsWith('rgb(')) return c.replace('rgb(', 'rgba(').replace(')', `, ${a})`);
-        if (c.startsWith('#')) {
-            const hex =
-                c.length === 4 ? c.replace(/[0-9a-f]/gi, (ch) => ch + ch).slice(1) : c.slice(1);
-            const num = parseInt(hex, 16);
-            return `rgba(${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255}, ${a})`;
-        }
-        return `rgba(128,128,128,${a})`;
-    };
-    const gridColor = toRgba(base, 0.18);
-    const labelColor = toRgba(base, 0.65);
-    const okColor = '#22c55e';
-    const failColor = '#dc2626';
-
-    ctx.font = '10px ui-monospace, monospace';
-
-    const latencies = samples
-        .map((sample) => sample.latencyMs)
-        .filter((latency): latency is number => latency != null);
-    const peak = roundUpNice(Math.max(50, ...latencies, 0));
-    const yTickValues = [0, peak / 2, peak];
-    const maxYLabelWidth = Math.max(
-        ...yTickValues.map((value) => ctx.measureText(`${Math.round(value)} ms`).width),
-    );
-    const m = {
-        left: Math.max(28, Math.ceil(maxYLabelWidth) + 8),
-        right: 8,
-        top: 8,
-        bottom: 18,
-    };
-    const cW = displayW - m.left - m.right;
-    const cH = displayH - m.top - m.bottom;
-    const span = Math.max(1, windowEnd - windowStart);
-    const xFor = (ts: number) => m.left + ((ts - windowStart) / span) * cW;
-    const yFor = (latencyMs: number) => m.top + cH - (latencyMs / peak) * cH;
-
-    ctx.fillStyle = labelColor;
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'middle';
-
-    for (const value of yTickValues) {
-        const y = yFor(value);
-        ctx.beginPath();
-        ctx.moveTo(m.left, y);
-        ctx.lineTo(displayW - m.right, y);
-        ctx.strokeStyle = gridColor;
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        ctx.fillText(`${Math.round(value)} ms`, m.left - 4, y);
-    }
-
-    const stepMs = 60 * 1000;
-    const firstLabel = Math.ceil(windowStart / stepMs) * stepMs;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    for (let ts = firstLabel; ts <= windowEnd + 1; ts += stepMs) {
-        const x = xFor(ts);
-        ctx.beginPath();
-        ctx.moveTo(x, m.top);
-        ctx.lineTo(x, displayH - m.bottom);
-        ctx.strokeStyle = toRgba(base, 0.1);
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        const d = new Date(ts);
-        ctx.fillText(
-            `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`,
-            x,
-            displayH - 14,
-        );
-    }
-
-    const okSamples = samples.filter((sample) => sample.ok && sample.latencyMs != null) as Array<{
-        ts: number;
-        ok: true;
-        latencyMs: number;
-    }>;
-    if (okSamples.length > 0) {
-        ctx.beginPath();
-        ctx.moveTo(xFor(okSamples[0].ts), yFor(okSamples[0].latencyMs));
-        for (let i = 1; i < okSamples.length; i++) {
-            ctx.lineTo(xFor(okSamples[i].ts), yFor(okSamples[i].latencyMs));
-        }
-        ctx.strokeStyle = okColor;
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-    }
-
-    const halfInterval = Math.max(1, intervalMs) / 2;
-    ctx.fillStyle = toRgba(failColor, 0.35);
-    for (const sample of samples) {
-        if (sample.ok) continue;
-        const xStart = xFor(sample.ts - halfInterval);
-        const xEnd = xFor(sample.ts + halfInterval);
-        ctx.fillRect(xStart, m.top, Math.max(1, xEnd - xStart), cH);
-    }
-}
-
-function renderHostConnectionsOverview(): void {
-    const hostsCol = document.getElementById('hosts-col');
-    if (!hostsCol) return;
-
-    const configuredTargets = state.config.hostProbeTargets ?? [];
-    const targets = state.hostProbes.targets ?? [];
-    if (configuredTargets.length === 0) {
-        hostsCol.innerHTML = `
-            <div class="rounded-xl border border-dashed border-base-content/15 p-8 text-center">
-                <h2 class="text-lg font-semibold">No Host Probes Configured</h2>
-                <p class="mt-2 text-sm opacity-60">Open Settings and add up to 10 host targets to monitor connectivity.</p>
-            </div>`;
-        return;
-    }
-
-    const allHistory = targets.flatMap((entry) => entry.history);
-    const oldest =
-        allHistory.length > 0
-            ? allHistory.reduce((min, sample) => Math.min(min, sample.ts), allHistory[0].ts)
-            : null;
-    const offset = state.hostChartOffsetMs;
-    const windowEnd = Date.now() - offset;
-    const windowStart = windowEnd - CHART_WINDOW_MS;
-    const maxOffset = oldest != null ? Math.max(0, Date.now() - oldest - CHART_WINDOW_MS) : 0;
-    const atLive = offset === 0;
-    const atStart = offset >= maxOffset && maxOffset > 0;
-    const fmtTs = (ts: number) => {
-        const d = new Date(ts);
-        return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
-    };
-    const rangeLabel = `<span class="inline-flex justify-center w-28">${
-        atLive
-            ? `<span class="badge badge-success badge-xs gap-1">LIVE</span>`
-            : `<span class="font-mono text-xs opacity-60">${fmtTs(windowStart)} – ${fmtTs(windowEnd)}</span>`
-    }</span>`;
-
-    const rendered = targets.map((entry) => {
-        const latest = entry.latestSample;
-        const windowSamples = entry.history.filter(
-            (sample) => sample.ts >= windowStart && sample.ts <= windowEnd,
-        );
-        const highestLatency = windowSamples.reduce<number | null>((max, sample) => {
-            if (sample.latencyMs == null) return max;
-            return max == null ? sample.latencyMs : Math.max(max, sample.latencyMs);
-        }, null);
-        const latestStatus = !latest
-            ? '<span class="badge badge-sm badge-neutral">No Data</span>'
-            : latest.ok
-              ? '<span class="badge badge-sm badge-success">Healthy</span>'
-              : '<span class="badge badge-sm badge-error">Down</span>';
-        const lastSeen = latest
-            ? new Date(latest.ts).toLocaleTimeString(undefined, { hour12: false })
-            : '—';
-        const row = `<tr>
-                <td class="font-semibold">${escapeHtml(entry.target.label)}</td>
-                <td class="font-mono text-xs">${escapeHtml(entry.target.host)}:${entry.target.port}</td>
-                <td>${latestStatus}</td>
-                <td class="font-mono text-xs">${latest?.latencyMs != null ? `${Math.round(latest.latencyMs)} ms` : '—'}</td>
-                <td class="font-mono text-xs">${highestLatency != null ? `${Math.round(highestLatency)} ms` : '—'}</td>
-                <td class="font-mono text-xs">${entry.averageLatencyMs != null ? `${Math.round(entry.averageLatencyMs)} ms` : '—'}</td>
-                <td class="font-mono text-xs">${entry.historyFailureCount}</td>
-                <td class="font-mono text-xs">${lastSeen}</td>
-                <td class="font-mono text-xs">${latest?.resolvedAddress ?? '—'}</td>
-            </tr>`;
-
-        // "no recent failures" must reflect the visible window, not just the
-        // single latest sample — a probe can fail repeatedly and still recover
-        // on the very next tick, which would otherwise mask the burst.
-        const windowFailures = windowSamples.filter((sample) => !sample.ok);
-        const lastWindowFailure = windowFailures[windowFailures.length - 1] ?? null;
-        const errorText =
-            latest && !latest.ok
-                ? (latest.error ?? 'probe failed')
-                : lastWindowFailure
-                  ? `${windowFailures.length} failure${windowFailures.length === 1 ? '' : 's'} in this window, last at ${new Date(lastWindowFailure.ts).toLocaleTimeString(undefined, { hour12: false })}`
-                  : 'no recent failures';
-        const errorTone =
-            latest && !latest.ok ? 'text-error' : lastWindowFailure ? 'text-warning' : 'opacity-60';
-        const canvasId = `host-probe-chart-${entry.target.slot}`;
-        const card = `<div class="bg-base-300 rounded-xl p-4">
-                <div class="mb-3 flex items-start justify-between gap-3">
-                    <div>
-                        <h3 class="font-semibold">${escapeHtml(entry.target.label)}</h3>
-                        <p class="font-mono text-xs opacity-60">${escapeHtml(entry.target.host)}:${entry.target.port}</p>
-                    </div>
-                    <div class="text-right">
-                        <div class="font-mono text-sm">${latest?.latencyMs != null ? `${Math.round(latest.latencyMs)} ms` : '—'}</div>
-                        <div class="text-xs ${errorTone}">${escapeHtml(errorText)}</div>
-                    </div>
-                </div>
-                <canvas id="${canvasId}" style="width:100%;height:110px;display:block"></canvas>
-            </div>`;
-
-        return { row, card };
-    });
-
-    const rows =
-        rendered.length > 0
-            ? rendered.map((r) => r.row).join('')
-            : `<tr><td colspan="9" class="py-4 text-center opacity-50">No probe history loaded yet — click refresh.</td></tr>`;
-    const cards = rendered.map((r) => r.card).join('');
-
-    hostsCol.innerHTML = `
-        <div class="mb-4 flex items-center justify-between gap-3">
-            <div class="min-w-0 text-sm">
-                <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-                    <span class="badge badge-outline badge-sm font-mono">
-                        Updated ${state.hostProbes.generatedAt ? new Date(state.hostProbes.generatedAt).toLocaleTimeString(undefined, { hour12: false }) : '—'}
-                    </span>
-                    <h2 class="text-base font-bold">Host Connections</h2>
-                    <span class="opacity-60">TCP probe history for configured platform hosts. Probe interval ${state.hostProbes.intervalMs != null ? `${Math.round(state.hostProbes.intervalMs / 1000)}s` : 'unknown'}.</span>
-                </div>
-            </div>
-            <div class="flex shrink-0 items-center gap-3">
-                <button
-                    id="host-connections-refresh"
-                    type="button"
-                    class="btn btn-sm btn-ghost btn-square inline-flex items-center justify-center leading-none"
-                    onclick="refreshHostConnectionsBtn()"
-                    title="Refresh host connections">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" class="block h-4 w-4 shrink-0 fill-current" aria-hidden="true">
-                        <path d="M10 3a7 7 0 0 1 6.56 4.57.75.75 0 1 1-1.4.53A5.5 5.5 0 1 0 14.5 13H12a.75.75 0 0 1 0-1.5h4.25A.75.75 0 0 1 17 12.25v4.25a.75.75 0 0 1-1.5 0v-1.77A7 7 0 1 1 10 3Z" />
-                    </svg>
-                </button>
-            </div>
-        </div>
-        <div class="bg-base-300 mb-4 rounded-xl p-4 text-sm leading-6 opacity-85">
-            Use this view to correlate output failures with basic reachability to the configured ingest hosts. A healthy line means the server could open a TCP connection to that host and port at that time; red markers mean the connect probe failed or timed out. This is useful for ruling in or out broad network-path problems from the server to YouTube, Facebook, or other destinations.
-            <br /><br />
-            Limitations: these probes do not perform a full RTMP or RTMPS publish handshake, and they do not prove the destination will accept or keep a live stream session open. A host can look healthy here while the platform still rejects, resets, or drops an actual publish connection.
-        </div>
-        <div class="mb-2 flex items-center justify-center gap-2 px-1">
-            <button id="host-chart-back" class="btn btn-xs btn-ghost" ${atStart || maxOffset === 0 ? 'disabled' : ''}>&#8592; 10 min</button>
-            ${rangeLabel}
-            <button id="host-chart-fwd" class="btn btn-xs btn-ghost" ${atLive ? 'disabled' : ''}>10 min &#8594;</button>
-        </div>
-        <div class="overflow-x-auto">
-            <table class="table table-sm">
-                <thead>
-                    <tr>
-                        <th>Label</th>
-                        <th>Host</th>
-                        <th>Status</th>
-                        <th>Latest</th>
-                        <th>15min Higherst</th>
-                        <th>Avg</th>
-                        <th>6h Fail</th>
-                        <th>Last Sample</th>
-                        <th>Resolved IP</th>
-                    </tr>
-                </thead>
-                <tbody>${rows}</tbody>
-            </table>
-        </div>
-        <div class="mt-6 grid grid-cols-1 gap-4">${cards}</div>`;
-
-    for (const entry of targets) {
-        const chartSamples = entry.history.filter(
-            (sample) => sample.ts >= windowStart && sample.ts <= windowEnd,
-        );
-        drawProbeChart(
-            `host-probe-chart-${entry.target.slot}`,
-            chartSamples,
-            windowStart,
-            windowEnd,
-            state.hostProbes.intervalMs ?? 5000,
-        );
-    }
-
-    document.getElementById('host-chart-back')?.addEventListener('click', () => {
-        state.hostChartOffsetMs = Math.min(
-            state.hostChartOffsetMs + CHART_SCROLL_STEP_MS,
-            maxOffset,
-        );
-        renderHostConnectionsOverview();
-    });
-    document.getElementById('host-chart-fwd')?.addEventListener('click', () => {
-        state.hostChartOffsetMs = Math.max(0, state.hostChartOffsetMs - CHART_SCROLL_STEP_MS);
-        renderHostConnectionsOverview();
-    });
-}
-
 function renderPipelineInfo(selectedId: string | null): void {
     const pipeline = selectedId ? state.pipelines.find((p) => p.id === selectedId) : null;
     const col = document.getElementById('pipe-info-col');
@@ -2170,7 +1596,7 @@ function renderPipelineInfo(selectedId: string | null): void {
 
     const statsContainer = document.getElementById('input-stats-container');
     const statsEl = document.getElementById('input-stats');
-    const inputHtml = renderInputStats(pipeline.input);
+    const inputHtml = renderInputStats(pipeline.input, { displayInputBitrateKbps, fmtFieldOrder });
     if (statsContainer) statsContainer.classList.toggle('hidden', !pipeline.input.connected);
     if (statsEl) statsEl.innerHTML = inputHtml;
     const masked = maskStreamKey(pipeline.streamKey);
@@ -2266,94 +1692,28 @@ function renderPipelineInfo(selectedId: string | null): void {
         bondingUrl.dataset.port = String(bondingPortValue);
     }
     if (bondingStats) {
-        const b = pipeline.srtBonding;
-        const inputStatsAreDropOnly = inputAggregateStatsAreDropOnly(b.input);
-        const rxPkts = b.input.recvUniquePacketsTotal || b.input.recvPacketsTotal || 0;
-        const hasSessionStats =
-            relayProcessRunning &&
-            (bondingInputActive || rxPkts > 0 || (b.input.retransTotal ?? 0) > 0);
-        const hasOutputStats =
-            relayProcessRunning && (bondingOutputConnected || b.output.sentPacketsTotal > 0);
-        const items = [
-            ...(hasSessionStats
-                ? [
-                      {
-                          label: 'Rx',
-                          labelTitle:
-                              'Unique data packets received from the upstream bonded SRT input, with a fallback to total received packets when needed.',
-                          value: formatCompactCount(rxPkts),
-                      },
-                      {
-                          label: 'Latency',
-                          labelTitle:
-                              'Negotiated SRT buffering latency for the input. For a bonded group this is the max latency negotiated across legs.',
-                          value: fmtMs(b.input.latencyMs),
-                      },
-                      inputStatsAreDropOnly
-                          ? {
-                                label: 'L / R / D',
-                                labelTitle:
-                                    'Deduplicated packet drops on the bonded group input. Loss and receive retransmission are unavailable for the bonded aggregate.',
-                                value: fmtLossRexmitDrop(null, null, b.input.recvDropTotal),
-                            }
-                          : {
-                                label: 'L / R / D',
-                                labelTitle: 'Loss / Rexmit / Drop on the input connection.',
-                                value: fmtLossRexmitDrop(
-                                    b.input.recvLossTotal,
-                                    b.input.retransTotal,
-                                    b.input.recvDropTotal,
-                                ),
-                            },
-                  ]
-                : []),
-            ...(hasOutputStats
-                ? [
-                      {
-                          label: 'Out L / R / D',
-                          labelTitle: 'Loss / Rexmit / Drop on the downstream output connection.',
-                          value: fmtLossRexmitDrop(
-                              b.output.sendLossTotal,
-                              b.output.retransTotal,
-                              b.output.sendDropTotal,
-                          ),
-                      },
-                  ]
-                : []),
-        ];
-        bondingStats.innerHTML =
-            items.length > 0 ? renderCompactMetaRow(items, 'input-meta-row-sm') : '';
+        bondingStats.innerHTML = renderBondingStats(pipeline.srtBonding, relayProcessRunning, {
+            formatCompactCount,
+            fmtMs,
+            fmtMbpsValue,
+            fmtLossRexmitDrop,
+            inputAggregateStatsAreDropOnly,
+            legHealthColor,
+            legHealthLabel,
+            renderCompactMetaRow,
+        });
     }
     if (bondingLegs) {
-        const legs = pipeline.srtBonding.input.legs;
-        bondingLegs.innerHTML =
-            legs.length === 0
-                ? ''
-                : `<div class="text-xs font-semibold opacity-60 mb-1">Bonded legs (${legs.length})</div>
-                   <div class="overflow-x-auto">
-                   <table class="table table-xs">
-                       <thead><tr>
-                           <th>State</th><th>Leg IP</th><th>RTT</th>
-                           <th>Rate</th><th>Buffer</th>
-                           <th><span title="Loss / Rexmit / Drop">L / R / D</span></th>
-                       </tr></thead>
-                       <tbody>${legs
-                           .map((leg) => {
-                               const color = legHealthColor(leg);
-                               const health = legHealthLabel(leg);
-                               const title = leg.healthReason ?? `Transport state: ${leg.state}`;
-                               return `<tr>
-                                   <td title="${escapeHtml(title)}"><span class="inline-flex items-center gap-1"><span class="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style="background:${color}"></span>${health}<span class="opacity-60">(${escapeHtml(leg.state)})</span></span></td>
-                                   <td class="font-mono text-xs">${leg.ip}</td>
-                                   <td class="font-mono text-xs">${fmtMs(leg.rttMs)}</td>
-                                   <td class="font-mono text-xs">${fmtMbpsValue(leg.recvRateMbps)}</td>
-                                   <td class="font-mono text-xs">${fmtMs(leg.rcvBufMs)}</td>
-                                   <td class="font-mono text-xs" title="Loss / Rexmit / Drop">${fmtLossRexmitDrop(leg.recvLossTotal, leg.retransTotal, leg.recvDropTotal)}</td>
-                               </tr>`;
-                           })
-                           .join('')}</tbody>
-                   </table>
-                   </div>`;
+        bondingLegs.innerHTML = renderBondedLegs(pipeline.srtBonding.input.legs, {
+            formatCompactCount,
+            fmtMs,
+            fmtMbpsValue,
+            fmtLossRexmitDrop,
+            inputAggregateStatsAreDropOnly,
+            legHealthColor,
+            legHealthLabel,
+            renderCompactMetaRow,
+        });
     }
     if (bondingErrWrap && bondingErr && bondingErrTs) {
         const msg = pipeline.srtBonding.lastError;
@@ -2377,7 +1737,7 @@ function renderPipelineInfo(selectedId: string | null): void {
         }
     }
 
-    void import('../features/editor.js').then((ed) => {
+    void import('../features/srt-bonding-details.js').then((ed) => {
         if (showSrtInputGraphs) {
             ed.renderSrtBondingDetailsInline(pipeline.id);
         } else {
@@ -2396,243 +1756,8 @@ function renderPipelineInfo(selectedId: string | null): void {
 
 // ── Outputs list (right column) ───────────────────────
 
-const ICON_PENCIL = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>`;
-const ICON_TRASH = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>`;
-const ICON_HISTORY = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/><path d="M12 7v5l3 2"/></svg>`;
-const ICON_ITERATION_CW = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 3 3-3 3"/><path d="M15 5a9 9 0 1 1-3 16.9"/></svg>`;
 const ICON_WARN = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>`;
 const ICON_ERROR = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>`;
-
-type DupRef = { pipelineName: string; outputName?: string };
-
-// Hover-tooltip content for a `.js-tooltip` trigger: a warning headline plus
-// one line per place the duplicated value shows up (see initHoverTooltips).
-function dupTooltip(headline: string, refs: DupRef[]): string {
-    const lines = refs.map(
-        (r) =>
-            `<div class="text-xs leading-snug text-warning">${escapeHtml(r.outputName ? `${r.pipelineName} → ${r.outputName}` : r.pipelineName)}</div>`,
-    );
-    return `<div class="text-xs leading-snug font-semibold text-warning mb-0.5">${escapeHtml(headline)}</div>${lines.join('')}`;
-}
-
-function restreamSinkLabel(url: string): string | null {
-    for (const p of state.config.pipelines ?? []) {
-        if (url === p.rtmpPublishUrlLocal) return `rtmp:// ${p.name}`;
-        if (url === p.srtPublishUrlLocal) return `srt:// ${p.name}`;
-    }
-    return null;
-}
-
-// Config-shape lint, independent of live health: flags audio-encoding choices
-// that are technically accepted but wrong for the input's protocol — see
-// encodeAudioArgs/buildSinkMapArgs in ffmpeg.ts for why each of these matters.
-// Gated on input.connected because an unconnected input's isSrt defaults to
-// false (protocol not yet observed), which would otherwise misreport every
-// not-yet-live SRT pipeline as RTMP.
-function outputEncodingWarnings(o: OutputView, input: InputHealth): string[] {
-    if (!o.url || !input.connected) return [];
-    const warnings: string[] = [];
-    const outIsSrt = o.url.startsWith('srt://');
-
-    // RTMP inputs only ever expose a single default track (index 0, "Track 1"
-    // in the picker), so any other track index has nothing to select from.
-    if (!input.isSrt && o.audioEncoding !== 'copy' && o.audioEncoding !== '0') {
-        warnings.push(
-            'RTMP input only has one audio track — use copy or Track 1, not a different track selection.',
-        );
-    }
-
-    // SRT→RTMP with 'copy' skips the aresample filter that corrects SRT-origin
-    // timestamp jitter (see encodeAudioArgs) — the RTMP side will drift/stutter.
-    if (input.isSrt && !outIsSrt && o.audioEncoding === 'copy') {
-        warnings.push(
-            'SRT-to-RTMP output should not use copy audio — it can cause audio jitter; select a track instead.',
-        );
-    }
-
-    // A numeric selection past the input's actual track count maps to a
-    // stream that doesn't exist — ffmpeg fails fast on that (see
-    // buildSinkMapArgs/buildAudioMapArgs), so this is a real misconfiguration,
-    // not just a style nit. Only checked once the input has actually been
-    // probed (audioTracks populated) — before that the real count is unknown,
-    // so a track pick can't yet be judged out of range.
-    if (input.isSrt && input.audioTracks.length > 0) {
-        const outOfRange = o.audioEncoding
-            .split(',')
-            .map((s) => s.trim())
-            .filter((s) => /^\d+$/.test(s))
-            .map(Number)
-            .filter((idx) => idx >= input.audioTracks.length);
-        if (outOfRange.length > 0) {
-            const trackLabel = outOfRange.map((idx) => idx + 1).join(', ');
-            const count = input.audioTracks.length;
-            warnings.push(
-                `Output selects track ${trackLabel}, but the input only has ${count} audio track${count === 1 ? '' : 's'}.`,
-            );
-        }
-    }
-
-    return warnings;
-}
-
-function renderOutputCard(
-    o: OutputView,
-    input: InputHealth,
-    dupUrls: Map<string, DupRef[]>,
-): string {
-    const isStopped = o.desiredState === 'stopped';
-    const isRunning = o.status === 'running';
-    const st = outStatus(o, input);
-    const statusHex =
-        st === 'good'
-            ? STATUS_COLOR_GOOD
-            : st === 'warn'
-              ? STATUS_COLOR_WARN
-              : st === 'error'
-                ? STATUS_COLOR_ERROR
-                : STATUS_COLOR_OFF;
-    const uptimeMs = o.startedAtMs !== null ? Date.now() - o.startedAtMs : null;
-    const badges: string[] = [];
-    if (o.videoEncoding !== 'copy') {
-        badges.push(
-            `<span class="badge badge-sm badge-accent badge-soft whitespace-nowrap">${o.videoEncoding}</span>`,
-        );
-    }
-    if (o.audioEncoding !== 'copy') {
-        const label =
-            o.audioEncoding === 'translation'
-                ? 'translation'
-                : o.audioEncoding
-                      .split(',')
-                      .map((t) => `T${parseInt(t) + 1}`)
-                      .join('+');
-        badges.push(
-            `<span class="badge badge-xs badge-accent badge-soft whitespace-nowrap">${label}</span>`,
-        );
-    }
-    if (uptimeMs !== null) {
-        badges.push(
-            `<span class="font-mono text-xs opacity-60 whitespace-nowrap">${formatUptime(uptimeMs)}</span>`,
-        );
-    }
-    if (
-        isRunning &&
-        (o.bitrateKbps !== null || o.cpuPercent !== null || o.memoryUsageBytes !== null)
-    ) {
-        const memPercent = outputMemoryPercent(o);
-        const memCls =
-            memPercent !== null && memPercent >= METRIC_ERROR_PERCENT
-                ? 'badge-error'
-                : memPercent !== null && memPercent >= METRIC_WARN_PERCENT
-                  ? 'badge-warning'
-                  : '';
-        const parts = [
-            o.bitrateKbps !== null ? formatBitrate(o.bitrateKbps) : null,
-            o.cpuPercent !== null ? `${o.cpuPercent}%` : null,
-            o.memoryUsageBytes !== null ? formatOutputMemory(o) : null,
-        ].filter((v): v is string => v !== null);
-        badges.push(
-            `<span class="badge badge-sm whitespace-nowrap ${memCls}" title="Bitrate / ffmpeg CPU (% of one core) / ffmpeg RSS">${parts.join(' | ')}</span>`,
-        );
-    }
-    let inlineSink = '';
-    if (o.url) {
-        const restreamLabel = restreamSinkLabel(o.url);
-        const display =
-            restreamLabel ??
-            (o.url.length > 27 ? o.url.slice(0, 25) + '...' + o.url.slice(-2) : o.url);
-        const dupRefs = dupUrls.get(o.url);
-        const dupWarnBtn = dupRefs
-            ? `<span class="js-tooltip text-warning shrink-0 inline-flex" tabindex="0">${ICON_WARN}<div class="js-tooltip-content hidden">${dupTooltip('Duplicate destination — also used by:', dupRefs)}</div></span>`
-            : '';
-        const codeClass = dupRefs
-            ? 'text-xs font-normal text-warning whitespace-nowrap'
-            : 'text-xs font-normal opacity-60 whitespace-nowrap';
-        inlineSink = `<code class="${codeClass}" title="${escapeHtml(o.url)}">${display}</code>${dupWarnBtn}`;
-    }
-
-    // Persistent "last error" notice, distinct from outStatus/outputIssues'
-    // hasCurrentOutputError (which is about live dot color and resets on any
-    // restart, including silent auto-retries). o.lastError is only ever
-    // non-null when the most recent event for this output was a crash — a
-    // deliberate stop always writes a 'stopped' marker (server-side) that
-    // immediately supersedes it, so this line naturally persists through
-    // auto-retries (which don't touch history) but clears as soon as the
-    // output is stopped, with no separate timestamp to compare against.
-    const lastErrorIsCurrent = o.lastError !== null && o.lastErrorAt !== null;
-    const lastErrorLine =
-        o.lastError && lastErrorIsCurrent
-            ? (o.lastError
-                  .split('\n')
-                  .filter((l) => l.trim())
-                  .slice(-1)[0] ?? '')
-            : '';
-    const lastErrorTs = o.lastErrorAt
-        ? new Date(o.lastErrorAt).toLocaleTimeString(undefined, { hour12: false })
-        : '';
-    const lastErrorColor = 'text-error';
-    const retryBadge =
-        o.failures > 0
-            ? `<span class="badge badge-sm badge-error gap-1 shrink-0" title="${o.failures} retr${o.failures === 1 ? 'y' : 'ies'}">${ICON_ITERATION_CW}${o.failures}</span>`
-            : '';
-    const lastErrorHtml =
-        lastErrorLine && !isStopped
-            ? `<div class="flex items-center gap-2 pl-2 mt-0.5 min-w-0">
-                ${retryBadge}
-                <span class="text-xs ${lastErrorColor} shrink-0">${lastErrorTs}</span>
-                <span class="text-xs ${lastErrorColor} truncate">${escapeHtml(lastErrorLine)}</span>
-           </div>`
-            : '';
-    const historyBtn = o.hasErrorHistory
-        ? `<button class="btn btn-xs btn-ghost ${lastErrorColor}" data-action="error-info" data-out-id="${o.id}" title="Error history">${ICON_HISTORY}</button>`
-        : '';
-    const warningHtml = o.warningReason
-        ? `<div class="flex items-center gap-2 pl-2 mt-0.5 min-w-0">
-                <span class="text-warning shrink-0">${ICON_WARN}</span>
-                <span class="text-xs text-warning truncate">${escapeHtml(o.warningReason)}</span>
-           </div>`
-        : '';
-
-    const encodingWarnings = outputEncodingWarnings(o, input);
-    const encodingWarnStyle =
-        encodingWarnings.length > 0
-            ? 'style="background:color-mix(in oklch, var(--color-warning) 15%, transparent)"'
-            : '';
-    const encodingWarningsHtml = encodingWarnings
-        .map(
-            (msg) => `<div class="flex items-center gap-2 pl-2 mt-0.5 min-w-0">
-                <span class="text-warning shrink-0">${ICON_WARN}</span>
-                <span class="text-xs text-warning truncate" title="${escapeHtml(msg)}">${escapeHtml(msg)}</span>
-           </div>`,
-        )
-        .join('');
-
-    const isPending = pendingOutputs.has(o.id);
-    return `
-    <div class="bg-base-100 px-3 py-2 border border-base-content/10 rounded-xl w-full min-w-0 space-y-0.5" data-output-card="${o.id}" ${encodingWarnStyle}>
-        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <div class="flex items-center gap-2 shrink-0 font-semibold">
-                <div aria-label="status" class="status status-lg mx-1" style="background-color: ${statusHex}"></div>
-                <button class="btn btn-xs ${isStopped ? 'btn-accent' : 'btn-accent btn-outline'}"
-                    data-action="${isStopped ? 'start' : 'stop'}" data-out-id="${o.id}"${isPending ? ' disabled' : ''}>
-                    ${isStopped ? 'Start' : 'Stop'}
-                </button>
-                <span class="js-output-drag-handle cursor-grab" draggable="true" title="${escapeHtml(o.name)}">${escapeHtml(formatOutputName(o.name))}</span>
-            </div>
-            ${badges.join('')}
-            ${inlineSink}
-            <div class="flex items-center gap-1 ml-auto shrink-0">
-                ${historyBtn}
-                <button class="btn btn-xs btn-ghost" data-action="edit" data-out-id="${o.id}">${ICON_PENCIL}</button>
-                <button class="btn btn-xs btn-ghost text-error ${isStopped ? '' : 'btn-disabled opacity-40'}"
-                    data-action="delete" data-out-id="${o.id}">${ICON_TRASH}</button>
-            </div>
-        </div>
-        ${warningHtml}
-        ${encodingWarningsHtml}
-        ${lastErrorHtml}
-    </div>`;
-}
 
 function renderOutputsList(pipeline: PipelineView): void {
     const listEl = document.getElementById('outputs-list');
@@ -2704,7 +1829,13 @@ function renderOutputsList(pipeline: PipelineView): void {
     }
 
     listEl.innerHTML = pipeline.outs
-        .map((o) => renderOutputCard(o, pipeline.input, dupUrls))
+        .map((o) =>
+            renderOutputCard(o, pipeline.input, dupUrls, {
+                pendingOutputs,
+                outStatus,
+                formatUptime,
+            }),
+        )
         .join('');
 
     listEl.onclick = (e) => {
@@ -2766,68 +1897,11 @@ function renderOutputsList(pipeline: PipelineView): void {
     };
 }
 
-// ── Preview ───────────────────────────────────────────
-
-function renderPreview(pipeline: PipelineView): void {
-    const section = document.getElementById('preview-section');
-    if (!section) return;
-
-    if (!pipeline.input.live) {
-        section.classList.add('hidden');
-        if (getPreviewPipelineId() === pipeline.id) stopCurrentPreview();
-        return;
-    }
-
-    section.classList.remove('hidden');
-
-    const activePid = getPreviewPipelineId();
-    if (activePid && activePid !== pipeline.id) stopCurrentPreview();
-
-    populatePreviewTrackSelect(pipeline);
-
-    syncPreviewControls(getPreviewPipelineId() === pipeline.id);
-}
-
-// ── Metrics (navbar) ──────────────────────────────────
+// ── Entry point ───────────────────────────────────────
 
 export function renderMetrics(): void {
-    const m = state.metrics;
-    const cpu = m.cpu ?? null;
-    const ram = m.ram ?? null;
-    const disk = m.disk ?? null;
-    const net = m.net ?? null;
-    const uptimeSecs = m.uptimeSeconds ?? null;
-    const cpuPercent = cpu ? cpu.percent : null;
-    const ramPercent = ram ? Math.round((ram.usedBytes / ram.totalBytes) * 100) : null;
-    const diskPercent = disk ? Math.round((disk.usedBytes / disk.totalBytes) * 100) : null;
-
-    setInnerText(
-        'navbar-uptime',
-        uptimeSecs !== null ? `Up ${formatUptime(uptimeSecs * 1000)}` : 'Up —',
-    );
-    setInnerText('navbar-cpu-value', cpu ? `${cpu.cores}c CPU: ${cpuPercent}%` : 'CPU —');
-    setMetricSeverity('navbar-cpu-value', cpuPercent);
-    setInnerText(
-        'navbar-ram-value',
-        ram ? `${formatBytesCompact(ram.totalBytes)} RAM: ${ramPercent}%` : 'RAM —',
-    );
-    setMetricSeverity('navbar-ram-value', ramPercent);
-    setInnerText(
-        'navbar-disk-value',
-        disk ? `${formatBytesCompact(disk.totalBytes)} Disk: ${diskPercent}%` : 'Disk —',
-    );
-    setMetricSeverity('navbar-disk-value', diskPercent);
-    setInnerText(
-        'navbar-net-rx',
-        net ? `↓ ${formatBitrate((net.rxBytesPerSec * 8) / 1000)}` : '↓ —',
-    );
-    setInnerText(
-        'navbar-net-tx',
-        net ? `↑ ${formatBitrate((net.txBytesPerSec * 8) / 1000)}` : '↑ —',
-    );
+    renderMetricsView({ setMetricSeverity });
 }
-
-// ── Entry point ───────────────────────────────────────
 
 export function renderPipelines(): void {
     const selectedId = getUrlParam('p');
