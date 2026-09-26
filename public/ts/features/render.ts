@@ -1371,7 +1371,7 @@ function renderOverview(): void {
 
     let relayRows = '';
     if (activeRelayPipelines.length === 0) {
-        relayRows = `<tr><td colspan="11" class="py-4 text-center opacity-50">No active SRT bonding relay sessions.</td></tr>`;
+        relayRows = `<tr><td colspan="12" class="py-4 text-center opacity-50">No active SRT bonding relay sessions.</td></tr>`;
     } else {
         for (const p of activeRelayPipelines) {
             const inputSt = relayInputStatus(p, relayProcessRunning);
@@ -1389,7 +1389,8 @@ function renderOverview(): void {
                 <td class="font-semibold cursor-pointer hover:underline js-select-pipeline" data-id="${p.id}"${rowspan}>${escapeHtml(p.name)}</td>
                 <td${rowspan}>${overviewStatusBadge(inputSt)}</td>
                 <td${rowspan}>${overviewStatusBadge(outputSt)}</td>
-                <td${rowspan}>${renderOverviewIssues(relayIssues(p, relayProcessRunning, inputSt, outputSt))}</td>`;
+                <td${rowspan}>${renderOverviewIssues(relayIssues(p, relayProcessRunning, inputSt, outputSt))}</td>
+                <td class="font-mono text-xs"${rowspan}>${p.input.live ? formatUptime(p.input.uptimeMs) : '—'}</td>`;
             const totalsCells = `
                 <td class="font-mono text-xs" title="${aggregateStatsAreDropOnly ? 'Deduplicated drop packets on the bonded group input.' : 'Loss / Rexmit / Drop on the input connection.'}"${rowspan}>${aggregateStatsAreDropOnly ? fmtCompactNullableCount(p.srtBonding.input.recvDropTotal) : fmtLossRexmitDrop(p.srtBonding.input.recvLossTotal, p.srtBonding.input.retransTotal, p.srtBonding.input.recvDropTotal)}</td>`;
 
@@ -1405,9 +1406,9 @@ function renderOverview(): void {
             }
         }
         if (problemsOnly && relayRows === '') {
-            relayRows = `<tr><td colspan="11" class="py-4 text-center opacity-50">No relay issues.</td></tr>`;
+            relayRows = `<tr><td colspan="12" class="py-4 text-center opacity-50">No relay issues.</td></tr>`;
         } else if (activeOnly && relayRows === '') {
-            relayRows = `<tr><td colspan="11" class="py-4 text-center opacity-50">No active relay sessions.</td></tr>`;
+            relayRows = `<tr><td colspan="12" class="py-4 text-center opacity-50">No active relay sessions.</td></tr>`;
         }
     }
 
@@ -1723,7 +1724,7 @@ function renderOverview(): void {
         <h2 class="mb-2 text-lg font-bold">SRT Bonding Relay <span class="badge badge-neutral badge-sm ml-1">${activeRelayPipelines.length}</span></h2>
         <div class="overflow-x-auto mb-6">
             <table class="table table-sm table-relay">
-                ${thead(['Pipeline', 'Input', 'Output', 'Issues', '<span title="Bonded group inputs show deduplicated Drop; non-bonded inputs show Loss / Rexmit / Drop">Input stats</span>', 'State', 'Leg IP', 'Latency', 'RTT', 'Rate', '<span title="Loss / Rexmit / Drop">L / R / D</span>'])}
+                ${thead(['Pipeline', 'Input', 'Output', 'Issues', 'Uptime', '<span title="Bonded group inputs show deduplicated Drop; non-bonded inputs show Loss / Rexmit / Drop">Input stats</span>', 'State', 'Leg IP', 'Latency', 'RTT', 'Rate', '<span title="Loss / Rexmit / Drop">L / R / D</span>'])}
                 <tbody>${relayRows}</tbody>
             </table>
         </div>
@@ -2217,8 +2218,7 @@ function renderPipelineInfo(selectedId: string | null): void {
     const bondingInputActive = pipeline.srtBonding.inputActive;
     const bondingOutputConnected = pipeline.srtBonding.outputConnected;
     const hasActiveBondingConnection = bondingInputActive || bondingOutputConnected;
-    const hasActiveSrtInput = pipeline.input.connected && pipeline.input.isSrt;
-    const showSrtInputGraphs = hasActiveBondingConnection || hasActiveSrtInput;
+    const showSrtInputGraphs = hasActiveBondingConnection;
     const relayProcessRunning = state.health.srtRelay?.status === 'running';
     const bondingHost = state.config.publicHost || 'localhost';
     const bondingPortValue = state.health.srtRelay?.port ?? 10081;
