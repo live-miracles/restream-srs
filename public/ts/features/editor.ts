@@ -212,8 +212,11 @@ function mergeLegHistory(
         return data;
     }
 
-    const incomingByKey = new Map(data.legs.map((leg) => [`${leg.ip}:${leg.port}`, leg]));
-    const cachedByKey = new Map(cached.legs.map((leg) => [`${leg.ip}:${leg.port}`, leg]));
+    // The relay identifies a leg by source IP. Its port can change when the
+    // sender reconnects, so including the port here would split one source
+    // into multiple chart series and colors.
+    const incomingByKey = new Map(data.legs.map((leg) => [leg.ip, leg]));
+    const cachedByKey = new Map(cached.legs.map((leg) => [leg.ip, leg]));
     const keys = new Set([...cachedByKey.keys(), ...incomingByKey.keys()]);
     const legs = [...keys].map((key) => {
         const previous = cachedByKey.get(key);
@@ -252,6 +255,11 @@ async function loadLegHistory(pipelineId: string, showLoading = true): Promise<v
     const from = to - LEG_HISTORY_WINDOW_MS;
     const content = document.getElementById('srt-leg-history-content');
     if (content && showLoading) {
+        // The chart canvases are about to be replaced by the placeholder, so
+        // drop the chart-mode marker too — otherwise renderLegHistoryCharts
+        // sees a matching mode on the next render and skips recreating the
+        // canvases it just lost, leaving this placeholder on screen forever.
+        delete content.dataset.chartMode;
         content.innerHTML = '<p class="text-sm opacity-50">Loading leg history…</p>';
     }
     const cached = offset === 0 ? legHistoryCache.get(pipelineId) : undefined;
@@ -300,10 +308,9 @@ async function loadLegHistory(pipelineId: string, showLoading = true): Promise<v
 function renderLegHistorySection(pipelineId: string): string {
     return `<div id="srt-leg-history-section" class="mt-1">
         <div class="mb-2 flex items-center justify-center gap-2 px-1">
-            <div class="text-xs font-semibold uppercase opacity-50">SRT Input History</div>
             <div class="flex items-center gap-1">
                 <button id="srt-leg-history-back" type="button" class="btn btn-xs btn-ghost">&#8592; 10 min</button>
-                <span id="srt-leg-history-range" class="inline-flex w-28 justify-center"><span class="badge badge-success badge-xs gap-1">LIVE</span></span>
+                <span id="srt-leg-history-range" class="inline-flex w-36 justify-center whitespace-nowrap"><span class="badge badge-success badge-xs gap-1">LIVE</span></span>
                 <button id="srt-leg-history-forward" type="button" class="btn btn-xs btn-ghost" disabled>10 min &#8594;</button>
             </div>
         </div>
