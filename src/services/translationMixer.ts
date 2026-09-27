@@ -1,6 +1,13 @@
 import { spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
-import { Request } from 'zeromq';
+import { context as zmqContext, Request } from 'zeromq';
+
+// Without this, ZeroMQ's default context blocks the whole process at exit
+// forever trying to deliver any still-queued message on a socket that has no
+// peer (e.g. a control socket for a translator whose ffmpeg-side azmq server
+// never came up or already died) — even after that socket has been closed.
+// This gives every new socket a zero linger instead, so shutdown can't hang.
+zmqContext.blocky = false;
 import { buildTranslationMixerArgs, volumePercentToAmplitude } from '../utils/ffmpeg.js';
 import { readAppConfig } from '../utils/appConfig.js';
 import type { Db, Output, TranslationConfig } from '../types.js';
@@ -32,6 +39,7 @@ interface MixerJob {
     lastOutputProgressAtMs: number;
     lastOutTimeUs: number | null;
     lastTotalSizeBytes: number | null;
+    lastTranslatorMeterAtMs: number;
 }
 
 interface MixerStateController {
@@ -155,6 +163,38 @@ export function nextDebouncedMode(
     return { tracker: next, mode: next.effectiveLive ? 'translated' : 'source-only' };
 }
 
+export function isTranslatorMeterStale(
+    lastTranslatorMeterAtMs: number,
+    now: number,
+    staleMs: number,
+): boolean {
+    return now - lastTranslatorMeterAtMs > staleMs;
+}
+
+// `lastTranslatorMeterAtMs` is initialized to the job's start time and only
+// ever moves forward from real meter samples, so a translator that never
+// produces a single sample is still caught once `warmupMs` passes — it isn't
+// invisible forever, and a job that's merely still warming up (one early
+// sample, then normal startup jitter) isn't flagged before `warmupMs` either.
+export function shouldRestartForStaleTranslatorMeter(
+    job: {
+        mode: 'source-only' | 'translated';
+        translatorLive: boolean;
+        startedAtMs: number;
+        lastTranslatorMeterAtMs: number;
+    },
+    now: number,
+    warmupMs: number,
+    staleMs: number,
+): boolean {
+    return (
+        job.mode === 'translated' &&
+        job.translatorLive &&
+        now - job.startedAtMs >= warmupMs &&
+        isTranslatorMeterStale(job.lastTranslatorMeterAtMs, now, staleMs)
+    );
+}
+
 export function selectControlPort(outputId: string, usedPorts: ReadonlySet<number>): number {
     const hash = [...outputId].reduce(
         (value, char) => (value * 31 + char.charCodeAt(0)) % MIXER_CONTROL_PORT_RANGE,
@@ -224,6 +264,42 @@ export function createTranslationMixerService(
         if (requestedStop) stopRequested.add(outputId);
         job.controller.close();
         await terminateProcess(job.process);
+    }
+
+    async function restartWatchdogJob(
+        output: Output,
+        job: MixerJob,
+        opts: {
+            headline: string;
+            reason: string;
+            contextLine: string;
+            extra?: Record<string, unknown>;
+        },
+    ): Promise<void> {
+        const message = [
+            opts.headline,
+            `pid=${job.process.pid ?? 'unknown'}`,
+            opts.contextLine,
+            job.stderrTail.trim()
+                ? `ffmpeg stderr tail:\n${job.stderrTail.trim()}`
+                : 'ffmpeg stderr tail: <empty>',
+        ].join('\n');
+        try {
+            db.setOutputLastError(output.id, message, 'crash');
+        } catch (error) {
+            diagnostics?.event('translation-mixer-watchdog-log-error', {
+                outputId: output.id,
+                pipelineId: output.pipelineId,
+                message: error instanceof Error ? error.message : String(error),
+            });
+        }
+        diagnostics?.event('translation-mixer-restart', {
+            outputId: output.id,
+            pipelineId: output.pipelineId,
+            reason: opts.reason,
+            ...opts.extra,
+        });
+        await stopJob(output.id, false);
     }
 
     function configFingerprint(output: Output, mix: TranslationConfig): string {
@@ -319,6 +395,7 @@ export function createTranslationMixerService(
             lastOutputProgressAtMs: Date.now(),
             lastOutTimeUs: null,
             lastTotalSizeBytes: null,
+            lastTranslatorMeterAtMs: Date.now(),
         };
         jobs.set(output.id, job);
         stopRequested.delete(output.id);
@@ -361,13 +438,19 @@ export function createTranslationMixerService(
         });
         child.stderr?.on('data', (chunk: Buffer) => {
             const current = jobs.get(output.id);
-            if (current) current.stderrTail = appendTail(current.stderrTail, chunk);
+            if (current?.process === child)
+                current.stderrTail = appendTail(current.stderrTail, chunk);
         });
         child.stdio?.[3]?.on('data', (chunk: Buffer) => {
             for (const line of chunk.toString('utf8').split(/\r?\n/)) {
                 const match = line.match(METER_VOICE_PATTERN);
-                if (match)
+                if (match) {
+                    const current = jobs.get(output.id);
+                    if (current?.process === child && current.mode === 'translated') {
+                        current.lastTranslatorMeterAtMs = Date.now();
+                    }
                     controller.onMeterPeakDb(match[1] === '-inf' ? -Infinity : Number(match[1]));
+                }
             }
         });
         child.once('error', (error) => {
@@ -414,7 +497,7 @@ export function createTranslationMixerService(
 
     async function checkMixerWatchdogs(): Promise<void> {
         const now = Date.now();
-        const { warmupMs, stallMs } = appConfig.outputWatchdog;
+        const { warmupMs, stallMs, translatorMeterStaleMs } = appConfig.outputWatchdog;
         for (const [outputId, job] of jobs) {
             const output = db.getOutput(outputId);
             if (
@@ -423,26 +506,27 @@ export function createTranslationMixerService(
                 !inputState.isLive(output.pipelineId)
             )
                 continue;
+
+            if (shouldRestartForStaleTranslatorMeter(job, now, warmupMs, translatorMeterStaleMs)) {
+                const staleSeconds = Math.round((now - job.lastTranslatorMeterAtMs) / 1000);
+                await restartWatchdogJob(output, job, {
+                    headline:
+                        'watchdog: translator audio meter stalled; restarting translation mixer',
+                    reason: 'translator audio meter stalled',
+                    contextLine: `no_translator_meter_for=${staleSeconds}s`,
+                    extra: { staleSeconds },
+                });
+                continue;
+            }
+
             if (now - job.startedAtMs < warmupMs || now - job.lastOutputProgressAtMs <= stallMs)
                 continue;
-            const message = [
-                'watchdog: translation mixer output stalled; restarting process',
-                `pid=${job.process.pid ?? 'unknown'}`,
-                `no_output_progress_for=${Math.round((now - job.lastOutputProgressAtMs) / 1000)}s`,
-                job.stderrTail.trim()
-                    ? `ffmpeg stderr tail:\n${job.stderrTail.trim()}`
-                    : 'ffmpeg stderr tail: <empty>',
-            ].join('\n');
-            try {
-                db.setOutputLastError(outputId, message, 'crash');
-            } catch {
-                /* still restart the stuck process */
-            }
-            diagnostics?.event('translation-mixer-restart', {
-                outputId,
+            const noProgressSeconds = Math.round((now - job.lastOutputProgressAtMs) / 1000);
+            await restartWatchdogJob(output, job, {
+                headline: 'watchdog: translation mixer output stalled; restarting process',
                 reason: 'output progress stalled',
+                contextLine: `no_output_progress_for=${noProgressSeconds}s`,
             });
-            await stopJob(outputId, false);
         }
     }
 

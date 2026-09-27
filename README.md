@@ -246,6 +246,13 @@ automatically. If the translator disconnects or is not live, the output keeps
 publishing source audio only; when the translator becomes live again, the
 translated mix is resumed.
 
+The mixer also watches the translator audio meter independently of the SRS
+live-state poll. After the same startup warmup grace used by the output
+watchdog, if the meter has gone quiet for 10 seconds — including a translator
+that never delivered a single sample — the mixer is restarted so it attaches
+to the current translator session. Valid translator silence is not treated as
+a disconnect; FFmpeg continues emitting silent meter samples in that case.
+
 ### Signal flow and timing
 
 The translator audio is delayed before it is mixed into the output. The mixer
@@ -397,8 +404,9 @@ The app reads runtime settings from `restream.json` in the app root.
 | `srs_config_path` | `./srs.conf` | SRS config path |
 | `ffmpeg_path` | `ffmpeg` | FFmpeg binary for outputs and previews |
 | `ffprobe_path` | `ffprobe` | FFprobe binary for input media probing and validation |
-| `output_watchdog.warmup_ms` | `90000` | Output progress watchdog warmup before stall checks |
+| `output_watchdog.warmup_ms` | `90000` | Warmup before stall checks, shared by the output progress watchdog and the translation-mixer watchdogs below |
 | `output_watchdog.stall_ms` | `45000` | Output progress stall window before restarting FFmpeg |
+| `output_watchdog.translator_meter_stale_ms` | `10000` | How long a translation output's translator audio meter can go quiet (including never producing a sample) before the mixer is restarted |
 | `output_watchdog.interval_ms` | `5000` | Output watchdog polling interval |
 | `output_watchdog.socket_warmup_ms` | `15000` | Socket watchdog warmup before socket-state checks |
 | `output_watchdog.socket_grace_ms` | `30000` | Socket warning grace window before restarting FFmpeg |

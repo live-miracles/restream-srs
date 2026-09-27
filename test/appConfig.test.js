@@ -157,6 +157,7 @@ describe('readAppConfig: output_watchdog defaults and validation', () => {
             '720p': 650,
             '1080p': 950,
         });
+        assert.equal(wd.translatorMeterStaleMs, 10_000);
     });
 
     test('output_watchdog as a non-object (e.g. a string) is ignored, defaults used', () => {
@@ -184,13 +185,22 @@ describe('readAppConfig: output_watchdog defaults and validation', () => {
     test('a valid override is honored exactly', () => {
         const readAppConfig = loadAppConfig({
             ...FULL_VALID_CONFIG,
-            output_watchdog: { warmup_ms: 1000, stall_ms: 2000 },
+            output_watchdog: { warmup_ms: 1000, stall_ms: 2000, translator_meter_stale_ms: 3000 },
         });
         const wd = readAppConfig().outputWatchdog;
         assert.equal(wd.warmupMs, 1000);
         assert.equal(wd.stallMs, 2000);
+        assert.equal(wd.translatorMeterStaleMs, 3000);
         // Untouched fields still fall back to defaults.
         assert.equal(wd.intervalMs, 5_000);
+    });
+
+    test('zero, negative, or non-finite translator_meter_stale_ms falls back to its default', () => {
+        const readAppConfig = loadAppConfig({
+            ...FULL_VALID_CONFIG,
+            output_watchdog: { translator_meter_stale_ms: -5 },
+        });
+        assert.equal(readAppConfig().outputWatchdog.translatorMeterStaleMs, 10_000);
     });
 
     test('memory_limit_mb_by_encoding merges over (not replaces) the built-in defaults', () => {

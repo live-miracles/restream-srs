@@ -1,7 +1,10 @@
 'use strict';
 
-const { after, describe, test } = require('node:test');
+const { after, afterEach, beforeEach, describe, test } = require('node:test');
 const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
+const { PassThrough } = require('node:stream');
+const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -30,12 +33,147 @@ fs.writeFileSync(
     'utf8',
 );
 
-const { nextDebouncedMode, selectControlPort } = require('../src/services/translationMixer');
+const {
+    isTranslatorMeterStale,
+    nextDebouncedMode,
+    selectControlPort,
+    shouldRestartForStaleTranslatorMeter,
+} = require('../src/services/translationMixer');
 
 after(() => {
     process.chdir(originalCwd);
     fs.rmSync(tempDir, { recursive: true, force: true });
 });
+
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// stdio index 3 is the pipe carrying astats/ametadata "translator meter" lines
+// (see METER_VOICE_PATTERN in translationMixer.ts); leaving it silent
+// simulates a translator whose audio leg never produces a sample.
+class FakeMixerFfmpeg extends EventEmitter {
+    constructor(pid = 4242) {
+        super();
+        this.pid = pid;
+        this.stdout = new PassThrough();
+        this.stderr = new PassThrough();
+        this.stdio = [null, this.stdout, this.stderr, new PassThrough()];
+        this.killSignals = [];
+    }
+
+    kill(signal) {
+        this.killSignals.push(signal);
+        queueMicrotask(() => {
+            this.emit('exit', null, signal);
+            this.emit('close', null, signal);
+        });
+        return true;
+    }
+}
+
+function makeTranslationOutput() {
+    return {
+        id: 'out1',
+        pipelineId: 1,
+        seq: 1,
+        name: 'Dest',
+        desiredState: 'running',
+        videoEncoding: 'copy',
+        url: 'rtmp://dest.example/live/key',
+        audioEncoding: 'translation',
+        translation: {
+            translatorPipelineId: 2,
+            translationDelayMs: 0,
+            voiceThresholdDb: -30,
+            duckVolumePercent: 20,
+            duckDurationMs: 200,
+            restoreSilenceMs: 500,
+            restoreVolumePercent: 80,
+            restoreDurationMs: 200,
+            restoreSilence2Ms: 1500,
+            restoreVolume2Percent: 100,
+            restoreDuration2Ms: 400,
+        },
+        lastError: null,
+        hasErrorHistory: false,
+    };
+}
+
+function makeTranslationDb(output) {
+    const pipelines = new Map([
+        [1, { id: 1, name: 'Source', streamKey: 'src-key', streamKeyId: 1 }],
+        [2, { id: 2, name: 'Translator', streamKey: 'xlt-key', streamKeyId: 2 }],
+    ]);
+    return {
+        lastError: null,
+        lastErrorKind: null,
+        getPipeline(id) {
+            return pipelines.get(id) ?? null;
+        },
+        getOutput(id) {
+            return id === output.id ? output : null;
+        },
+        listOutputs() {
+            return [output];
+        },
+        setOutputLastError(_id, message, kind) {
+            this.lastError = message;
+            this.lastErrorKind = kind;
+        },
+    };
+}
+
+function makeTranslationInputState() {
+    return {
+        isLive() {
+            return true;
+        },
+        getProtocol() {
+            return 'rtmp';
+        },
+        pullUrl(_pipelineId, streamKey) {
+            return `rtmp://127.0.0.1:1935/live/${streamKey}`;
+        },
+    };
+}
+
+function makeDiagnosticsRecorder() {
+    return {
+        events: [],
+        event(name, fields) {
+            this.events.push({ name, fields });
+        },
+        close() {},
+    };
+}
+
+function loadTranslationMixerService(t, spawnNext, watchdogOverrides = {}) {
+    fs.writeFileSync(
+        path.join(tempDir, 'restream.json'),
+        JSON.stringify(
+            {
+                port: 8080,
+                database_path: './db.sqlite',
+                srs_config_path: './srs.conf',
+                ffmpeg_path: 'ffmpeg',
+                ffprobe_path: 'ffprobe',
+                output_watchdog: {
+                    warmup_ms: watchdogOverrides.warmupMs ?? 5,
+                    stall_ms: 60_000,
+                    translator_meter_stale_ms: watchdogOverrides.translatorMeterStaleMs ?? 5,
+                },
+            },
+            null,
+            4,
+        ),
+        'utf8',
+    );
+    t.mock.method(childProcess, 'spawn', () => spawnNext());
+    delete require.cache[require.resolve('../src/services/translationMixer')];
+    delete require.cache[require.resolve('../src/utils/appConfig')];
+    return require('../src/services/translationMixer').createTranslationMixerService;
+}
 
 // These constants mirror translationMixer.ts's MODE_SWITCH_*_GRACE_MS; kept in
 // sync here rather than exported, since they're an implementation detail the
@@ -124,5 +262,147 @@ describe('selectControlPort', () => {
             used.add(port);
         }
         assert.equal(used.size, 50);
+    });
+});
+
+describe('isTranslatorMeterStale', () => {
+    test('flags a translator whose audio leg stopped producing meter samples', () => {
+        assert.equal(isTranslatorMeterStale(0, 10_001, 10_000), true);
+        assert.equal(isTranslatorMeterStale(0, 10_000, 10_000), false);
+    });
+});
+
+describe('shouldRestartForStaleTranslatorMeter', () => {
+    const baseJob = {
+        mode: 'translated',
+        translatorLive: true,
+        startedAtMs: 0,
+        lastTranslatorMeterAtMs: 0,
+    };
+
+    test('does not fire during the startup warmup window even once the meter looks stale', () => {
+        assert.equal(shouldRestartForStaleTranslatorMeter(baseJob, 10_001, 90_000, 10_000), false);
+    });
+
+    test('fires once warmup has elapsed and the meter has gone stale', () => {
+        assert.equal(shouldRestartForStaleTranslatorMeter(baseJob, 90_001, 90_000, 10_000), true);
+    });
+
+    test('does not fire in source-only mode', () => {
+        assert.equal(
+            shouldRestartForStaleTranslatorMeter(
+                { ...baseJob, mode: 'source-only' },
+                90_001,
+                90_000,
+                10_000,
+            ),
+            false,
+        );
+    });
+
+    test('does not fire when the translator is already known to be down', () => {
+        assert.equal(
+            shouldRestartForStaleTranslatorMeter(
+                { ...baseJob, translatorLive: false },
+                90_001,
+                90_000,
+                10_000,
+            ),
+            false,
+        );
+    });
+
+    test('a translator that never sends a single meter sample is still caught once warmup elapses', () => {
+        // lastTranslatorMeterAtMs is initialized to the job's start time when no
+        // sample has arrived yet, so a translator whose audio never decodes
+        // isn't invisible forever — it's flagged as soon as warmup passes.
+        const neverSampled = { ...baseJob, lastTranslatorMeterAtMs: baseJob.startedAtMs };
+        assert.equal(
+            shouldRestartForStaleTranslatorMeter(neverSampled, 90_001, 90_000, 10_000),
+            true,
+        );
+    });
+});
+
+// These run the real createTranslationMixerService against a mocked
+// child_process.spawn and a real zeromq control socket (connected to a port
+// nothing is listening on — the mixer doesn't require a reply to keep
+// running, so this exercises the same "no peer yet" path a real restart
+// does). translationMixer.ts's reconcile loop ticks on a hardcoded 1s
+// interval (not config-driven, unlike output_watchdog's other timings), so
+// these wait past one real tick rather than a fake clock.
+describe('translation mixer watchdog integration', () => {
+    beforeEach(() => {
+        process.chdir(tempDir);
+    });
+
+    afterEach(() => {
+        process.chdir(originalCwd);
+        delete require.cache[require.resolve('../src/services/translationMixer')];
+        delete require.cache[require.resolve('../src/utils/appConfig')];
+    });
+
+    test('restarts a translated-mode job whose translator meter never produces a sample', async (t) => {
+        const procs = [];
+        const spawnNext = () => {
+            const proc = new FakeMixerFfmpeg(4242 + procs.length);
+            procs.push(proc);
+            return proc;
+        };
+        const output = makeTranslationOutput();
+        const db = makeTranslationDb(output);
+        const diagnostics = makeDiagnosticsRecorder();
+        const createTranslationMixerService = loadTranslationMixerService(t, spawnNext);
+        const service = createTranslationMixerService(
+            db,
+            makeTranslationInputState(),
+            { reportExternalStatus() {} },
+            diagnostics,
+        );
+
+        service.start();
+        await sleep(1200);
+        service.shutdown();
+
+        assert.ok(procs.length >= 2, 'expected a replacement ffmpeg to have been spawned');
+        assert.deepEqual(procs[0].killSignals, ['SIGTERM']);
+        assert.match(db.lastError, /watchdog: translator audio meter stalled/);
+        assert.equal(db.lastErrorKind, 'crash');
+
+        const restartEvent = diagnostics.events.find((e) => e.name === 'translation-mixer-restart');
+        assert.ok(restartEvent, 'expected a translation-mixer-restart diagnostics event');
+        assert.equal(restartEvent.fields.reason, 'translator audio meter stalled');
+        assert.equal(restartEvent.fields.outputId, output.id);
+        assert.equal(restartEvent.fields.pipelineId, output.pipelineId);
+    });
+
+    test('does not restart while still inside the startup warmup window', async (t) => {
+        const procs = [];
+        const spawnNext = () => {
+            const proc = new FakeMixerFfmpeg(4242 + procs.length);
+            procs.push(proc);
+            return proc;
+        };
+        const output = makeTranslationOutput();
+        const db = makeTranslationDb(output);
+        const diagnostics = makeDiagnosticsRecorder();
+        const createTranslationMixerService = loadTranslationMixerService(t, spawnNext, {
+            warmupMs: 60_000,
+        });
+        const service = createTranslationMixerService(
+            db,
+            makeTranslationInputState(),
+            { reportExternalStatus() {} },
+            diagnostics,
+        );
+
+        service.start();
+        await sleep(1200);
+
+        assert.equal(procs.length, 1, 'must not have restarted while still warming up');
+        assert.deepEqual(procs[0].killSignals, [], 'must not have been killed by a watchdog');
+        assert.equal(db.lastError, null);
+
+        service.shutdown();
     });
 });
