@@ -159,6 +159,28 @@ describe('SRS publish hook integration', () => {
             assert.equal(res.status, 403);
         }
     });
+
+    test('debounces repeated kicks for the same app/stream, but not across different streams', async (t) => {
+        let fetchCalls = 0;
+        t.mock.method(globalThis, 'fetch', async () => {
+            fetchCalls += 1;
+            return { ok: true, json: async () => ({ clients: [] }) };
+        });
+        const harness = createHarness(['key01_good']);
+
+        await harness.publish({ app: 'live', stream: 'key99_bad' });
+        await harness.publish({ app: 'live', stream: 'key99_bad' });
+        await harness.publish({ app: 'live', stream: 'key99_bad' });
+        await harness.publish({ app: 'live', stream: 'key98_bad' });
+
+        // kickSrsClientsByStream is fire-and-forget from the handler's point of
+        // view; the mocked fetch's own body still runs synchronously up to its
+        // first await when invoked, so the count is already settled here, but
+        // flush the microtask queue once for safety.
+        await new Promise((resolve) => setImmediate(resolve));
+
+        assert.equal(fetchCalls, 2);
+    });
 });
 
 describe('SRS play hook integration', () => {

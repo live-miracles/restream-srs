@@ -41,7 +41,22 @@ async function readJournalOnlyTail(unit: string, maxLines: number): Promise<LogT
     return { lines, source: lines.length > 0 ? 'journal' : 'none' };
 }
 
+// A rejected publisher that keeps retrying (misconfigured or stale encoder)
+// can hit on_publish far faster than any real publish/kick cycle needs — seen
+// in production hitting 10-40ms retry intervals indefinitely. Without this,
+// every single rejection fires its own kickSrsClientsByStream sweep against
+// SRS's client-list API, and those unthrottled sweeps pile up faster than
+// they resolve. Cap kicks to one per app/stream pair per window, and clear
+// the whole map each window so it can't grow unbounded under a flood of
+// distinct (attacker-controlled) stream names.
+const KICK_COOLDOWN_MS = 5000;
+
 export function registerSrsHooks(app: Express, db: Db): void {
+    let recentlyKicked = new Map<string, number>();
+    setInterval(() => {
+        recentlyKicked = new Map();
+    }, KICK_COOLDOWN_MS).unref();
+
     app.get('/api/ready', (_req, res) => {
         res.json({ ok: true });
     });
@@ -57,7 +72,11 @@ export function registerSrsHooks(app: Express, db: Db): void {
             // Put the IP before the attacker-controlled stream name so logs stay
             // easy to scan and cannot be made to look like a different client.
             console.log(`[srs-hook] rejected publish from ${ip}: ${stream}`);
-            if (hookApp) void kickSrsClientsByStream(hookApp, stream).catch(() => {});
+            const kickKey = `${hookApp ?? ''}/${stream}`;
+            if (hookApp && !recentlyKicked.has(kickKey)) {
+                recentlyKicked.set(kickKey, Date.now());
+                void kickSrsClientsByStream(hookApp, stream).catch(() => {});
+            }
             return res.status(403).json({ code: 403 });
         }
 
