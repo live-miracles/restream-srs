@@ -3,6 +3,7 @@ import type { Express } from 'express';
 import type { Db } from '../types.js';
 import { kickSrsClientsByStream } from '../utils/srs.js';
 import type { SrsEvent } from '../services/health.js';
+import type { InputState } from '../services/inputState.js';
 
 const MAX_LOG_READ_BYTES = 100 * 1024;
 const MAX_LOG_TAIL_LINES = 200;
@@ -51,7 +52,7 @@ async function readJournalOnlyTail(unit: string, maxLines: number): Promise<LogT
 // distinct (attacker-controlled) stream names.
 const KICK_COOLDOWN_MS = 5000;
 
-export function registerSrsHooks(app: Express, db: Db): void {
+export function registerSrsHooks(app: Express, db: Db, inputState: InputState): void {
     let recentlyKicked = new Map<string, number>();
     setInterval(() => {
         recentlyKicked = new Map();
@@ -67,8 +68,8 @@ export function registerSrsHooks(app: Express, db: Db): void {
         const ip = (req.body?.ip as string | undefined) ?? 'unknown';
         if (!stream) return res.status(400).json({ code: 400 });
 
-        const valid = db.listPipelines().some((p) => p.streamKey === stream);
-        if (!valid) {
+        const pipeline = db.listPipelines().find((p) => p.streamKey === stream);
+        if (!pipeline) {
             // Put the IP before the attacker-controlled stream name so logs stay
             // easy to scan and cannot be made to look like a different client.
             console.log(`[srs-hook] rejected publish from ${ip}: ${stream}`);
@@ -77,6 +78,31 @@ export function registerSrsHooks(app: Express, db: Db): void {
                 recentlyKicked.set(kickKey, Date.now());
                 void kickSrsClientsByStream(hookApp, stream).catch(() => {});
             }
+            return res.status(403).json({ code: 403 });
+        }
+
+        // SRS lets a same-key publish on a different protocol take over the
+        // underlying source, but its own stats layer keeps the *original*
+        // publisher's tcUrl/cid pinned — a same-key publish is treated as "a
+        // duplicate publish event by bridge" and ignored — until the stream
+        // fully drops to zero clients. That leaves our protocol tracking (and
+        // the ffprobe URL it drives) permanently stuck on the old protocol: seen
+        // in production as a stale "rtmp" badge and a failed encoding probe
+        // after switching an already-live pipeline's publisher to SRT. Reject a
+        // cross-protocol publish to an already-live pipeline outright so this
+        // can't happen; the existing stream must be stopped first.
+        const incomingProtocol = (req.body?.tcUrl as string | undefined)?.startsWith('srt://')
+            ? 'srt'
+            : 'rtmp';
+        const currentProtocol = inputState.getProtocol(pipeline.id);
+        if (
+            inputState.isLive(pipeline.id) &&
+            currentProtocol &&
+            currentProtocol !== incomingProtocol
+        ) {
+            console.log(
+                `[srs-hook] rejected publish from ${ip}: ${stream} (already live via ${currentProtocol}, attempted ${incomingProtocol})`,
+            );
             return res.status(403).json({ code: 403 });
         }
 

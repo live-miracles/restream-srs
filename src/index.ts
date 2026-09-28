@@ -73,7 +73,7 @@ const translationMixerService = createTranslationMixerService(
 );
 
 // Unauthenticated routes
-registerSrsHooks(app, db);
+registerSrsHooks(app, db, inputState);
 registerAuthApi(app, db);
 
 // Auth middleware for all remaining /api/* routes

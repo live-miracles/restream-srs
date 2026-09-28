@@ -6,6 +6,7 @@ const express = require('express');
 const { Readable, Writable } = require('node:stream');
 
 const { registerSrsHooks, registerSrsLogsApi } = require('../../src/api/srs');
+const { createInputState } = require('../../src/services/inputState');
 const childProcess = require('node:child_process');
 
 class MockRequest extends Readable {
@@ -78,11 +79,13 @@ function createHarness(assignedKeys) {
                 streamKeyId: index + 1,
             })),
     };
-    registerSrsHooks(app, db);
+    const inputState = createInputState();
+    registerSrsHooks(app, db, inputState);
     return {
         publish: (body) => dispatch(app, 'POST', '/api/srs/on_publish', body),
         play: (body) => dispatch(app, 'POST', '/api/srs/on_play', body),
         ready: () => dispatch(app, 'GET', '/api/ready'),
+        inputState,
     };
 }
 
@@ -112,6 +115,47 @@ describe('SRS publish hook integration', () => {
 
         assert.equal(res.status, 403);
         assert.deepEqual(res.body, { code: 403 });
+    });
+
+    test('rejects a cross-protocol publish to an already-live pipeline', async () => {
+        const harness = createHarness(['key01_good']);
+        harness.inputState.setPipelineState(1, true, 'rtmp');
+
+        const res = await harness.publish({
+            app: 'live',
+            stream: 'key01_good',
+            tcUrl: 'srt://10.0.0.1/live',
+        });
+
+        assert.equal(res.status, 403);
+        assert.deepEqual(res.body, { code: 403 });
+    });
+
+    test('allows a same-protocol republish to an already-live pipeline (reconnect)', async () => {
+        const harness = createHarness(['key01_good']);
+        harness.inputState.setPipelineState(1, true, 'rtmp');
+
+        const res = await harness.publish({
+            app: 'live',
+            stream: 'key01_good',
+            tcUrl: 'rtmp://10.0.0.1/live',
+        });
+
+        assert.equal(res.status, 200);
+        assert.deepEqual(res.body, { code: 0 });
+    });
+
+    test('allows a publish to a currently-idle pipeline regardless of protocol', async () => {
+        const harness = createHarness(['key01_good']);
+
+        const res = await harness.publish({
+            app: 'live',
+            stream: 'key01_good',
+            tcUrl: 'srt://10.0.0.1/live',
+        });
+
+        assert.equal(res.status, 200);
+        assert.deepEqual(res.body, { code: 0 });
     });
 
     test('rejects a publish with no stream field at all', async () => {
