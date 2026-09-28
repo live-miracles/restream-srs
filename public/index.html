@@ -1198,6 +1198,11 @@ ffmpeg -re -stream_loop -1 -i video.mp4 \
               start translator inputs automatically. If the translator disconnects or is not live, the output keeps publishing source audio only; when
               the translator becomes live again, the translated mix is resumed.
             </p>
+            <p class="text-sm opacity-70">
+              Use <strong>SRT</strong> for both the source and the translator pipeline — it has fixed, predictable latency. RTMP inputs have variable
+              buffering, which works against the fixed delay/ducking timing this feature relies on; the dashboard warns on an output card when either
+              side is RTMP.
+            </p>
 
             <p class="pt-2 text-sm font-medium">Signal flow and timing</p>
             <p class="text-sm opacity-70">
