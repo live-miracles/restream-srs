@@ -645,6 +645,29 @@ function audioOptionsHtml(tracks: AudioTrackInfo[], selected: string): string {
     return options.join('');
 }
 
+// Plain "Track N" options with no 'copy'/'translation' entries — used for the
+// translation mixer's per-leg track pickers (source leg / translator leg),
+// which always select exactly one track and have no meaning for those two
+// values. Same static MAX_AUDIO_TRACKS range and real-metadata enrichment as
+// audioOptionsHtml above.
+function trackIndexOptionsHtml(tracks: AudioTrackInfo[], selected: number): string {
+    const byIndex = new Map(tracks.map((t) => [t.index, t] as const));
+    const options: string[] = [];
+    for (let i = 0; i < MAX_AUDIO_TRACKS; i++) {
+        const t = byIndex.get(i);
+        const parts = [`Track ${i + 1}`];
+        if (t) {
+            if (t.language) parts.push(`(${t.language})`);
+            if (t.title) parts.push(`— ${t.title}`);
+            parts.push(`· ${t.codec} ${t.channels}ch`);
+        }
+        options.push(
+            `<option value="${i}"${i === selected ? ' selected' : ''}>${escapeHtml(parts.join(' '))}</option>`,
+        );
+    }
+    return options.join('');
+}
+
 function sinkRowHtmlForServer(idx: number, key = ''): string {
     const serverField = fieldsetHtml(
         'Server',
@@ -723,6 +746,19 @@ function pipelineTracks(pipelineId: string): AudioTrackInfo[] {
     return state.pipelines.find((p) => p.id === pipelineId)?.input.audioTracks ?? [];
 }
 
+// Refreshes the "Translation Input Track" select to match whichever pipeline
+// is currently chosen in the translator dropdown. Exported so the dropdown's
+// onchange handler (wired through window in dashboard-entry.ts) can call it.
+export function onTranslationPipelineChange(select: HTMLSelectElement): void {
+    const trackSelect = document.getElementById(
+        'out-translation-input-track-input',
+    ) as HTMLSelectElement | null;
+    if (!trackSelect) return;
+    const translatorPipelineId = select.value;
+    const tracks = translatorPipelineId ? pipelineTracks(translatorPipelineId) : [];
+    trackSelect.innerHTML = trackIndexOptionsHtml(tracks, 0);
+}
+
 function renderOutputTranslationControls(
     pipelineId: string,
     translation: Output['translation'] | null,
@@ -730,11 +766,14 @@ function renderOutputTranslationControls(
     const container = document.getElementById('out-translation-container');
     if (!container) return;
     const mix = translation;
+    const translatorPipeline = state.pipelines.find(
+        (pipeline) => pipeline.streamKey === mix?.translatorStreamKey,
+    );
     const options = state.pipelines
         .filter((pipeline) => pipeline.id !== pipelineId)
         .map(
             (pipeline) =>
-                `<option value="${pipeline.id}" ${mix?.translatorPipelineId === Number(pipeline.id) ? 'selected' : ''}>${escapeHtml(pipeline.name)}</option>`,
+                `<option value="${pipeline.id}" ${translatorPipeline?.id === pipeline.id ? 'selected' : ''}>${escapeHtml(pipeline.name)}</option>`,
         )
         .join('');
     container.classList.toggle('hidden', mix === null);
@@ -742,9 +781,17 @@ function renderOutputTranslationControls(
       <div id="out-translation-fields" class="rounded-box bg-base-200 flex flex-wrap items-end gap-2 px-2 py-2">
           <fieldset class="fieldset min-w-56 flex-1">
             <legend class="fieldset-legend">Translator Pipeline</legend>
-            <select id="out-translation-pipeline-input" class="select select-sm w-full">
+            <select id="out-translation-pipeline-input" class="select select-sm w-full" onchange="onTranslationPipelineChange(this)">
               <option value="">Select translator pipeline</option>${options}
             </select>
+          </fieldset>
+          <fieldset class="fieldset min-w-40 flex-1">
+            <legend class="fieldset-legend">Source Track</legend>
+            <select id="out-translation-source-track-input" class="select select-sm w-full">${trackIndexOptionsHtml(pipelineTracks(pipelineId), mix?.sourceTrackIndex ?? 0)}</select>
+          </fieldset>
+          <fieldset class="fieldset min-w-40 flex-1">
+            <legend class="fieldset-legend">Translation Input Track</legend>
+            <select id="out-translation-input-track-input" class="select select-sm w-full">${trackIndexOptionsHtml(translatorPipeline ? pipelineTracks(translatorPipeline.id) : [], mix?.translatorTrackIndex ?? 0)}</select>
           </fieldset>
           <fieldset class="fieldset min-w-40 flex-1">
             <legend class="fieldset-legend">Translation Delay (ms)</legend>
@@ -942,14 +989,30 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
     const audioEncoding = (document.getElementById('out-audio-encoding-input') as HTMLSelectElement)
         .value;
     const translationEnabled = audioEncoding === 'translation';
-    const translatorPipelineId = Number(
-        (document.getElementById('out-translation-pipeline-input') as HTMLSelectElement | null)
-            ?.value,
-    );
+    const translatorPipelineId = (
+        document.getElementById('out-translation-pipeline-input') as HTMLSelectElement | null
+    )?.value;
+    const translatorPipeline = translatorPipelineId
+        ? state.pipelines.find((p) => p.id === translatorPipelineId)
+        : undefined;
     const translation =
-        translationEnabled && Number.isInteger(translatorPipelineId)
+        translationEnabled && translatorPipeline
             ? {
-                  translatorPipelineId,
+                  translatorStreamKey: translatorPipeline.streamKey,
+                  sourceTrackIndex: Number(
+                      (
+                          document.getElementById(
+                              'out-translation-source-track-input',
+                          ) as HTMLSelectElement
+                      ).value,
+                  ),
+                  translatorTrackIndex: Number(
+                      (
+                          document.getElementById(
+                              'out-translation-input-track-input',
+                          ) as HTMLSelectElement
+                      ).value,
+                  ),
                   translationDelayMs: Number(
                       (document.getElementById('out-translation-delay-input') as HTMLInputElement)
                           .value,

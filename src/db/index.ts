@@ -79,7 +79,9 @@ function rowToPipeline(row: Record<string, unknown>): Pipeline {
 
 function normalizeTranslationConfig(input: TranslationInput): TranslationConfig {
     return {
-        translatorPipelineId: input.translatorPipelineId,
+        translatorStreamKey: input.translatorStreamKey,
+        sourceTrackIndex: input.sourceTrackIndex ?? 0,
+        translatorTrackIndex: input.translatorTrackIndex ?? 0,
         translationDelayMs: input.translationDelayMs ?? 800,
         voiceThresholdDb: input.voiceThresholdDb ?? -20,
         duckVolumePercent: input.duckVolumePercent ?? 6,
@@ -134,6 +136,11 @@ export function createDb(dbPath?: string): Db {
     );
     // Targeted single-row lookups for the hot retry / process-exit paths.
     const stmtGetPipeline = sqlite.prepare(`${PIPELINE_SELECT} WHERE p.id = ?`);
+    // Slot collisions are intentional (see updatePipeline) — order by p.id so
+    // the pick is at least deterministic when more than one pipeline shares a key.
+    const stmtGetPipelineByStreamKey = sqlite.prepare(
+        `${PIPELINE_SELECT} WHERE sk.key = ? ORDER BY p.id LIMIT 1`,
+    );
     const stmtGetOutput = sqlite.prepare('SELECT * FROM outputs WHERE id = ?');
     // Targeted per-pipeline lookups — avoids full-table scans in the hot restart
     // path where restartPipelineOutputs is called once per reconnecting pipeline.
@@ -399,6 +406,13 @@ export function createDb(dbPath?: string): Db {
 
         getPipeline(id: number): Pipeline | undefined {
             const row = stmtGetPipeline.get(id) as Record<string, unknown> | undefined;
+            return row ? rowToPipeline(row) : undefined;
+        },
+
+        getPipelineByStreamKey(streamKey: string): Pipeline | undefined {
+            const row = stmtGetPipelineByStreamKey.get(streamKey) as
+                | Record<string, unknown>
+                | undefined;
             return row ? rowToPipeline(row) : undefined;
         },
 

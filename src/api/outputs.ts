@@ -32,22 +32,17 @@ function parseTranslation(body: unknown): TranslationInput | null | undefined | 
     if (raw === null || raw === false) return null;
     if (typeof raw !== 'object') return { error: 'translation must be an object or null' };
     const value = raw as Record<string, unknown>;
-    const rawTranslatorPipelineId = value.translatorPipelineId;
-    const translatorPipelineId = Number(rawTranslatorPipelineId);
-    if (
-        (typeof rawTranslatorPipelineId !== 'number' &&
-            typeof rawTranslatorPipelineId !== 'string') ||
-        String(rawTranslatorPipelineId).trim() === '' ||
-        !Number.isInteger(translatorPipelineId) ||
-        translatorPipelineId <= 0
-    ) {
-        return { error: 'translation translatorPipelineId is required' };
+    const translatorStreamKey = (value.translatorStreamKey as string | undefined)?.trim();
+    if (!translatorStreamKey) {
+        return { error: 'translation translatorStreamKey is required' };
     }
     const numeric = (key: string, min: number, max: number): number | string => {
         if (value[key] === undefined) return '';
         const n = Number(value[key]);
         return Number.isFinite(n) && n >= min && n <= max ? n : `${key} is invalid`;
     };
+    const sourceTrackIndex = numeric('sourceTrackIndex', 0, 49);
+    const translatorTrackIndex = numeric('translatorTrackIndex', 0, 49);
     const delay = numeric('translationDelayMs', 0, 5000);
     const thresholdDb = numeric('voiceThresholdDb', -100, 0);
     const duckVolumePercent = numeric('duckVolumePercent', 0, 100);
@@ -58,6 +53,8 @@ function parseTranslation(body: unknown): TranslationInput | null | undefined | 
     const restoreSilence2Ms = numeric('restoreSilence2Ms', 0, 60000);
     const restoreVolume2Percent = numeric('restoreVolume2Percent', 0, 100);
     const restoreDuration2Ms = numeric('restoreDuration2Ms', 0, 60000);
+    if (typeof sourceTrackIndex === 'string') return { error: sourceTrackIndex };
+    if (typeof translatorTrackIndex === 'string') return { error: translatorTrackIndex };
     if (typeof delay === 'string') return { error: delay };
     if (typeof thresholdDb === 'string') return { error: thresholdDb };
     if (typeof duckVolumePercent === 'string') return { error: duckVolumePercent };
@@ -72,7 +69,9 @@ function parseTranslation(body: unknown): TranslationInput | null | undefined | 
     if (typeof restoreVolume2Percent === 'string') return { error: restoreVolume2Percent };
     if (typeof restoreDuration2Ms === 'string') return { error: restoreDuration2Ms };
     return {
-        translatorPipelineId,
+        translatorStreamKey,
+        ...(value.sourceTrackIndex === undefined ? {} : { sourceTrackIndex }),
+        ...(value.translatorTrackIndex === undefined ? {} : { translatorTrackIndex }),
         ...(value.translationDelayMs === undefined ? {} : { translationDelayMs: delay }),
         ...(value.voiceThresholdDb === undefined ? {} : { voiceThresholdDb: thresholdDb }),
         ...(value.duckVolumePercent === undefined ? {} : { duckVolumePercent }),
@@ -95,8 +94,8 @@ export function registerOutputApi(
     app.post('/api/pipelines/:pipelineId/outputs', (req, res) => {
         const pipelineId = parseInt(req.params.pipelineId);
         if (isNaN(pipelineId)) return res.status(400).json({ error: 'invalid pipelineId' });
-        if (!db.getPipeline(pipelineId))
-            return res.status(404).json({ error: 'Pipeline not found' });
+        const ownPipeline = db.getPipeline(pipelineId);
+        if (!ownPipeline) return res.status(404).json({ error: 'Pipeline not found' });
 
         const name = (req.body?.name as string | undefined)?.trim();
         const videoEncoding = (req.body?.videoEncoding as string | undefined)?.trim() || 'copy';
@@ -108,10 +107,10 @@ export function registerOutputApi(
         if ('error' in parsed) return res.status(400).json({ error: parsed.error });
         const translation = parseTranslation(req.body);
         if (translation && 'error' in translation) return res.status(400).json(translation);
-        if (translation && !db.getPipeline(translation.translatorPipelineId)) {
+        if (translation && !db.getPipelineByStreamKey(translation.translatorStreamKey)) {
             return res.status(400).json({ error: 'translation translator pipeline not found' });
         }
-        if (translation && translation.translatorPipelineId === pipelineId) {
+        if (translation && translation.translatorStreamKey === ownPipeline.streamKey) {
             return res
                 .status(400)
                 .json({ error: 'translation translator must be another pipeline' });
@@ -258,10 +257,11 @@ export function registerOutputApi(
             parsedTranslation === undefined && parsed.audioEncoding === 'translation'
                 ? output.translation
                 : parsedTranslation;
-        if (translation && !db.getPipeline(translation.translatorPipelineId)) {
+        const ownPipeline = db.getPipeline(output.pipelineId);
+        if (translation && !db.getPipelineByStreamKey(translation.translatorStreamKey)) {
             return res.status(400).json({ error: 'translation translator pipeline not found' });
         }
-        if (translation && translation.translatorPipelineId === output.pipelineId) {
+        if (translation && translation.translatorStreamKey === ownPipeline?.streamKey) {
             return res
                 .status(400)
                 .json({ error: 'translation translator must be another pipeline' });

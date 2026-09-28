@@ -83,7 +83,9 @@ function makeTranslationOutput() {
         url: 'rtmp://dest.example/live/key',
         audioEncoding: 'translation',
         translation: {
-            translatorPipelineId: 2,
+            translatorStreamKey: 'xlt-key',
+            sourceTrackIndex: 0,
+            translatorTrackIndex: 0,
             translationDelayMs: 0,
             voiceThresholdDb: -30,
             duckVolumePercent: 20,
@@ -110,6 +112,12 @@ function makeTranslationDb(output) {
         lastErrorKind: null,
         getPipeline(id) {
             return pipelines.get(id) ?? null;
+        },
+        getPipelineByStreamKey(streamKey) {
+            for (const pipeline of pipelines.values()) {
+                if (pipeline.streamKey === streamKey) return pipeline;
+            }
+            return null;
         },
         getOutput(id) {
             return id === output.id ? output : null;

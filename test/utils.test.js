@@ -278,6 +278,70 @@ describe('buildTranslationMixerArgs', () => {
         assert.match(filter, /amix=inputs=2/);
         assert.equal(args[args.indexOf('-map', args.indexOf('-filter_complex')) + 1], '0:v:0?');
     });
+
+    test("defaults to each input's first track when no track index is given", () => {
+        const args = buildTranslationMixerArgs('srt://source', 'srt://translator', 'rtmp://mixed', {
+            videoEncoding: 'copy',
+            translationDelayMs: 800,
+            voiceThresholdDb: -20,
+            controlPort: 31001,
+            duckVolumePercent: 6,
+            duckDurationMs: 900,
+            restoreSilenceMs: 2000,
+            restoreVolumePercent: 32,
+            restoreDurationMs: 1000,
+            restoreSilence2Ms: 4000,
+            restoreVolume2Percent: 52,
+            restoreDuration2Ms: 2000,
+        });
+        const filter = args[args.indexOf('-filter_complex') + 1];
+        assert.match(filter, /^\[0:a:0\]/);
+        assert.match(filter, /\[1:a:0\]/);
+    });
+
+    test('selects the configured source/translator track in the sidechain mix', () => {
+        const args = buildTranslationMixerArgs('srt://source', 'srt://translator', 'rtmp://mixed', {
+            videoEncoding: 'copy',
+            sourceTrackIndex: 2,
+            translatorTrackIndex: 3,
+            translationDelayMs: 800,
+            voiceThresholdDb: -20,
+            controlPort: 31001,
+            duckVolumePercent: 6,
+            duckDurationMs: 900,
+            restoreSilenceMs: 2000,
+            restoreVolumePercent: 32,
+            restoreDurationMs: 1000,
+            restoreSilence2Ms: 4000,
+            restoreVolume2Percent: 52,
+            restoreDuration2Ms: 2000,
+        });
+        const filter = args[args.indexOf('-filter_complex') + 1];
+        assert.match(filter, /^\[0:a:2\]/);
+        assert.match(filter, /\[1:a:3\]/);
+    });
+
+    test('selects the configured source track when the translator is unavailable', () => {
+        const args = buildTranslationMixerArgs('rtmp://source', null, 'rtmp://mixed', {
+            videoEncoding: 'copy',
+            sourceTrackIndex: 1,
+            translationDelayMs: 800,
+            voiceThresholdDb: -20,
+            controlPort: 31001,
+            duckVolumePercent: 6,
+            duckDurationMs: 900,
+            restoreSilenceMs: 2000,
+            restoreVolumePercent: 32,
+            restoreDurationMs: 1000,
+            restoreSilence2Ms: 4000,
+            restoreVolume2Percent: 52,
+            restoreDuration2Ms: 2000,
+        });
+        assert.deepEqual(
+            args.filter((value, index) => value === '-map' || args[index - 1] === '-map'),
+            ['-map', '0:v:0?', '-map', '0:a:1?'],
+        );
+    });
 });
 
 // ── validateAudioEncoding ─────────────────────────────

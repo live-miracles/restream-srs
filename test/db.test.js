@@ -159,20 +159,67 @@ describe('Translation output settings', () => {
             pipelineId: source.id,
             name: 'French',
             url: 'rtmp://french',
-            translation: { translatorPipelineId: french.id, translationDelayMs: 700 },
+            translation: { translatorStreamKey: french.streamKey, translationDelayMs: 700 },
         });
         const spanishOutput = db.createOutput({
             pipelineId: source.id,
             name: 'Spanish',
             url: 'rtmp://spanish',
-            translation: { translatorPipelineId: spanish.id, translationDelayMs: 1200 },
+            translation: { translatorStreamKey: spanish.streamKey, translationDelayMs: 1200 },
         });
 
-        assert.equal(frenchOutput.translation.translatorPipelineId, french.id);
+        assert.equal(frenchOutput.translation.translatorStreamKey, french.streamKey);
         assert.equal(frenchOutput.translation.translationDelayMs, 700);
-        assert.equal(spanishOutput.translation.translatorPipelineId, spanish.id);
+        assert.equal(frenchOutput.translation.sourceTrackIndex, 0);
+        assert.equal(frenchOutput.translation.translatorTrackIndex, 0);
+        assert.equal(spanishOutput.translation.translatorStreamKey, spanish.streamKey);
         assert.equal(spanishOutput.translation.translationDelayMs, 1200);
         assert.equal(db.listPipelines().length, 3);
+    });
+
+    test('stores an explicit source/translator track selection', () => {
+        const db = makeDb();
+        const source = db.createPipeline();
+        const french = db.createPipeline();
+        const output = db.createOutput({
+            pipelineId: source.id,
+            name: 'French',
+            url: 'rtmp://french',
+            translation: {
+                translatorStreamKey: french.streamKey,
+                sourceTrackIndex: 2,
+                translatorTrackIndex: 1,
+            },
+        });
+        assert.equal(output.translation.sourceTrackIndex, 2);
+        assert.equal(output.translation.translatorTrackIndex, 1);
+    });
+});
+
+describe('getPipelineByStreamKey', () => {
+    test('resolves the pipeline currently holding a stream key', () => {
+        const db = makeDb();
+        const p1 = db.createPipeline();
+        const p2 = db.createPipeline();
+        assert.equal(db.getPipelineByStreamKey(p1.streamKey).id, p1.id);
+        assert.equal(db.getPipelineByStreamKey(p2.streamKey).id, p2.id);
+    });
+
+    test('returns undefined for a key no pipeline holds', () => {
+        const db = makeDb();
+        db.createPipeline();
+        assert.equal(db.getPipelineByStreamKey('not-a-real-key'), undefined);
+    });
+
+    // Slot collisions are intentional (see updatePipeline) — resolution must
+    // still return a single, deterministic pipeline rather than throwing.
+    test('deterministically picks one pipeline when a key is shared', () => {
+        const db = makeDb();
+        const p1 = db.createPipeline();
+        const p2 = db.createPipeline();
+        db.updatePipeline(p2.id, p2.name, p1.streamKeyId);
+        const resolved = db.getPipelineByStreamKey(p1.streamKey);
+        assert.equal(resolved.id, p1.id);
     });
 });
 

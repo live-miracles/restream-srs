@@ -55,7 +55,9 @@ export interface Output {
     url: string;
     audioEncoding: string;
     translation: {
-        translatorPipelineId: number;
+        translatorStreamKey: string;
+        sourceTrackIndex: number;
+        translatorTrackIndex: number;
         translationDelayMs: number;
         voiceThresholdDb: number;
         duckVolumePercent: number;
@@ -86,7 +88,9 @@ export interface OutputPayload {
     url: string;
     audioEncoding: string;
     translation?: {
-        translatorPipelineId: number;
+        translatorStreamKey: string;
+        sourceTrackIndex?: number;
+        translatorTrackIndex?: number;
         translationDelayMs?: number;
         voiceThresholdDb?: number;
         duckVolumePercent?: number;

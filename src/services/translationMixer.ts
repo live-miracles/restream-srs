@@ -304,7 +304,9 @@ export function createTranslationMixerService(
 
     function configFingerprint(output: Output, mix: TranslationConfig): string {
         return JSON.stringify({
-            translatorPipelineId: mix.translatorPipelineId,
+            translatorStreamKey: mix.translatorStreamKey,
+            sourceTrackIndex: mix.sourceTrackIndex,
+            translatorTrackIndex: mix.translatorTrackIndex,
             sourceProtocol: inputState.getProtocol(output.pipelineId),
             delay: mix.translationDelayMs,
             thresholdDb: mix.voiceThresholdDb,
@@ -342,7 +344,7 @@ export function createTranslationMixerService(
         configFp: string,
     ): Promise<void> {
         const source = db.getPipeline(output.pipelineId);
-        const translator = db.getPipeline(mix.translatorPipelineId);
+        const translator = db.getPipelineByStreamKey(mix.translatorStreamKey);
         if (!source) return;
         const sourceUrl = inputState.pullUrl(source.id, source.streamKey);
         const translatorProtocol = translator ? inputState.getProtocol(translator.id) : null;
@@ -386,7 +388,7 @@ export function createTranslationMixerService(
             mode,
             fingerprint,
             configFingerprint: configFp,
-            translatorLive: inputState.isLive(mix.translatorPipelineId),
+            translatorLive: translator ? inputState.isLive(translator.id) : false,
             translatorProtocol,
             stderrTail: '',
             controller,
@@ -405,7 +407,7 @@ export function createTranslationMixerService(
             pid: child.pid ?? null,
             mode,
             sourcePipelineId: output.pipelineId,
-            translatorPipelineId: mix.translatorPipelineId,
+            translatorPipelineId: translator?.id ?? null,
             outputUrl: output.url,
         });
 
@@ -554,8 +556,13 @@ export function createTranslationMixerService(
                         continue;
                     }
                     const mix = output.translation!;
-                    const translatorLive = inputState.isLive(mix.translatorPipelineId);
-                    const translatorProtocol = inputState.getProtocol(mix.translatorPipelineId);
+                    const translatorPipeline = db.getPipelineByStreamKey(mix.translatorStreamKey);
+                    const translatorLive = translatorPipeline
+                        ? inputState.isLive(translatorPipeline.id)
+                        : false;
+                    const translatorProtocol = translatorPipeline
+                        ? inputState.getProtocol(translatorPipeline.id)
+                        : null;
                     const modeState = nextDebouncedMode(
                         modeTrackers.get(output.id),
                         translatorLive,

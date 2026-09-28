@@ -141,6 +141,10 @@ export function buildFfmpegArgs(
 
 export interface TranslationMixerConfig {
     videoEncoding: string;
+    // Which audio track of each input to use in the mix. Both default to 0
+    // (the input's first track) when omitted.
+    sourceTrackIndex?: number;
+    translatorTrackIndex?: number;
     translationDelayMs: number;
     voiceThresholdDb: number;
     controlPort: number;
@@ -185,6 +189,8 @@ export function buildTranslationMixerArgs(
     const args = [...common];
     const videoArgs = (ENCODINGS[config.videoEncoding] ?? ENCODINGS.copy).args;
     const formatArgs = outputUrl.startsWith('srt://') ? ['-f', 'mpegts'] : ['-f', 'flv'];
+    const sourceTrackIndex = config.sourceTrackIndex ?? 0;
+    const translatorTrackIndex = config.translatorTrackIndex ?? 0;
     if (sourceInputUrl.startsWith('srt://')) args.push('-readrate', '1');
     args.push('-i', sourceInputUrl);
 
@@ -193,7 +199,7 @@ export function buildTranslationMixerArgs(
             '-map',
             '0:v:0?',
             '-map',
-            '0:a:0?',
+            `0:a:${sourceTrackIndex}?`,
             ...videoArgs,
             '-c:a',
             'aac',
@@ -216,9 +222,9 @@ export function buildTranslationMixerArgs(
     const delay = Math.max(0, Math.round(config.translationDelayMs));
     args.push(
         '-filter_complex',
-        `[0:a]aresample=48000:async=1:first_pts=0[source];` +
+        `[0:a:${sourceTrackIndex}]aresample=48000:async=1:first_pts=0[source];` +
             `[source]volume@source_gain=1,azmq=bind_address=tcp\\\\://127.0.0.1\\\\:${config.controlPort}[source_controlled];` +
-            `[1:a]aresample=48000:async=1:first_pts=0,asplit=2[translator_audio][translator_meter];` +
+            `[1:a:${translatorTrackIndex}]aresample=48000:async=1:first_pts=0,asplit=2[translator_audio][translator_meter];` +
             `[translator_audio]adelay=${delay}:all=1[translator_delayed];` +
             `[translator_meter]astats=metadata=1:reset=0.1,ametadata=mode=print:file=pipe\\\\:3,anullsink;` +
             `[source_controlled][translator_delayed]amix=inputs=2:duration=longest:dropout_transition=0.2[mixed_audio]`,

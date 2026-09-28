@@ -12,7 +12,17 @@ export interface Pipeline {
 }
 
 export interface TranslationConfig {
-    translatorPipelineId: number;
+    // The translator pipeline's own stream key, not its id — resolved once at
+    // save time, same as a Restream SRT/RTMP destination stores the resolved
+    // publish URL rather than a live foreign key to the target pipeline. This
+    // means it keeps working if the translator pipeline is deleted and its
+    // stream key slot is reassigned to a new pipeline (see
+    // Db.getPipelineByStreamKey), matching Restream's behavior.
+    translatorStreamKey: string;
+    // Which audio track of the source/translator input to mix. Both default
+    // to 0 (the first track) since most inputs are single-track.
+    sourceTrackIndex: number;
+    translatorTrackIndex: number;
     translationDelayMs: number;
     voiceThresholdDb: number;
     duckVolumePercent: number;
@@ -26,7 +36,9 @@ export interface TranslationConfig {
 }
 
 export interface TranslationInput {
-    translatorPipelineId: number;
+    translatorStreamKey: string;
+    sourceTrackIndex?: number;
+    translatorTrackIndex?: number;
     translationDelayMs?: number;
     voiceThresholdDb?: number;
     duckVolumePercent?: number;
@@ -114,6 +126,11 @@ export interface Db {
 
     createPipeline(): Pipeline;
     getPipeline(id: number): Pipeline | undefined;
+    // Resolves a translator selection back to its owning pipeline. Stream
+    // keys can intentionally be shared by more than one pipeline (see
+    // updatePipeline) — this returns whichever pipeline currently holds the
+    // key, same ambiguity Restream destinations already accept.
+    getPipelineByStreamKey(streamKey: string): Pipeline | undefined;
     listPipelines(): Pipeline[];
     updatePipeline(id: number, name: string, streamKeyId?: number): Pipeline | null;
     deletePipeline(id: number): boolean;
