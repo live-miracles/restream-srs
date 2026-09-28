@@ -36,6 +36,7 @@ declare global {
         refreshSrsLogsBtn: () => Promise<void>;
         openHostConnectionsBtn: () => Promise<void>;
         openSettingsBtn: () => Promise<void>;
+        openDocsBtn: () => Promise<void>;
         addHostProbeRowBtn: () => void;
         removeHostProbeRowBtn: (slot: number) => void;
         settingsGeneralFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
@@ -104,6 +105,12 @@ window.openSettingsBtn = async () => {
     setUrlParam('view', 'settings');
     await refreshDashboard();
     openSettings();
+};
+window.openDocsBtn = async () => {
+    void import('./preview.js').then(({ stopCurrentPreview }) => stopCurrentPreview());
+    setUrlParam('p', null);
+    setUrlParam('view', 'docs');
+    await refreshDashboard();
 };
 window.addHostProbeRowBtn = () => addHostProbeRow();
 window.removeHostProbeRowBtn = (slot) => removeHostProbeRow(slot);

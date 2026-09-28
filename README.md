@@ -200,111 +200,14 @@ talks to those over loopback.
 
 ---
 
-## Publishing to a pipeline
+## Usage
 
-ffmpeg test commands using the default SRT `output_port` (`10080`) from
-`srt-bonding-relay.json`:
-
-RTMP:
-```bash
-ffmpeg -re -stream_loop -1 -i video.mp4 \
-  -c:v libx264 -preset veryfast -b:v 2500k -c:a aac -b:a 128k \
-  -f flv rtmp://localhost:21935/live/<stream-key>
-```
-
-SRT (the passphrase must match `srt_server.passphrase` in `srs.conf`; if
-that's disabled, drop `&passphrase=<passphrase>&pbkeylen=16` from the URL):
-```bash
-ffmpeg -re -stream_loop -1 -i video.mp4 \
-  -c:v libx264 -preset veryfast -b:v 2500k -x264-params "repeat-headers=1" \
-  -c:a aac -b:a 128k \
-  -f mpegts 'srt://localhost:10080?streamid=#!::r=live/<stream-key>,m=publish&passphrase=<passphrase>&pbkeylen=16'
-```
-
-SRT with multiple audio tracks:
-```bash
-ffmpeg -re -stream_loop -1 -i video.mp4 \
-  -map 0 \
-  -c:v libx264 -preset veryfast -tune zerolatency -b:v 2500k \
-  -x264-params "repeat-headers=1" \
-  -force_key_frames 'expr:gte(t,n_forced*2)' -g 60 -keyint_min 60 -sc_threshold 0 \
-  -c:a aac -b:a 128k \
-  -f mpegts 'srt://localhost:10080?streamid=#!::r=live/<stream-key>,m=publish&passphrase=<passphrase>&pbkeylen=16'
-```
-
-## Translation outputs
-
-A translation output is configured directly on an output. The output's normal
-pipeline is the **source** stream: it supplies the video and source audio. A
-second, user-selected pipeline supplies translator audio. The mixer publishes
-the resulting stream directly to that output's destination, so each output can
-have its own translator and settings.
-
-The output must use the `translation` audio encoding and be started by the
-user. The mixer does not create pipelines or start translator inputs
-automatically. If the translator disconnects or is not live, the output keeps
-publishing source audio only; when the translator becomes live again, the
-translated mix is resumed.
-
-The mixer also watches the translator audio meter independently of the SRS
-live-state poll. After the same startup warmup grace used by the output
-watchdog, if the meter has gone quiet for 10 seconds — including a translator
-that never delivered a single sample — the mixer is restarted so it attaches
-to the current translator session. Valid translator silence is not treated as
-a disconnect; FFmpeg continues emitting silent meter samples in that case.
-
-### Signal flow and timing
-
-The translator audio is delayed before it is mixed into the output. The mixer
-measures the translator's undelayed audio to detect speech, then uses that
-advance time to reduce the source volume before the translated speech becomes
-audible. This avoids the source remaining at full volume during the first part
-of each translated sentence.
-
-```
-                                      ┌─► meter / voice detection
-Translator pipeline ──audio───────────┤
-                                      └─► delay ───────────────┐
-                                                               │
-Source pipeline ──video────────────────────────────────────────┼─► output
-                 audio ──► source gain / ducking ──────────────┘
-
-Source volume
-───────●                     ●─────────
-        \                   /
-         \                 /
-          \               /
-           ●─────────────●
-           T1             T2
-
-T1: translator speech is detected; source volume fades down.
-T2: translator has been silent long enough; source restores.
-```
-
-The delay should be long enough for the mixer to detect speech before the
-delayed translator audio reaches the output. It is normally paired with the
-duck fade duration: for example, an 800 ms translation delay and a 900 ms
-source duck fade provide time for the source to move down smoothly. Increasing
-the delay gives more warning but also increases translation latency. The
-translation delay and all fade/restore timings are configurable per output. If
-the translator starts speaking again before the restore fade finishes, ducking
-takes over immediately from whatever level the source is currently at, instead
-of finishing the climb back up first.
-
-### Translation settings
-
-| Setting | Meaning |
-|---------|---------|
-| Translator Pipeline | Pipeline carrying translator audio |
-| Translation Delay (ms) | Delay applied to audible translator audio |
-| Voice Threshold (dB) | Speech detection threshold; enter a non-positive value such as `-20` |
-| Source While Speaking (%) | Source volume while the translator is speaking |
-| Duck Fade | Time used to reduce source volume when speech starts |
-| Restore After / Volume / Fade | Silence required before restoring, target source volume, and fade time |
-
-Volume values are entered as normal percentages from `0` to `100` and are
-converted directly to FFmpeg gain. For example, `6` means `0.06` gain, or 6%
-of the source amplitude. There is no vMix-specific conversion in this system.
+For how to publish to a pipeline (ffmpeg test commands for RTMP/SRT) and how
+to configure translation outputs — which mix a separate translator pipeline's
+audio into an output — see the in-app **User Manual** (the open-book icon in
+the dashboard navbar). Translation output mixing, with per-track selection,
+speech-detection ducking, and configurable delay/restore timing, is available
+as a built-in audio encoding option on any output.
 
 ---
 
@@ -539,8 +442,9 @@ The app runs these recovery loops:
 | Output progress watchdog | Every running FFmpeg output process | After warmup, if the input is ready but FFmpeg `total_size` / `out_time_ms` stop advancing for the configured stall window | Protocol-agnostic backstop; covers SRT outputs and local RTMP relays |
 | Remote RTMP socket watchdog | Running outputs with a remote RTMP/RTMPS destination | After socket warmup and grace, if the destination socket is missing or remains in a closing state such as `CLOSE-WAIT` | Uses one `ss -H -tanp` snapshot per watchdog interval; a local RTMP/RTMPS destination is ignored because local input/output sockets are ambiguous |
 | Output memory watchdog | Every running FFmpeg output process | After warmup, if process RSS crosses `memory_limit_mb` (or its per-encoding override) | Reads `/proc/<pid>/status`; unconditional — a leaking process can still show advancing `total_size`/healthy sockets, so this doesn't wait on the other two. Once RSS crosses 70% of the limit the output surfaces a yellow "High memory usage" warning in the dashboard, before the watchdog actually restarts it at 100%. The limit is doubled for outputs on a 4K (≥3840px on either dimension) input — the 2x multiplier is a placeholder, not a measured baseline; see [#11](https://github.com/live-miracles/restream-srs/issues/11) |
+| Translator audio meter watchdog | Running translation-mixer outputs | After the same startup warmup grace as the output progress watchdog, if the translator audio meter has gone quiet for `translator_meter_stale_ms` (including a translator that never delivered a single sample) | Watches independently of the SRS live-state poll, so a translator that connects but sends a dead/silent track is still caught. Valid translator silence is not treated as a disconnect — FFmpeg continues emitting silent meter samples in that case — so this only fires when the meter itself stops updating. Restarts the mixer so it attaches to the current translator session. |
 
-All three output watchdogs use the same restart path: they write a detailed
+All output watchdogs above use the same restart path: they write a detailed
 `last_error`, kill the stuck FFmpeg process, and let the normal retry loop start a
 fresh process while the output's desired state remains `running`. The socket
 watchdog is advisory: if `ss` fails or times out, it does not restart anything,
