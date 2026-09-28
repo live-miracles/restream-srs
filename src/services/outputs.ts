@@ -109,6 +109,19 @@ export interface OutputService {
         status: 'running' | 'stopped' | 'failed',
         pid: number | null,
     ): void;
+    // Same idea as reportExternalStatus, but for the ffmpeg progress fields
+    // (bitrate/out_time/total_size) getStats() otherwise only gets from this
+    // service's own startJob(). The translation mixer owns its ffmpeg process
+    // directly and calls this from its own '-progress pipe:1' parsing so its
+    // outputs show real bitrate instead of null forever.
+    reportExternalProgress(
+        outputId: string,
+        progress: {
+            bitrateKbps: number | null;
+            lastOutTimeUs: number | null;
+            lastTotalSizeBytes: number | null;
+        },
+    ): void;
     shutdown(): void;
 }
 
@@ -210,6 +223,32 @@ export function createOutputService(
             cpuUsage.delete(outputId);
             cpuTracker.delete(outputId);
         }
+    }
+
+    function reportExternalProgress(
+        outputId: string,
+        update: {
+            bitrateKbps: number | null;
+            lastOutTimeUs: number | null;
+            lastTotalSizeBytes: number | null;
+        },
+    ): void {
+        const existing = progress.get(outputId);
+        const now = Date.now();
+        progress.set(outputId, {
+            lastProgressAtMs: now,
+            lastOutputProgressAtMs: now,
+            lastOutTimeMs: update.lastOutTimeUs,
+            lastOutTimeWallMs: existing?.lastOutTimeWallMs ?? null,
+            lastTotalSize: update.lastTotalSizeBytes,
+            lastBitrateKbps: update.bitrateKbps,
+            stderrTail: existing?.stderrTail ?? '',
+            monitorMediaClock: false,
+            fastMediaSinceMs: null,
+            mediaClockWarning: null,
+            lastTimestampWarningAtMs: existing?.lastTimestampWarningAtMs ?? null,
+            lastTimestampWarning: existing?.lastTimestampWarning ?? null,
+        });
     }
 
     function getRetry(outputId: string) {
@@ -833,6 +872,7 @@ export function createOutputService(
         getStats,
 
         reportExternalStatus: setStatus,
+        reportExternalProgress,
 
         // Double-start safety here relies on startJob() being synchronous up to and
         // including spawn()+setStatus('running'): there is no await before the process

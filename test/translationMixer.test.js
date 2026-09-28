@@ -440,7 +440,7 @@ describe('translation mixer watchdog integration', () => {
         const service = createTranslationMixerService(
             db,
             makeTranslationInputState(),
-            { reportExternalStatus() {} },
+            { reportExternalStatus() {}, reportExternalProgress() {} },
             diagnostics,
         );
 
@@ -476,7 +476,7 @@ describe('translation mixer watchdog integration', () => {
         const service = createTranslationMixerService(
             db,
             makeTranslationInputState(),
-            { reportExternalStatus() {} },
+            { reportExternalStatus() {}, reportExternalProgress() {} },
             diagnostics,
         );
 

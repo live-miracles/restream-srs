@@ -50,6 +50,7 @@ interface MixerJob {
     lastOutputProgressAtMs: number;
     lastOutTimeUs: number | null;
     lastTotalSizeBytes: number | null;
+    lastBitrateKbps: number | null;
     lastTranslatorMeterAtMs: number;
 }
 
@@ -67,6 +68,14 @@ export interface TranslationMixerService {
 function appendTail(existing: string, chunk: Buffer): string {
     const next = existing + chunk.toString('utf8');
     return next.length > STDERR_TAIL_BYTES ? next.slice(-STDERR_TAIL_BYTES) : next;
+}
+
+// Mirrors outputs.ts's own parseBitrateKbps — same '-progress pipe:1' line format.
+function parseBitrateKbps(line: string): number | null {
+    const val = line.slice('bitrate='.length).trim();
+    if (val === 'N/A' || val === '0.0kbits/s') return null;
+    const match = val.match(/^([\d.]+)kbits\/s$/);
+    return match ? parseFloat(match[1]) : null;
 }
 
 export type DuckState = 'resting' | 'ducked';
@@ -134,7 +143,11 @@ export function nextDuckDecision(
     return { tracker: next, ramp: null };
 }
 
-function createMixerStateController(mix: TranslationConfig, socket: Request): MixerStateController {
+function createMixerStateController(
+    mix: TranslationConfig,
+    socket: Request,
+    outputId: string,
+): MixerStateController {
     let currentGain = volumePercentToAmplitude(mix.restoreVolumePercent);
     let tracker: DuckTracker = { state: 'resting', hasDetectedVoice: false, lastVoiceAt: 0 };
     let rampTimer: NodeJS.Timeout | null = null;
@@ -179,6 +192,15 @@ function createMixerStateController(mix: TranslationConfig, socket: Request): Mi
         const decision = nextDuckDecision(tracker, db, Date.now(), mix);
         tracker = decision.tracker;
         if (decision.ramp) {
+            // Only logged on an actual state transition (ducking or restoring),
+            // not per meter sample — cheap enough to always leave on, and the
+            // only way to tell "genuinely still ducked" from "stuck ducked"
+            // after the fact without re-instrumenting mid-incident.
+            console.log(
+                `[translation-mixer] ${outputId} duck->${decision.tracker.state} ` +
+                    `meter_db=${Number.isFinite(db) ? db.toFixed(1) : db} ` +
+                    `target=${decision.ramp.targetPercent}% ramp_ms=${decision.ramp.durationMs}`,
+            );
             rampTo(volumePercentToAmplitude(decision.ramp.targetPercent), decision.ramp.durationMs);
         }
     }
@@ -187,6 +209,7 @@ function createMixerStateController(mix: TranslationConfig, socket: Request): Mi
     return {
         onMeterPeakDb,
         onTranslatorUnavailable: () => {
+            console.log(`[translation-mixer] ${outputId} duck->resting (translator unavailable)`);
             tracker = { state: 'resting', hasDetectedVoice: false, lastVoiceAt: 0 };
             rampTo(volumePercentToAmplitude(mix.restoreVolumePercent), mix.restoreDurationMs);
         },
@@ -440,7 +463,7 @@ export function createTranslationMixerService(
                       onTranslatorUnavailable: () => {},
                       close: () => {},
                   }
-                : createMixerStateController(mix, control);
+                : createMixerStateController(mix, control, output.id);
         const job: MixerJob = {
             process: child,
             mode,
@@ -455,6 +478,7 @@ export function createTranslationMixerService(
             lastOutputProgressAtMs: Date.now(),
             lastOutTimeUs: null,
             lastTotalSizeBytes: null,
+            lastBitrateKbps: null,
             lastTranslatorMeterAtMs: Date.now(),
         };
         jobs.set(output.id, job);
@@ -474,6 +498,7 @@ export function createTranslationMixerService(
             progressBuffer += chunk.toString();
             const lines = progressBuffer.split(/\r?\n/);
             progressBuffer = lines.pop() ?? '';
+            let progressed = false;
             for (const line of lines) {
                 if (line.startsWith('total_size=')) {
                     const value = Number(line.slice('total_size='.length));
@@ -483,6 +508,7 @@ export function createTranslationMixerService(
                     ) {
                         job.lastTotalSizeBytes = value;
                         job.lastOutputProgressAtMs = Date.now();
+                        progressed = true;
                     }
                 } else if (line.startsWith('out_time_ms=')) {
                     const value = Number(line.slice('out_time_ms='.length));
@@ -492,8 +518,19 @@ export function createTranslationMixerService(
                     ) {
                         job.lastOutTimeUs = value;
                         job.lastOutputProgressAtMs = Date.now();
+                        progressed = true;
                     }
+                } else if (line.startsWith('bitrate=')) {
+                    job.lastBitrateKbps = parseBitrateKbps(line);
+                    progressed = true;
                 }
+            }
+            if (progressed) {
+                outputService.reportExternalProgress(output.id, {
+                    bitrateKbps: job.lastBitrateKbps,
+                    lastOutTimeUs: job.lastOutTimeUs,
+                    lastTotalSizeBytes: job.lastTotalSizeBytes,
+                });
             }
         });
         child.stderr?.on('data', (chunk: Buffer) => {
