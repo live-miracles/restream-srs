@@ -30,9 +30,6 @@ export interface TranslationConfig {
     restoreSilenceMs: number;
     restoreVolumePercent: number;
     restoreDurationMs: number;
-    restoreSilence2Ms: number;
-    restoreVolume2Percent: number;
-    restoreDuration2Ms: number;
 }
 
 export interface TranslationInput {
@@ -46,9 +43,6 @@ export interface TranslationInput {
     restoreSilenceMs?: number;
     restoreVolumePercent?: number;
     restoreDurationMs?: number;
-    restoreSilence2Ms?: number;
-    restoreVolume2Percent?: number;
-    restoreDuration2Ms?: number;
 }
 
 export interface HostProbeTarget {

@@ -65,9 +65,6 @@ export interface Output {
         restoreSilenceMs: number;
         restoreVolumePercent: number;
         restoreDurationMs: number;
-        restoreSilence2Ms: number;
-        restoreVolume2Percent: number;
-        restoreDuration2Ms: number;
     } | null;
     lastError: string | null;
     hasErrorHistory: boolean;
@@ -98,9 +95,6 @@ export interface OutputPayload {
         restoreSilenceMs?: number;
         restoreVolumePercent?: number;
         restoreDurationMs?: number;
-        restoreSilence2Ms?: number;
-        restoreVolume2Percent?: number;
-        restoreDuration2Ms?: number;
     } | null;
 }
 

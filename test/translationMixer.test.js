@@ -36,6 +36,7 @@ fs.writeFileSync(
 const {
     isTranslatorMeterStale,
     nextDebouncedMode,
+    nextDuckDecision,
     selectControlPort,
     shouldRestartForStaleTranslatorMeter,
 } = require('../src/services/translationMixer');
@@ -93,9 +94,6 @@ function makeTranslationOutput() {
             restoreSilenceMs: 500,
             restoreVolumePercent: 80,
             restoreDurationMs: 200,
-            restoreSilence2Ms: 1500,
-            restoreVolume2Percent: 100,
-            restoreDuration2Ms: 400,
         },
         lastError: null,
         hasErrorHistory: false,
@@ -243,6 +241,84 @@ describe('nextDebouncedMode', () => {
         // it must not still be counted as live since time 100.
         state = nextDebouncedMode(state.tracker, false, 100 + UP_GRACE_MS - 1 + 50);
         assert.equal(state.mode, 'source-only');
+    });
+});
+
+describe('nextDuckDecision', () => {
+    const mix = {
+        voiceThresholdDb: -20,
+        duckVolumePercent: 6,
+        duckDurationMs: 900,
+        restoreSilenceMs: 2000,
+        restoreVolumePercent: 50,
+        restoreDurationMs: 5000,
+    };
+
+    test('ignores silence until the translator has ever spoken', () => {
+        const { tracker, ramp } = nextDuckDecision(undefined, -Infinity, 0, mix);
+        assert.equal(ramp, null);
+        assert.equal(tracker.state, 'resting');
+        assert.equal(tracker.hasDetectedVoice, false);
+    });
+
+    test('ducks as soon as speech crosses the threshold', () => {
+        const { tracker, ramp } = nextDuckDecision(undefined, -10, 0, mix);
+        assert.equal(tracker.state, 'ducked');
+        assert.deepEqual(ramp, { targetPercent: 6, durationMs: 900 });
+    });
+
+    test('does not re-issue a ramp for continued speech while already ducked', () => {
+        let state = nextDuckDecision(undefined, -10, 0, mix);
+        state = nextDuckDecision(state.tracker, -10, 100, mix);
+        assert.equal(state.ramp, null, 'must not restart the duck ramp on every sample');
+        assert.equal(state.tracker.state, 'ducked');
+    });
+
+    test('stays ducked through silence shorter than the hold window', () => {
+        let state = nextDuckDecision(undefined, -10, 0, mix);
+        state = nextDuckDecision(state.tracker, -Infinity, mix.restoreSilenceMs - 1, mix);
+        assert.equal(state.ramp, null, 'restore must not fire before the hold elapses');
+        assert.equal(state.tracker.state, 'ducked');
+    });
+
+    test('restores once silence has held for the full window', () => {
+        let state = nextDuckDecision(undefined, -10, 0, mix);
+        state = nextDuckDecision(state.tracker, -Infinity, mix.restoreSilenceMs, mix);
+        assert.deepEqual(state.ramp, { targetPercent: 50, durationMs: 5000 });
+        assert.equal(state.tracker.state, 'resting');
+    });
+
+    test('a fresh voice sample mid-restore ducks again instead of finishing the climb', () => {
+        // Duck at t=0, go silent long enough to trigger the restore ramp at
+        // t=2000 (state flips to 'resting' and a restore ramp is issued), then
+        // the translator starts speaking again at t=2500 — while the gain
+        // would still be climbing back up in the real ramp. The very next
+        // voice sample must immediately win and duck again.
+        let state = nextDuckDecision(undefined, -10, 0, mix);
+        state = nextDuckDecision(state.tracker, -Infinity, mix.restoreSilenceMs, mix);
+        assert.equal(state.tracker.state, 'resting');
+
+        state = nextDuckDecision(state.tracker, -10, mix.restoreSilenceMs + 500, mix);
+        assert.deepEqual(
+            state.ramp,
+            { targetPercent: 6, durationMs: 900 },
+            'must duck again rather than let the restore ramp finish',
+        );
+        assert.equal(state.tracker.state, 'ducked');
+    });
+
+    test('a brief dip below threshold during speech does not reset the hold clock incorrectly', () => {
+        let state = nextDuckDecision(undefined, -10, 0, mix);
+        // Quiet sample, but well within the hold window.
+        state = nextDuckDecision(state.tracker, -Infinity, 500, mix);
+        assert.equal(state.ramp, null);
+        // Speech resumes before the hold window elapses — still ducked, no new ramp.
+        state = nextDuckDecision(state.tracker, -10, 800, mix);
+        assert.equal(state.ramp, null);
+        assert.equal(state.tracker.state, 'ducked');
+        // Now silence for the full window measured from the latest speech sample.
+        state = nextDuckDecision(state.tracker, -Infinity, 800 + mix.restoreSilenceMs, mix);
+        assert.deepEqual(state.ramp, { targetPercent: 50, durationMs: 5000 });
     });
 });
 

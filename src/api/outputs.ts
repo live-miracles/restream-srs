@@ -50,9 +50,6 @@ function parseTranslation(body: unknown): TranslationInput | null | undefined | 
     const restoreSilenceMs = numeric('restoreSilenceMs', 0, 30000);
     const restoreVolumePercent = numeric('restoreVolumePercent', 0, 100);
     const restoreDurationMs = numeric('restoreDurationMs', 0, 30000);
-    const restoreSilence2Ms = numeric('restoreSilence2Ms', 0, 60000);
-    const restoreVolume2Percent = numeric('restoreVolume2Percent', 0, 100);
-    const restoreDuration2Ms = numeric('restoreDuration2Ms', 0, 60000);
     if (typeof sourceTrackIndex === 'string') return { error: sourceTrackIndex };
     if (typeof translatorTrackIndex === 'string') return { error: translatorTrackIndex };
     if (typeof delay === 'string') return { error: delay };
@@ -62,12 +59,6 @@ function parseTranslation(body: unknown): TranslationInput | null | undefined | 
     if (typeof restoreSilenceMs === 'string') return { error: restoreSilenceMs };
     if (typeof restoreVolumePercent === 'string') return { error: restoreVolumePercent };
     if (typeof restoreDurationMs === 'string') return { error: restoreDurationMs };
-    if (typeof restoreSilence2Ms === 'string') return { error: restoreSilence2Ms };
-    if (restoreSilence2Ms < restoreSilenceMs) {
-        return { error: 'restoreSilence2Ms must be greater than or equal to restoreSilenceMs' };
-    }
-    if (typeof restoreVolume2Percent === 'string') return { error: restoreVolume2Percent };
-    if (typeof restoreDuration2Ms === 'string') return { error: restoreDuration2Ms };
     return {
         translatorStreamKey,
         ...(value.sourceTrackIndex === undefined ? {} : { sourceTrackIndex }),
@@ -79,9 +70,6 @@ function parseTranslation(body: unknown): TranslationInput | null | undefined | 
         ...(value.restoreSilenceMs === undefined ? {} : { restoreSilenceMs }),
         ...(value.restoreVolumePercent === undefined ? {} : { restoreVolumePercent }),
         ...(value.restoreDurationMs === undefined ? {} : { restoreDurationMs }),
-        ...(value.restoreSilence2Ms === undefined ? {} : { restoreSilence2Ms }),
-        ...(value.restoreVolume2Percent === undefined ? {} : { restoreVolume2Percent }),
-        ...(value.restoreDuration2Ms === undefined ? {} : { restoreDuration2Ms }),
     };
 }
 

@@ -87,11 +87,8 @@ function normalizeTranslationConfig(input: TranslationInput): TranslationConfig 
         duckVolumePercent: input.duckVolumePercent ?? 6,
         duckDurationMs: input.duckDurationMs ?? 900,
         restoreSilenceMs: input.restoreSilenceMs ?? 2000,
-        restoreVolumePercent: input.restoreVolumePercent ?? 32,
-        restoreDurationMs: input.restoreDurationMs ?? 1000,
-        restoreSilence2Ms: input.restoreSilence2Ms ?? 4000,
-        restoreVolume2Percent: input.restoreVolume2Percent ?? 52,
-        restoreDuration2Ms: input.restoreDuration2Ms ?? 2000,
+        restoreVolumePercent: input.restoreVolumePercent ?? 50,
+        restoreDurationMs: input.restoreDurationMs ?? 5000,
     };
 }
 

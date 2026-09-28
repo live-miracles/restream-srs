@@ -806,32 +806,20 @@ function renderOutputTranslationControls(
             <input id="out-translation-duck-volume-input" class="input input-sm w-full" type="number" min="0" max="100" step="1" value="${mix?.duckVolumePercent ?? 6}" />
           </fieldset>
           <fieldset class="fieldset min-w-40 flex-1">
-            <legend class="fieldset-legend">Restore 1 After (ms)</legend>
-            <input id="out-translation-restore-silence-input" class="input input-sm w-full" type="number" min="0" max="30000" value="${mix?.restoreSilenceMs ?? 2000}" />
-          </fieldset>
-          <fieldset class="fieldset min-w-40 flex-1">
-            <legend class="fieldset-legend">Restore 1 Volume (%)</legend>
-            <input id="out-translation-restore-volume-input" class="input input-sm w-full" type="number" min="0" max="100" step="1" value="${mix?.restoreVolumePercent ?? 32}" />
-          </fieldset>
-          <fieldset class="fieldset min-w-40 flex-1">
-            <legend class="fieldset-legend">Restore 1 Fade (ms)</legend>
-            <input id="out-translation-restore-duration-input" class="input input-sm w-full" type="number" min="0" max="30000" value="${mix?.restoreDurationMs ?? 1000}" />
-          </fieldset>
-          <fieldset class="fieldset min-w-40 flex-1">
             <legend class="fieldset-legend">Duck Fade (ms)</legend>
             <input id="out-translation-duck-duration-input" class="input input-sm w-full" type="number" min="0" max="30000" value="${mix?.duckDurationMs ?? 900}" />
           </fieldset>
           <fieldset class="fieldset min-w-40 flex-1">
-            <legend class="fieldset-legend">Restore 2 After (ms)</legend>
-            <input id="out-translation-restore-silence2-input" class="input input-sm w-full" type="number" min="0" max="60000" value="${mix?.restoreSilence2Ms ?? 4000}" />
+            <legend class="fieldset-legend">Restore After (ms)</legend>
+            <input id="out-translation-restore-silence-input" class="input input-sm w-full" type="number" min="0" max="30000" value="${mix?.restoreSilenceMs ?? 2000}" />
           </fieldset>
           <fieldset class="fieldset min-w-40 flex-1">
-            <legend class="fieldset-legend">Restore 2 Volume (%)</legend>
-            <input id="out-translation-restore-volume2-input" class="input input-sm w-full" type="number" min="0" max="100" step="1" value="${mix?.restoreVolume2Percent ?? 52}" />
+            <legend class="fieldset-legend">Restore Volume (%)</legend>
+            <input id="out-translation-restore-volume-input" class="input input-sm w-full" type="number" min="0" max="100" step="1" value="${mix?.restoreVolumePercent ?? 50}" />
           </fieldset>
           <fieldset class="fieldset min-w-40 flex-1">
-            <legend class="fieldset-legend">Restore 2 Fade (ms)</legend>
-            <input id="out-translation-restore-duration2-input" class="input input-sm w-full" type="number" min="0" max="60000" value="${mix?.restoreDuration2Ms ?? 2000}" />
+            <legend class="fieldset-legend">Restore Fade (ms)</legend>
+            <input id="out-translation-restore-duration-input" class="input input-sm w-full" type="number" min="0" max="30000" value="${mix?.restoreDurationMs ?? 5000}" />
           </fieldset>
         ${options ? '' : '<p class="w-full text-xs opacity-60">Create another pipeline for the translator feed first.</p>'}
       </div>`;
@@ -1059,35 +1047,8 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
                           ) as HTMLInputElement
                       ).value,
                   ),
-                  restoreSilence2Ms: Number(
-                      (
-                          document.getElementById(
-                              'out-translation-restore-silence2-input',
-                          ) as HTMLInputElement
-                      ).value,
-                  ),
-                  restoreVolume2Percent: Number(
-                      (
-                          document.getElementById(
-                              'out-translation-restore-volume2-input',
-                          ) as HTMLInputElement
-                      ).value,
-                  ),
-                  restoreDuration2Ms: Number(
-                      (
-                          document.getElementById(
-                              'out-translation-restore-duration2-input',
-                          ) as HTMLInputElement
-                      ).value,
-                  ),
               }
             : null;
-    const restoreSilence2Input = document.getElementById(
-        'out-translation-restore-silence2-input',
-    ) as HTMLInputElement | null;
-    const translationTimingValid =
-        !translation || translation.restoreSilence2Ms >= translation.restoreSilenceMs;
-    restoreSilence2Input?.classList.toggle('input-error', !translationTimingValid);
     const serverIdx = parseInt(
         (document.getElementById('out-server-input') as HTMLSelectElement).value,
     );
@@ -1140,7 +1101,7 @@ export async function submitOutputForm(btn?: HTMLButtonElement): Promise<void> {
         }
     }
 
-    if (!name || !destinationValid || !translationTimingValid) return;
+    if (!name || !destinationValid) return;
 
     await withBusy(btn, async () => {
         const payload = { name, videoEncoding, url, audioEncoding, translation };

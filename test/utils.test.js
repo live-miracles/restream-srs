@@ -232,9 +232,6 @@ describe('buildTranslationMixerArgs', () => {
             restoreSilenceMs: 2000,
             restoreVolumePercent: 32,
             restoreDurationMs: 1000,
-            restoreSilence2Ms: 4000,
-            restoreVolume2Percent: 52,
-            restoreDuration2Ms: 2000,
         });
         assert.deepEqual(
             args.filter((value, index) => value === '-map' || args[index - 1] === '-map'),
@@ -257,9 +254,6 @@ describe('buildTranslationMixerArgs', () => {
             restoreSilenceMs: 2000,
             restoreVolumePercent: 32,
             restoreDurationMs: 1000,
-            restoreSilence2Ms: 4000,
-            restoreVolume2Percent: 52,
-            restoreDuration2Ms: 2000,
         });
         assert.equal(args.filter((value) => value === '-i').length, 2);
         assert.deepEqual(
@@ -290,9 +284,6 @@ describe('buildTranslationMixerArgs', () => {
             restoreSilenceMs: 2000,
             restoreVolumePercent: 32,
             restoreDurationMs: 1000,
-            restoreSilence2Ms: 4000,
-            restoreVolume2Percent: 52,
-            restoreDuration2Ms: 2000,
         });
         const filter = args[args.indexOf('-filter_complex') + 1];
         assert.match(filter, /^\[0:a:0\]/);
@@ -312,9 +303,6 @@ describe('buildTranslationMixerArgs', () => {
             restoreSilenceMs: 2000,
             restoreVolumePercent: 32,
             restoreDurationMs: 1000,
-            restoreSilence2Ms: 4000,
-            restoreVolume2Percent: 52,
-            restoreDuration2Ms: 2000,
         });
         const filter = args[args.indexOf('-filter_complex') + 1];
         assert.match(filter, /^\[0:a:2\]/);
@@ -333,9 +321,6 @@ describe('buildTranslationMixerArgs', () => {
             restoreSilenceMs: 2000,
             restoreVolumePercent: 32,
             restoreDurationMs: 1000,
-            restoreSilence2Ms: 4000,
-            restoreVolume2Percent: 52,
-            restoreDuration2Ms: 2000,
         });
         assert.deepEqual(
             args.filter((value, index) => value === '-map' || args[index - 1] === '-map'),

@@ -270,16 +270,15 @@ Source pipeline ──video─────────────────�
                  audio ──► source gain / ducking ──────────────┘
 
 Source volume
-───────●                             ●─────────
-        \                           /
-         \                   ●─────●
-          \                 /
-           ●───────────────●
-           T1              T2      T3
+───────●                     ●─────────
+        \                   /
+         \                 /
+          \               /
+           ●─────────────●
+           T1             T2
 
 T1: translator speech is detected; source volume fades down.
-T2: translator becomes silent; source restores to the first level.
-T3: extended silence; source restores to the second level.
+T2: translator has been silent long enough; source restores.
 ```
 
 The delay should be long enough for the mixer to detect speech before the
@@ -287,7 +286,10 @@ delayed translator audio reaches the output. It is normally paired with the
 duck fade duration: for example, an 800 ms translation delay and a 900 ms
 source duck fade provide time for the source to move down smoothly. Increasing
 the delay gives more warning but also increases translation latency. The
-translation delay and all fade/restore timings are configurable per output.
+translation delay and all fade/restore timings are configurable per output. If
+the translator starts speaking again before the restore fade finishes, ducking
+takes over immediately from whatever level the source is currently at, instead
+of finishing the climb back up first.
 
 ### Translation settings
 
@@ -297,9 +299,8 @@ translation delay and all fade/restore timings are configurable per output.
 | Translation Delay (ms) | Delay applied to audible translator audio |
 | Voice Threshold (dB) | Speech detection threshold; enter a non-positive value such as `-20` |
 | Source While Speaking (%) | Source volume while the translator is speaking |
-| Restore 1 After / Volume / Fade | First restore delay, target source volume, and fade time |
 | Duck Fade | Time used to reduce source volume when speech starts |
-| Restore 2 After / Volume / Fade | Second restore delay, target source volume, and fade time |
+| Restore After / Volume / Fade | Silence required before restoring, target source volume, and fade time |
 
 Volume values are entered as normal percentages from `0` to `100` and are
 converted directly to FFmpeg gain. For example, `6` means `0.06` gain, or 6%

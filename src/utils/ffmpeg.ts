@@ -153,9 +153,6 @@ export interface TranslationMixerConfig {
     restoreSilenceMs: number;
     restoreVolumePercent: number;
     restoreDurationMs: number;
-    restoreSilence2Ms: number;
-    restoreVolume2Percent: number;
-    restoreDuration2Ms: number;
 }
 
 export function volumePercentToAmplitude(volumePercent: number): number {

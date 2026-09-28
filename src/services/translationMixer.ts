@@ -58,11 +58,74 @@ function appendTail(existing: string, chunk: Buffer): string {
     return next.length > STDERR_TAIL_BYTES ? next.slice(-STDERR_TAIL_BYTES) : next;
 }
 
+export type DuckState = 'resting' | 'ducked';
+
+export interface DuckTracker {
+    state: DuckState;
+    hasDetectedVoice: boolean;
+    lastVoiceAt: number;
+}
+
+export interface DuckMixConfig {
+    voiceThresholdDb: number;
+    duckVolumePercent: number;
+    duckDurationMs: number;
+    restoreSilenceMs: number;
+    restoreVolumePercent: number;
+    restoreDurationMs: number;
+}
+
+export interface DuckDecision {
+    tracker: DuckTracker;
+    // Present only on the sample that should kick off a new ramp — repeat
+    // samples in the same state (e.g. continued speech, or silence still
+    // inside the hold window) return null so the caller doesn't restart an
+    // already-running ramp/timer for no reason.
+    ramp: { targetPercent: number; durationMs: number } | null;
+}
+
+// One meter sample in, one decision out — no timers, no I/O. Speech detected
+// at any point (even mid-restore) immediately wins over a pending or
+// in-progress restore, so a translator that resumes speaking while the
+// source is still climbing back up gets ducked again from wherever the gain
+// currently sits, instead of finishing the climb first.
+export function nextDuckDecision(
+    tracker: DuckTracker | undefined,
+    db: number,
+    now: number,
+    mix: DuckMixConfig,
+): DuckDecision {
+    const next = tracker
+        ? { ...tracker }
+        : { state: 'resting' as const, hasDetectedVoice: false, lastVoiceAt: 0 };
+    const speaking = Number.isFinite(db) && db >= mix.voiceThresholdDb;
+    if (speaking) {
+        next.hasDetectedVoice = true;
+        next.lastVoiceAt = now;
+        if (next.state !== 'ducked') {
+            next.state = 'ducked';
+            return {
+                tracker: next,
+                ramp: { targetPercent: mix.duckVolumePercent, durationMs: mix.duckDurationMs },
+            };
+        }
+        return { tracker: next, ramp: null };
+    }
+    if (!next.hasDetectedVoice) return { tracker: next, ramp: null };
+    const silenceMs = now - next.lastVoiceAt;
+    if (next.state === 'ducked' && silenceMs >= mix.restoreSilenceMs) {
+        next.state = 'resting';
+        return {
+            tracker: next,
+            ramp: { targetPercent: mix.restoreVolumePercent, durationMs: mix.restoreDurationMs },
+        };
+    }
+    return { tracker: next, ramp: null };
+}
+
 function createMixerStateController(mix: TranslationConfig, socket: Request): MixerStateController {
-    let currentGain = volumePercentToAmplitude(mix.restoreVolume2Percent);
-    let lastVoiceAt = 0;
-    let hasDetectedVoice = false;
-    let state: 'normal' | 'ducked' | 'restored1' | 'restored2' = 'normal';
+    let currentGain = volumePercentToAmplitude(mix.restoreVolumePercent);
+    let tracker: DuckTracker = { state: 'resting', hasDetectedVoice: false, lastVoiceAt: 0 };
     let rampTimer: NodeJS.Timeout | null = null;
     let commandChain = Promise.resolve();
     let closed = false;
@@ -102,25 +165,10 @@ function createMixerStateController(mix: TranslationConfig, socket: Request): Mi
     }
 
     function onMeterPeakDb(db: number): void {
-        const speaking = Number.isFinite(db) && db >= mix.voiceThresholdDb;
-        const now = Date.now();
-        if (speaking) {
-            hasDetectedVoice = true;
-            lastVoiceAt = now;
-            if (state !== 'ducked') {
-                state = 'ducked';
-                rampTo(volumePercentToAmplitude(mix.duckVolumePercent), mix.duckDurationMs);
-            }
-            return;
-        }
-        if (!hasDetectedVoice) return;
-        const silenceMs = now - lastVoiceAt;
-        if (silenceMs >= mix.restoreSilence2Ms && state !== 'restored2') {
-            state = 'restored2';
-            rampTo(volumePercentToAmplitude(mix.restoreVolume2Percent), mix.restoreDuration2Ms);
-        } else if (silenceMs >= mix.restoreSilenceMs && state === 'ducked') {
-            state = 'restored1';
-            rampTo(volumePercentToAmplitude(mix.restoreVolumePercent), mix.restoreDurationMs);
+        const decision = nextDuckDecision(tracker, db, Date.now(), mix);
+        tracker = decision.tracker;
+        if (decision.ramp) {
+            rampTo(volumePercentToAmplitude(decision.ramp.targetPercent), decision.ramp.durationMs);
         }
     }
 
@@ -128,10 +176,8 @@ function createMixerStateController(mix: TranslationConfig, socket: Request): Mi
     return {
         onMeterPeakDb,
         onTranslatorUnavailable: () => {
-            hasDetectedVoice = false;
-            lastVoiceAt = 0;
-            state = 'normal';
-            rampTo(volumePercentToAmplitude(mix.restoreVolume2Percent), mix.restoreDuration2Ms);
+            tracker = { state: 'resting', hasDetectedVoice: false, lastVoiceAt: 0 };
+            rampTo(volumePercentToAmplitude(mix.restoreVolumePercent), mix.restoreDurationMs);
         },
         close: () => {
             closed = true;
@@ -315,9 +361,6 @@ export function createTranslationMixerService(
             restoreSilence: mix.restoreSilenceMs,
             restoreVolume: mix.restoreVolumePercent,
             restoreDuration: mix.restoreDurationMs,
-            restoreSilence2: mix.restoreSilence2Ms,
-            restoreVolume2: mix.restoreVolume2Percent,
-            restoreDuration2: mix.restoreDuration2Ms,
             outputUrl: output.url,
             videoEncoding: output.videoEncoding,
         });
