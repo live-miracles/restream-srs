@@ -22,6 +22,17 @@ const MIXER_CONTROL_PORT_BASE = 31000;
 const MIXER_CONTROL_PORT_RANGE = 20000;
 const MODE_SWITCH_DOWN_GRACE_MS = 12000;
 const MODE_SWITCH_UP_GRACE_MS = 3000;
+// Bounds how long ffmpeg blocks reading the translator leg when SRS holds
+// that pull open with no payload (its publisher went away) but doesn't close
+// the connection. Without this, that read can hang indefinitely — verified
+// against production (ffmpeg 7.1 / SRS 6.0): the whole mixer process stalls,
+// not just the translator leg, and the only recovery is the coarse
+// output-progress-stalled watchdog (tens of seconds later). A short bound
+// here lets ffmpeg's own graph (amix duration=longest) drop the translator
+// leg and keep the source flowing, the way it was designed to. Deliberately
+// much shorter than the source's own pull timeout — a translator glitch
+// should recover in a few seconds, not linger for minutes.
+const TRANSLATOR_PULL_TIMEOUT_US = 5 * 1_000_000;
 const METER_VOICE_PATTERN = /lavfi\.astats\.Overall\.Peak_level=(-?\d+(?:\.\d+)?|-inf)/;
 const appConfig = readAppConfig();
 
@@ -393,7 +404,11 @@ export function createTranslationMixerService(
         const translatorProtocol = translator ? inputState.getProtocol(translator.id) : null;
         const translatorUrl =
             mode === 'translated' && translator
-                ? inputState.pullUrl(translator.id, translator.streamKey)
+                ? inputState.pullUrl(
+                      translator.id,
+                      translator.streamKey,
+                      TRANSLATOR_PULL_TIMEOUT_US,
+                  )
                 : null;
         const controlPort = mode === 'translated' ? allocateControlPort(output.id) : null;
         const args = buildTranslationMixerArgs(sourceUrl, translatorUrl, output.url, {

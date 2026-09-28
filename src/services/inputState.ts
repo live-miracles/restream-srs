@@ -15,11 +15,15 @@ export interface InputState {
     isReady(pipelineId: number): boolean;
     getProtocol(pipelineId: number): InputProtocol | null;
     isHighRes(pipelineId: number): boolean;
-    pullUrl(pipelineId: number, streamKey: string): string;
+    pullUrl(pipelineId: number, streamKey: string, timeoutUs?: number): string;
 }
 
-export function inputPullUrl(streamKey: string, protocol: InputProtocol | null): string {
-    return protocol === 'srt' ? srtPullUrl(streamKey) : rtmpPullUrl(streamKey);
+export function inputPullUrl(
+    streamKey: string,
+    protocol: InputProtocol | null,
+    timeoutUs?: number,
+): string {
+    return protocol === 'srt' ? srtPullUrl(streamKey, timeoutUs) : rtmpPullUrl(streamKey);
 }
 
 export function createInputState(): InputState {
@@ -73,8 +77,8 @@ export function createInputState(): InputState {
             return !!res && Math.max(res.width, res.height) >= HIGH_RES_MIN_DIMENSION;
         },
 
-        pullUrl(pipelineId: number, streamKey: string): string {
-            return inputPullUrl(streamKey, inputProtocols.get(pipelineId) ?? null);
+        pullUrl(pipelineId: number, streamKey: string, timeoutUs?: number): string {
+            return inputPullUrl(streamKey, inputProtocols.get(pipelineId) ?? null, timeoutUs);
         },
     };
 }

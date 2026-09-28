@@ -384,7 +384,18 @@ describe('URL builders', () => {
     test('srtPullUrl uses default host and SRT port', () => {
         assert.equal(
             srtPullUrl('mykey'),
-            'srt://127.0.0.1:10080?streamid=#!::r=live/mykey,m=request&latency=200000&transtype=live',
+            'srt://127.0.0.1:10080?streamid=#!::r=live/mykey,m=request&latency=200000&transtype=live&timeout=600000000',
+        );
+    });
+
+    // libsrt's own `-timeout` doesn't apply automatically like the generic
+    // `-rw_timeout` CLI flag does for other protocols — it has to be this
+    // URL parameter. Callers that need a shorter bound (e.g. the translation
+    // mixer's translator leg) can override the default.
+    test('srtPullUrl accepts a shorter timeout override', () => {
+        assert.equal(
+            srtPullUrl('mykey', 5_000_000),
+            'srt://127.0.0.1:10080?streamid=#!::r=live/mykey,m=request&latency=200000&transtype=live&timeout=5000000',
         );
     });
 
@@ -421,7 +432,7 @@ describe('URL builders', () => {
 
         assert.equal(
             configuredSrtPullUrl('mykey'),
-            'srt://127.0.0.1:12080?streamid=#!::r=live/mykey,m=request&latency=200000&transtype=live',
+            'srt://127.0.0.1:12080?streamid=#!::r=live/mykey,m=request&latency=200000&transtype=live&timeout=600000000',
         );
         assert.equal(
             configuredSrtPublishUrl('mykey', 'myhost'),
@@ -441,7 +452,7 @@ describe('URL builders', () => {
 
         assert.equal(
             configuredSrtPullUrl('mykey'),
-            'srt://127.0.0.1:10080?streamid=#!::r=live/mykey,m=request&latency=200000&transtype=live&passphrase=supersecretpass&pbkeylen=16',
+            'srt://127.0.0.1:10080?streamid=#!::r=live/mykey,m=request&latency=200000&transtype=live&timeout=600000000&passphrase=supersecretpass&pbkeylen=16',
         );
     });
 
@@ -472,7 +483,7 @@ describe('URL builders', () => {
         const { srtPullUrl: pull } = reloadSrs('listen 1935;\n');
         assert.equal(
             pull('k'),
-            'srt://127.0.0.1:10080?streamid=#!::r=live/k,m=request&latency=200000&transtype=live',
+            'srt://127.0.0.1:10080?streamid=#!::r=live/k,m=request&latency=200000&transtype=live&timeout=600000000',
         );
     });
 
@@ -503,7 +514,7 @@ describe('URL builders', () => {
         assert.equal(pull('k'), 'rtmp://127.0.0.1:1935/live/k');
         assert.equal(
             srtPull('k'),
-            'srt://127.0.0.1:10080?streamid=#!::r=live/k,m=request&latency=200000&transtype=live',
+            'srt://127.0.0.1:10080?streamid=#!::r=live/k,m=request&latency=200000&transtype=live&timeout=600000000',
         );
     });
 

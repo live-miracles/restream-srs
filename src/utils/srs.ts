@@ -1,4 +1,5 @@
 import { readSrsConfigValues } from './srsConfig.js';
+import { INPUT_TIMEOUT_US } from './ffmpeg.js';
 
 const SRS_CLIENT_FETCH_TIMEOUT_MS = 3000;
 const SRS_CLIENT_HEALTH_FETCH_TIMEOUT_MS = 1000;
@@ -142,9 +143,19 @@ export function rtmpPullUrl(streamKey: string): string {
 // transtype=live) lets the stream flow. This pulls the raw MPEG-TS untouched,
 // so every audio track survives (RTMP/srt_to_rtmp would collapse to one) and
 // the timestamps stay clean (no srt_to_rtmp jitter — ffmpeg demuxes the TS).
-export function srtPullUrl(streamKey: string): string {
+//
+// `timeout` (libsrt's own socket-I/O timeout, microseconds) bounds how long
+// ffmpeg will block on this pull when SRS holds the play session open but
+// stops sending payload (e.g. its publisher went away) — the generic
+// `-rw_timeout` CLI flag used elsewhere does NOT apply to the srt:// protocol
+// (confirmed against ffmpeg's own protocol option list; libsrt has its own
+// `-timeout`), so without this the pull can block indefinitely. Defaults to
+// the same bound as `-rw_timeout` elsewhere; callers pulling audio that must
+// recover quickly (e.g. a translation mixer's translator leg) can pass a much
+// shorter override.
+export function srtPullUrl(streamKey: string, timeoutUs: number = INPUT_TIMEOUT_US): string {
     const srs = readSrsConfigValues();
-    let url = `srt://${srs.rtmpHost}:${srs.srtPort}?streamid=#!::r=live/${streamKey},m=request&latency=200000&transtype=live`;
+    let url = `srt://${srs.rtmpHost}:${srs.srtPort}?streamid=#!::r=live/${streamKey},m=request&latency=200000&transtype=live&timeout=${timeoutUs}`;
     if (srs.srtPassphrase) {
         url += `&passphrase=${encodeURIComponent(srs.srtPassphrase)}&pbkeylen=16`;
     }
