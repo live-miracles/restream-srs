@@ -126,6 +126,13 @@ export interface AudioTrackInfo {
     pid: number | null;
 }
 
+export interface TranslationOutputHealth {
+    mode: 'source-only' | 'translated';
+    duckState: 'resting' | 'ducked';
+    sourceVolumePercent: number;
+    lastTranslatorMeterDb: number | null;
+}
+
 export interface OutputStatus {
     status: 'running' | 'stopped' | 'failed';
     pid: number | null;
@@ -138,6 +145,8 @@ export interface OutputStatus {
     memoryUsageBytes: number | null;
     memoryLimitBytes: number | null;
     cpuPercent: number | null;
+    // Only non-null for audioEncoding === 'translation' outputs.
+    translation: TranslationOutputHealth | null;
 }
 
 export interface SrtRelayStatus {
@@ -399,4 +408,6 @@ export interface OutputView extends Output {
     memoryUsageBytes: number | null;
     memoryLimitBytes: number | null;
     cpuPercent: number | null;
+    // Named distinctly from the inherited `translation` config field (Output.translation).
+    translationHealth: TranslationOutputHealth | null;
 }

@@ -56,13 +56,6 @@ const diagnostics = createDiagnosticsLogger(
 const inputState = createInputState();
 const outputService = createOutputService(db, inputState, diagnostics);
 const srtRelayService = createSrtRelayService(diagnostics);
-const healthService = createHealthService(
-    db,
-    outputService,
-    srtRelayService,
-    inputState,
-    diagnostics,
-);
 const previewService = createPreviewService(db, inputState);
 const hostProbeService = createHostProbeService(db);
 const translationMixerService = createTranslationMixerService(
@@ -70,6 +63,14 @@ const translationMixerService = createTranslationMixerService(
     inputState,
     outputService,
     diagnostics,
+);
+const healthService = createHealthService(
+    db,
+    outputService,
+    srtRelayService,
+    inputState,
+    diagnostics,
+    translationMixerService,
 );
 
 // Unauthenticated routes

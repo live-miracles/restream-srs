@@ -52,16 +52,34 @@ interface MixerJob {
     lastTotalSizeBytes: number | null;
     lastBitrateKbps: number | null;
     lastTranslatorMeterAtMs: number;
+    lastTranslatorMeterDb: number | null;
+}
+
+interface MixerStateSnapshot {
+    state: DuckState;
+    sourceVolumePercent: number;
 }
 
 interface MixerStateController {
     onMeterPeakDb(db: number): void;
     onTranslatorUnavailable(): void;
+    getSnapshot(): MixerStateSnapshot;
     close(): void;
+}
+
+// Live duck/source-volume state for one translation output, surfaced through
+// health.ts so the dashboard can show what the mixer is actually doing right
+// now instead of only finding out after the fact from logs.
+export interface TranslationOutputState {
+    mode: 'source-only' | 'translated';
+    duckState: DuckState;
+    sourceVolumePercent: number;
+    lastTranslatorMeterDb: number | null;
 }
 
 export interface TranslationMixerService {
     start(): void;
+    getState(outputId: string): TranslationOutputState | null;
     shutdown(): void;
 }
 
@@ -147,6 +165,7 @@ function createMixerStateController(
     mix: TranslationConfig,
     socket: Request,
     outputId: string,
+    diagnostics?: DiagnosticsLogger,
 ): MixerStateController {
     let currentGain = volumePercentToAmplitude(mix.restoreVolumePercent);
     let tracker: DuckTracker = { state: 'resting', hasDetectedVoice: false, lastVoiceAt: 0 };
@@ -192,15 +211,17 @@ function createMixerStateController(
         const decision = nextDuckDecision(tracker, db, Date.now(), mix);
         tracker = decision.tracker;
         if (decision.ramp) {
-            // Only logged on an actual state transition (ducking or restoring),
-            // not per meter sample — cheap enough to always leave on, and the
-            // only way to tell "genuinely still ducked" from "stuck ducked"
-            // after the fact without re-instrumenting mid-incident.
-            console.log(
-                `[translation-mixer] ${outputId} duck->${decision.tracker.state} ` +
-                    `meter_db=${Number.isFinite(db) ? db.toFixed(1) : db} ` +
-                    `target=${decision.ramp.targetPercent}% ramp_ms=${decision.ramp.durationMs}`,
-            );
+            // Live state is queryable via getSnapshot()/getState() for the UI —
+            // this is just the structured, non-spammy breadcrumb trail for
+            // after-the-fact incident review (rotated diagnostics files, not
+            // stdout/journalctl).
+            diagnostics?.event('translation-mixer-duck-transition', {
+                outputId,
+                state: decision.tracker.state,
+                meterDb: db,
+                targetPercent: decision.ramp.targetPercent,
+                rampMs: decision.ramp.durationMs,
+            });
             rampTo(volumePercentToAmplitude(decision.ramp.targetPercent), decision.ramp.durationMs);
         }
     }
@@ -209,10 +230,18 @@ function createMixerStateController(
     return {
         onMeterPeakDb,
         onTranslatorUnavailable: () => {
-            console.log(`[translation-mixer] ${outputId} duck->resting (translator unavailable)`);
+            diagnostics?.event('translation-mixer-duck-transition', {
+                outputId,
+                state: 'resting',
+                reason: 'translator unavailable',
+            });
             tracker = { state: 'resting', hasDetectedVoice: false, lastVoiceAt: 0 };
             rampTo(volumePercentToAmplitude(mix.restoreVolumePercent), mix.restoreDurationMs);
         },
+        getSnapshot: () => ({
+            state: tracker.state,
+            sourceVolumePercent: Math.round(currentGain * 100),
+        }),
         close: () => {
             closed = true;
             if (rampTimer) clearInterval(rampTimer);
@@ -459,11 +488,17 @@ export function createTranslationMixerService(
         const controller =
             control === null
                 ? {
+                      // Source-only mode has no gain filter at all (nothing to
+                      // duck against), so the source always plays at full volume.
                       onMeterPeakDb: () => {},
                       onTranslatorUnavailable: () => {},
+                      getSnapshot: () => ({
+                          state: 'resting' as const,
+                          sourceVolumePercent: 100,
+                      }),
                       close: () => {},
                   }
-                : createMixerStateController(mix, control, output.id);
+                : createMixerStateController(mix, control, output.id, diagnostics);
         const job: MixerJob = {
             process: child,
             mode,
@@ -480,6 +515,7 @@ export function createTranslationMixerService(
             lastTotalSizeBytes: null,
             lastBitrateKbps: null,
             lastTranslatorMeterAtMs: Date.now(),
+            lastTranslatorMeterDb: null,
         };
         jobs.set(output.id, job);
         stopRequested.delete(output.id);
@@ -542,11 +578,13 @@ export function createTranslationMixerService(
             for (const line of chunk.toString('utf8').split(/\r?\n/)) {
                 const match = line.match(METER_VOICE_PATTERN);
                 if (match) {
+                    const db = match[1] === '-inf' ? -Infinity : Number(match[1]);
                     const current = jobs.get(output.id);
                     if (current?.process === child && current.mode === 'translated') {
                         current.lastTranslatorMeterAtMs = Date.now();
+                        current.lastTranslatorMeterDb = db;
                     }
-                    controller.onMeterPeakDb(match[1] === '-inf' ? -Infinity : Number(match[1]));
+                    controller.onMeterPeakDb(db);
                 }
             }
         });
@@ -733,6 +771,18 @@ export function createTranslationMixerService(
         void reconcile();
     }
 
+    function getState(outputId: string): TranslationOutputState | null {
+        const job = jobs.get(outputId);
+        if (!job) return null;
+        const snapshot = job.controller.getSnapshot();
+        return {
+            mode: job.mode,
+            duckState: snapshot.state,
+            sourceVolumePercent: snapshot.sourceVolumePercent,
+            lastTranslatorMeterDb: job.lastTranslatorMeterDb,
+        };
+    }
+
     function shutdown(): void {
         if (shuttingDown) return;
         shuttingDown = true;
@@ -740,5 +790,5 @@ export function createTranslationMixerService(
         for (const outputId of jobs.keys()) void stopJob(outputId);
     }
 
-    return { start, shutdown };
+    return { start, getState, shutdown };
 }

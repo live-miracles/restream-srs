@@ -140,6 +140,17 @@ export function renderOutputCard(
             `<span class="badge badge-xs badge-accent badge-soft whitespace-nowrap">${label}</span>`,
         );
     }
+    if (isRunning && output.translationHealth) {
+        const th = output.translationHealth;
+        const duckCls = th.duckState === 'ducked' ? 'badge-warning' : 'badge-success';
+        const meterLabel =
+            th.lastTranslatorMeterDb !== null && Number.isFinite(th.lastTranslatorMeterDb)
+                ? `${th.lastTranslatorMeterDb.toFixed(1)}dB`
+                : 'n/a';
+        badges.push(
+            `<span class="badge badge-xs ${duckCls} badge-soft whitespace-nowrap" title="Source volume — ${th.duckState}, translator meter ${meterLabel}">vol ${th.sourceVolumePercent}%</span>`,
+        );
+    }
     if (uptimeMs !== null) {
         badges.push(
             `<span class="font-mono text-xs opacity-60 whitespace-nowrap">${deps.formatUptime(uptimeMs)}</span>`,

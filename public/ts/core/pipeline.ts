@@ -149,6 +149,7 @@ export function parsePipelines(
                 memoryUsageBytes: oh?.memoryUsageBytes ?? null,
                 memoryLimitBytes: oh?.memoryLimitBytes ?? null,
                 cpuPercent: oh?.cpuPercent ?? null,
+                translationHealth: oh?.translation ?? null,
             };
         });
 

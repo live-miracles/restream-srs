@@ -10,7 +10,7 @@ import {
     type AudioTrackInfo,
 } from '../utils/srs.js';
 import { readSrsConfigValues } from '../utils/srsConfig.js';
-import type { Db } from '../types.js';
+import type { Db, Output } from '../types.js';
 import type { OutputService } from './outputs.js';
 import type {
     SrtRelayService,
@@ -23,6 +23,7 @@ import type {
 import { inputPullUrl, type InputProtocol, type InputState } from './inputState.js';
 import type { DiagnosticsLogger } from '../utils/diagnostics.js';
 import { isProbeUsable, probeError, runFfprobe, type ProbeResult } from './mediaProbe.js';
+import type { TranslationMixerService, TranslationOutputState } from './translationMixer.js';
 
 export { isProbeUsable };
 
@@ -129,6 +130,10 @@ interface OutputHealth {
     lastTotalSizeBytes: number | null;
     progressAgeMs: number | null;
     outputProgressAgeMs: number | null;
+    // Only present for audioEncoding === 'translation' outputs — null bitrate
+    // above is expected for these until ffmpeg progress arrives, but the duck
+    // state below is what actually answers "why is the source quiet right now".
+    translation: TranslationOutputState | null;
 }
 
 interface PipelineHealth {
@@ -297,6 +302,7 @@ export function createHealthService(
     srtRelayService: SrtRelayService,
     inputState: InputState,
     diagnostics?: DiagnosticsLogger,
+    translationMixerService?: TranslationMixerService,
 ) {
     let snapshot: HealthSnapshot = {
         generatedAt: new Date().toISOString(),
@@ -484,12 +490,14 @@ export function createHealthService(
 
         const outputRows = db.listOutputs();
         const outputsByPipeline = new Map<number, string[]>();
+        const outputById = new Map<string, Output>();
         const lastErrorById = new Map<string, string | null>();
         const hasErrorHistoryById = new Map<string, boolean>();
         for (const o of outputRows) {
             const ids = outputsByPipeline.get(o.pipelineId);
             if (ids) ids.push(o.id);
             else outputsByPipeline.set(o.pipelineId, [o.id]);
+            outputById.set(o.id, o);
             lastErrorById.set(o.id, o.lastError);
             hasErrorHistoryById.set(o.id, o.hasErrorHistory);
         }
@@ -684,11 +692,15 @@ export function createHealthService(
             const outputsHealth: Record<string, OutputHealth> = {};
             for (const outId of outputsByPipeline.get(pipeline.id) ?? []) {
                 const stats = outputService.getStats(outId);
+                const isTranslation = outputById.get(outId)?.audioEncoding === 'translation';
                 outputsHealth[outId] = {
                     ...stats,
                     failures: stats.failures,
                     lastError: lastErrorById.get(outId) ?? null,
                     hasErrorHistory: hasErrorHistoryById.get(outId) ?? false,
+                    translation: isTranslation
+                        ? (translationMixerService?.getState(outId) ?? null)
+                        : null,
                 };
             }
 
