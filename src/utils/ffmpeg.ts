@@ -223,7 +223,16 @@ export function buildTranslationMixerArgs(
             `[source]volume@source_gain=1,azmq=bind_address=tcp\\\\://127.0.0.1\\\\:${config.controlPort}[source_controlled];` +
             `[1:a:${translatorTrackIndex}]aresample=48000:async=1:first_pts=0,asplit=2[translator_audio][translator_meter];` +
             `[translator_audio]adelay=${delay}:all=1[translator_delayed];` +
-            `[translator_meter]astats=metadata=1:reset=0.1,ametadata=mode=print:file=pipe\\\\:3,anullsink;` +
+            // astats' `reset` is a frame count, not seconds — 0 (or a value
+            // that rounds/truncates to it) disables periodic reset entirely,
+            // making Overall.Peak_level a cumulative high-water mark for the
+            // whole stream instead of a live reading. That silently wedges
+            // voice detection: once the translator has ever spoken, the
+            // reported peak never comes back down on its own, so the source
+            // stays ducked/low even through real silence until the mixer is
+            // restarted. reset=1 recomputes every frame (~20ms at 48kHz),
+            // giving a genuinely live reading.
+            `[translator_meter]astats=metadata=1:reset=1,ametadata=mode=print:file=pipe\\\\:3,anullsink;` +
             `[source_controlled][translator_delayed]amix=inputs=2:duration=longest:dropout_transition=0.2[mixed_audio]`,
         '-map',
         '0:v:0?',
