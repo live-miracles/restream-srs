@@ -1146,8 +1146,25 @@
         <div class="mx-auto max-w-4xl space-y-6">
           <h2 class="text-xl font-bold">User Manual</h2>
 
+          <nav class="text-sm">
+            <p class="pt-1 pb-1 font-medium">Contents</p>
+            <ul class="list-inside list-disc space-y-1 opacity-70">
+              <li><a class="link link-hover" href="#manual-publishing">Publishing to a pipeline</a></li>
+              <li>
+                <a class="link link-hover" href="#manual-translation">Translation outputs</a>
+                <ul class="list-inside list-disc space-y-1 pl-4">
+                  <li><a class="link link-hover" href="#manual-translation-timing">Signal flow and timing</a></li>
+                  <li><a class="link link-hover" href="#manual-translation-settings">Translation settings</a></li>
+                  <li><a class="link link-hover" href="#manual-translation-known-issues">Known issues</a></li>
+                </ul>
+              </li>
+            </ul>
+          </nav>
+
+          <div class="divider my-0"></div>
+
           <section class="space-y-2">
-            <h3 class="text-lg font-semibold">Publishing to a pipeline</h3>
+            <h3 class="text-lg font-semibold" id="manual-publishing">Publishing to a pipeline</h3>
             <p class="text-sm opacity-70">
               Each pipeline exposes an RTMP and an SRT publish URL (see the pipeline's Stream Key panel) that any encoder or ffmpeg can push to. A few
               ready-to-use ffmpeg test commands:
@@ -1187,7 +1204,7 @@ ffmpeg -re -stream_loop -1 -i video.mp4 \
           <div class="divider my-0"></div>
 
           <section class="space-y-2">
-            <h3 class="text-lg font-semibold">Translation outputs</h3>
+            <h3 class="text-lg font-semibold" id="manual-translation">Translation outputs</h3>
             <p class="text-sm opacity-70">
               A translation output is configured directly on an output. The output's normal pipeline is the
               <strong>source</strong> stream: it supplies the video and source audio. A second, user-selected pipeline supplies translator audio. The
@@ -1204,7 +1221,7 @@ ffmpeg -re -stream_loop -1 -i video.mp4 \
               side is RTMP.
             </p>
 
-            <p class="pt-2 text-sm font-medium">Signal flow and timing</p>
+            <p class="pt-2 text-sm font-medium" id="manual-translation-timing">Signal flow and timing</p>
             <p class="text-sm opacity-70">
               The translator audio is delayed before it is mixed into the output. The mixer measures the translator's undelayed audio to detect
               speech, then uses that advance time to reduce the source volume before the translated speech becomes audible — this avoids the source
@@ -1237,7 +1254,7 @@ T2: translator has been silent long enough; source restores.</pre
               of finishing the climb back up first.
             </p>
 
-            <p class="pt-2 text-sm font-medium">Translation settings</p>
+            <p class="pt-2 text-sm font-medium" id="manual-translation-settings">Translation settings</p>
             <div class="border-base-content/10 overflow-x-auto rounded-lg border">
               <table class="table-sm table">
                 <thead>
@@ -1279,7 +1296,7 @@ T2: translator has been silent long enough; source restores.</pre
               gain, or 6% of the source amplitude.
             </p>
 
-            <p class="pt-2 text-sm font-medium">Known issues</p>
+            <p class="pt-2 text-sm font-medium" id="manual-translation-known-issues">Known issues</p>
             <p class="text-sm opacity-70">
               If the translator input disconnects, the source volume can take tens of seconds (sometimes a minute or more) to restore, even though the
               output keeps publishing source audio the whole time. This is not a bug we plan to fix: recovery only starts once SRS itself detects the
