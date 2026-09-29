@@ -432,6 +432,36 @@ and rebuilding SRS itself.
 **Mitigation:** filter `SRTS_BROKEN` / `srt play recv thread` lines out of log
 monitoring/alerting rather than treating them as incidents.
 
+### Translation output recovery after a translator SRT disconnect is slow
+
+When a translation output's translator input drops, the source's ducked
+volume does not recover for tens of seconds — sometimes a minute or more.
+Reconnecting the translator is fast by comparison (a few seconds). This
+asymmetry is expected: connecting is an edge-triggered, unambiguous event (a
+new publish is immediately visible), but disconnecting is inferred from
+absence, which SRS can't trust right away — the app only reacts once its
+health poll observes SRS's own stream list as gone, and SRS itself only
+concludes an SRT peer is dead after its `srt_server.peer_idle_timeout`
+elapses with nothing received, confirmed via `SRTS_BROKEN` in the SRS log
+(see the entry above). In the rarer case where the translation mixer's own
+FFmpeg process also stalls (rather than just losing the translator leg
+cleanly), recovery instead waits on the coarser output-progress-stalled
+watchdog (`stallMs`, default 45s) to restart it.
+
+**Why this is not tuned lower.** `peer_idle_timeout` is a single setting on
+SRS's shared SRT listener — it applies to every SRT input, not just
+translators, including the main broadcast source. SRT exists specifically to
+tolerate lossy/unstable networks; shortening this timeout to speed up
+translator recovery would risk the main source being torn down on a brief,
+real network blip during a live event. A translator SRT drop is rare, and
+the output degrades gracefully in the meantime (it keeps publishing source
+audio throughout), so that tradeoff is not worth the risk to the primary
+broadcast path.
+
+**Mitigation:** none needed — the output stays up on source audio for the
+entire gap. If translator disconnects become frequent enough to matter,
+investigate the translator's own network path rather than this timeout.
+
 ### Watchdogs
 
 The app runs these recovery loops:

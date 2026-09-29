@@ -1278,6 +1278,16 @@ T2: translator has been silent long enough; source restores.</pre
               Volume values are entered as normal percentages from 0 to 100 and are converted directly to FFmpeg gain — for example, 6 means 0.06
               gain, or 6% of the source amplitude.
             </p>
+
+            <p class="pt-2 text-sm font-medium">Known issues</p>
+            <p class="text-sm opacity-70">
+              If the translator input disconnects, the source volume can take tens of seconds (sometimes a minute or more) to restore, even though the
+              output keeps publishing source audio the whole time. This is not a bug we plan to fix: recovery only starts once SRS itself detects the
+              dead SRT connection, and SRT is deliberately slow to declare a peer gone so it can tell a real disconnect apart from ordinary network
+              jitter. Reconnecting the translator is fast (a few seconds) because a new connection is unambiguous the moment it arrives. We won't tune
+              SRS's detection to be faster, since that would risk falsely dropping the <strong>main broadcast source</strong>
+              during a brief, real network hiccup — a far costlier failure than a slow translator recovery.
+            </p>
           </section>
         </div>
       </div>
