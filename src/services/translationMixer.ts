@@ -34,6 +34,12 @@ const MODE_SWITCH_UP_GRACE_MS = 3000;
 // should recover in a few seconds, not linger for minutes.
 const TRANSLATOR_PULL_TIMEOUT_US = 5 * 1_000_000;
 const METER_VOICE_PATTERN = /lavfi\.astats\.Overall\.Peak_level=(-?\d+(?:\.\d+)?|-inf)/;
+// astats reports true digital silence as -inf, which JSON.stringify turns
+// into null (JSON has no Infinity) — indistinguishable, over the API, from
+// "no meter sample has arrived yet". Floor it to a finite sentinel instead,
+// so the health snapshot/UI can tell "genuinely silent" from "never sampled".
+// Matches the voiceThresholdDb input's own floor (see api/outputs.ts).
+const METER_SILENCE_FLOOR_DB = -100;
 const appConfig = readAppConfig();
 
 interface MixerJob {
@@ -582,7 +588,9 @@ export function createTranslationMixerService(
                     const current = jobs.get(output.id);
                     if (current?.process === child && current.mode === 'translated') {
                         current.lastTranslatorMeterAtMs = Date.now();
-                        current.lastTranslatorMeterDb = db;
+                        current.lastTranslatorMeterDb = Number.isFinite(db)
+                            ? db
+                            : METER_SILENCE_FLOOR_DB;
                     }
                     controller.onMeterPeakDb(db);
                 }
