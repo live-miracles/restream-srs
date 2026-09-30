@@ -171,11 +171,11 @@
 
     <!-- Pipeline modal -->
     <dialog id="edit-pipe-modal" class="modal">
-      <div class="modal-box w-fit">
+      <div class="modal-box w-fit max-w-[95vw]">
         <input type="hidden" id="pipe-id-input" />
         <div class="mx-auto mt-2 px-4">
           <h2 class="mb-3 text-xl font-bold" id="pipe-modal-title">Add Pipeline</h2>
-          <div class="flex items-end gap-3">
+          <div class="flex flex-wrap items-end gap-3">
             <fieldset class="fieldset">
               <legend class="fieldset-legend">Pipeline Name</legend>
               <input type="text" id="pipe-name-input" class="input w-48" placeholder="My Stream" oninput="this.classList.remove('input-error')" />
@@ -183,6 +183,10 @@
             <fieldset class="fieldset">
               <legend class="fieldset-legend">Stream Key</legend>
               <select class="select w-44 font-mono text-sm" id="pipe-key-select"></select>
+            </fieldset>
+            <fieldset class="fieldset">
+              <legend class="fieldset-legend">Group</legend>
+              <select class="select w-36 text-sm" id="pipe-group-select"></select>
             </fieldset>
           </div>
         </div>
@@ -1100,6 +1104,44 @@
             <button id="regen-stream-keys-btn" type="button" class="btn btn-sm btn-warning shrink-0" onclick="regenerateStreamKeysBtn(this)">
               Regenerate All
             </button>
+          </div>
+
+          <div class="space-y-2">
+            <div class="flex items-center justify-between pt-1">
+              <span class="fieldset-legend">Pipeline Groups</span>
+              <button id="settings-add-pipeline-group-btn" type="button" class="btn btn-xs btn-ghost" onclick="addPipelineGroupRowBtn()">
+                + Add group
+              </button>
+            </div>
+            <div class="border-base-content/10 overflow-x-auto rounded-lg border">
+              <table class="table-sm table">
+                <thead>
+                  <tr>
+                    <th class="w-8"></th>
+                    <th>Name</th>
+                    <th class="w-12"></th>
+                  </tr>
+                </thead>
+                <tbody id="settings-pipeline-group-rows"></tbody>
+              </table>
+            </div>
+            <div class="flex items-center justify-end gap-2">
+              <span id="settings-pipeline-groups-save-success" class="text-success hidden" aria-hidden="true">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="3"
+                  stroke-linecap="round"
+                  stroke-linejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              </span>
+              <button type="button" class="btn btn-sm btn-accent" onclick="settingsPipelineGroupsFormBtn(this)">Save</button>
+            </div>
           </div>
 
           <div class="space-y-2">

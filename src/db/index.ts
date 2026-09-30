@@ -4,6 +4,7 @@ import { setupDatabaseSchema } from './schema.js';
 import { readAppConfig } from '../utils/appConfig.js';
 import type {
     Pipeline,
+    PipelineGroup,
     Output,
     PipelineLog,
     StreamKey,
@@ -16,7 +17,7 @@ import type {
 } from '../types.js';
 
 const PIPELINE_SELECT = `
-    SELECT p.id, p.name, p.stream_key_id, COALESCE(sk.key, '') as stream_key
+    SELECT p.id, p.name, p.stream_key_id, p.group_id, COALESCE(sk.key, '') as stream_key
     FROM pipelines p
     LEFT JOIN stream_keys sk ON sk.id = p.stream_key_id
 `;
@@ -74,6 +75,15 @@ function rowToPipeline(row: Record<string, unknown>): Pipeline {
         name: row.name as string,
         streamKey: row.stream_key as string,
         streamKeyId: row.stream_key_id as number,
+        groupId: row.group_id as number | null,
+    };
+}
+
+function rowToPipelineGroup(row: Record<string, unknown>): PipelineGroup {
+    return {
+        id: row.id as number,
+        name: row.name as string,
+        position: row.position as number,
     };
 }
 
@@ -153,6 +163,9 @@ export function createDb(dbPath?: string): Db {
     const stmtListHostProbeTargets = sqlite.prepare(
         'SELECT slot, label, host, port FROM host_probe_targets ORDER BY slot',
     );
+    const stmtListPipelineGroups = sqlite.prepare(
+        'SELECT id, name, position FROM pipeline_groups ORDER BY position',
+    );
     const stmtGetSetting = sqlite.prepare('SELECT value FROM settings WHERE key = ?');
     const stmtSetSetting = sqlite.prepare(
         'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
@@ -171,6 +184,13 @@ export function createDb(dbPath?: string): Db {
     const stmtDeleteHostProbeTarget = sqlite.prepare(
         'DELETE FROM host_probe_targets WHERE slot = ?',
     );
+    const stmtInsertPipelineGroup = sqlite.prepare(
+        'INSERT INTO pipeline_groups (name, position) VALUES (?, ?)',
+    );
+    const stmtUpdatePipelineGroup = sqlite.prepare(
+        'UPDATE pipeline_groups SET name = ?, position = ? WHERE id = ?',
+    );
+    const stmtDeletePipelineGroup = sqlite.prepare('DELETE FROM pipeline_groups WHERE id = ?');
     const stmtDeleteOutputsForPipeline = sqlite.prepare(
         'DELETE FROM outputs WHERE pipeline_id = ?',
     );
@@ -367,6 +387,39 @@ export function createDb(dbPath?: string): Db {
             bumpConfigRev();
         },
 
+        listPipelineGroups(): PipelineGroup[] {
+            return (stmtListPipelineGroups.all() as Record<string, unknown>[]).map(
+                rowToPipelineGroup,
+            );
+        },
+
+        replacePipelineGroups(groups: { id?: number; name: string }[]): PipelineGroup[] {
+            const existingIds = new Set(
+                (stmtListPipelineGroups.all() as Record<string, unknown>[]).map(
+                    (row) => row.id as number,
+                ),
+            );
+            const incomingIds = new Set(
+                groups.filter((g) => g.id !== undefined).map((g) => g.id as number),
+            );
+            sqlite.transaction(() => {
+                groups.forEach((group, index) => {
+                    if (group.id !== undefined && existingIds.has(group.id)) {
+                        stmtUpdatePipelineGroup.run(group.name, index, group.id);
+                    } else {
+                        stmtInsertPipelineGroup.run(group.name, index);
+                    }
+                });
+                for (const id of existingIds) {
+                    if (!incomingIds.has(id)) stmtDeletePipelineGroup.run(id);
+                }
+            })();
+            bumpConfigRev();
+            return (stmtListPipelineGroups.all() as Record<string, unknown>[]).map(
+                rowToPipelineGroup,
+            );
+        },
+
         listStreamKeys(): StreamKey[] {
             return (stmtListStreamKeys.all() as Record<string, unknown>[]).map(rowToStreamKey);
         },
@@ -417,14 +470,26 @@ export function createDb(dbPath?: string): Db {
             return loadAllPipelines();
         },
 
-        updatePipeline(id: number, name: string, streamKeyId?: number): Pipeline | null {
+        updatePipeline(
+            id: number,
+            name: string,
+            streamKeyId?: number,
+            groupId?: number | null,
+        ): Pipeline | null {
+            const columns = ['name = ?'];
+            const values: (string | number | null)[] = [name];
             if (streamKeyId !== undefined) {
-                sqlite
-                    .prepare('UPDATE pipelines SET name = ?, stream_key_id = ? WHERE id = ?')
-                    .run(name, streamKeyId, id);
-            } else {
-                sqlite.prepare('UPDATE pipelines SET name = ? WHERE id = ?').run(name, id);
+                columns.push('stream_key_id = ?');
+                values.push(streamKeyId);
             }
+            if (groupId !== undefined) {
+                columns.push('group_id = ?');
+                values.push(groupId);
+            }
+            values.push(id);
+            sqlite
+                .prepare(`UPDATE pipelines SET ${columns.join(', ')} WHERE id = ?`)
+                .run(...values);
             bumpConfigRev();
             const row = stmtGetPipeline.get(id) as Record<string, unknown> | undefined;
             return row ? rowToPipeline(row) : null;

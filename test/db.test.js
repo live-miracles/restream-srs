@@ -147,6 +147,34 @@ describe('Pipeline CRUD', () => {
         const p = db.createPipeline();
         assert.throws(() => db.updatePipeline(p.id, p.name, 999999), /FOREIGN KEY/);
     });
+
+    test('created pipelines start with no group', () => {
+        assert.equal(makeDb().createPipeline().groupId, null);
+    });
+
+    test('updatePipeline with an omitted groupId leaves the existing group untouched', () => {
+        const db = makeDb();
+        const [group] = db.replacePipelineGroups([{ name: 'Main' }]);
+        const p = db.createPipeline();
+        db.updatePipeline(p.id, p.name, undefined, group.id);
+        const updated = db.updatePipeline(p.id, 'Renamed');
+        assert.equal(updated.groupId, group.id);
+    });
+
+    test('updatePipeline with an explicit null groupId clears the group', () => {
+        const db = makeDb();
+        const [group] = db.replacePipelineGroups([{ name: 'Main' }]);
+        const p = db.createPipeline();
+        db.updatePipeline(p.id, p.name, undefined, group.id);
+        const updated = db.updatePipeline(p.id, p.name, undefined, null);
+        assert.equal(updated.groupId, null);
+    });
+
+    test('updatePipeline rejects a group id that does not exist (FK constraint)', () => {
+        const db = makeDb();
+        const p = db.createPipeline();
+        assert.throws(() => db.updatePipeline(p.id, p.name, undefined, 999999), /FOREIGN KEY/);
+    });
 });
 
 describe('Translation output settings', () => {
@@ -736,6 +764,86 @@ describe('Host probe targets', () => {
         const db = makeDb();
         const rev = db.getConfigRev();
         db.replaceHostProbeTargets([{ slot: 1, label: 'A', host: 'a.example.com', port: 1 }]);
+        assert.ok(db.getConfigRev() > rev);
+    });
+});
+
+// ── Pipeline groups ────────────────────────────────────
+
+describe('Pipeline groups', () => {
+    test('listPipelineGroups is empty by default', () => {
+        assert.deepEqual(makeDb().listPipelineGroups(), []);
+    });
+
+    test('replacePipelineGroups creates new groups in array order', () => {
+        const db = makeDb();
+        const saved = db.replacePipelineGroups([{ name: 'Main' }, { name: 'Backup' }]);
+        assert.deepEqual(
+            saved.map((g) => g.name),
+            ['Main', 'Backup'],
+        );
+        assert.deepEqual(
+            saved.map((g) => g.position),
+            [0, 1],
+        );
+        assert.ok(saved[0].id > 0);
+        assert.notEqual(saved[0].id, saved[1].id);
+    });
+
+    test('replacePipelineGroups keeps the same id for a group that survives the save', () => {
+        const db = makeDb();
+        const [first] = db.replacePipelineGroups([{ name: 'Main' }]);
+        const [renamed] = db.replacePipelineGroups([{ id: first.id, name: 'Renamed' }]);
+        assert.equal(renamed.id, first.id);
+        assert.equal(renamed.name, 'Renamed');
+    });
+
+    test('replacePipelineGroups reorders by array position', () => {
+        const db = makeDb();
+        const [a, b] = db.replacePipelineGroups([{ name: 'A' }, { name: 'B' }]);
+        const reordered = db.replacePipelineGroups([
+            { id: b.id, name: 'B' },
+            { id: a.id, name: 'A' },
+        ]);
+        assert.deepEqual(
+            reordered.map((g) => g.id),
+            [b.id, a.id],
+        );
+        assert.deepEqual(
+            reordered.map((g) => g.position),
+            [0, 1],
+        );
+    });
+
+    test('replacePipelineGroups deletes a group left out of the array', () => {
+        const db = makeDb();
+        const [a, b] = db.replacePipelineGroups([{ name: 'A' }, { name: 'B' }]);
+        const remaining = db.replacePipelineGroups([{ id: a.id, name: 'A' }]);
+        assert.deepEqual(
+            remaining.map((g) => g.id),
+            [a.id],
+        );
+        assert.equal(
+            db.listPipelineGroups().some((g) => g.id === b.id),
+            false,
+        );
+    });
+
+    test('deleting a group unassigns its member pipelines (ON DELETE SET NULL)', () => {
+        const db = makeDb();
+        const [group] = db.replacePipelineGroups([{ name: 'Main' }]);
+        const p = db.createPipeline();
+        db.updatePipeline(p.id, p.name, undefined, group.id);
+        assert.equal(db.getPipeline(p.id).groupId, group.id);
+
+        db.replacePipelineGroups([]);
+        assert.equal(db.getPipeline(p.id).groupId, null);
+    });
+
+    test('replacePipelineGroups bumps the config revision', () => {
+        const db = makeDb();
+        const rev = db.getConfigRev();
+        db.replacePipelineGroups([{ name: 'Main' }]);
         assert.ok(db.getConfigRev() > rev);
     });
 });

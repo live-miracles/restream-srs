@@ -25,12 +25,13 @@ import type {
     LayoutOrderEntry,
     MetricSample,
     OutputView,
+    PipelineGroup,
     PipelineView,
     SrtBondingLeg,
     SrtBondingInputStatus,
     VideoInfo,
 } from '../types.js';
-import { updateLayoutOrder } from '../core/api.js';
+import { updateLayoutOrder, updatePipeline, updatePipelineGroups } from '../core/api.js';
 import { dupTooltip, formatOutputName, renderOutputCard, type DupRef } from './output-card.js';
 import { renderBondedLegs, renderBondingStats } from './srt-bonding-view.js';
 import { CHART_SCROLL_STEP_MS, CHART_WINDOW_MS, chartCard, drawChart } from './dashboard-charts.js';
@@ -51,6 +52,19 @@ declare global {
 
 type OutStatus = 'good' | 'warn' | 'error' | 'off';
 type InputStatus = 'good' | 'warn' | 'error' | 'off';
+const STATUS_RANK: Record<OutStatus, number> = { error: 3, warn: 2, good: 1, off: 0 };
+function worstStatus(a: OutStatus, b: OutStatus): OutStatus {
+    return STATUS_RANK[b] > STATUS_RANK[a] ? b : a;
+}
+function statusColor(st: OutStatus): string {
+    if (st === 'good') return STATUS_COLOR_GOOD;
+    if (st === 'warn') return STATUS_COLOR_WARN;
+    if (st === 'error') return STATUS_COLOR_ERROR;
+    return STATUS_COLOR_OFF;
+}
+function statusBadge(n: number, cls: string): string {
+    return n > 0 ? `<div class="badge badge-sm ${cls} px-2">${n}</div>` : '';
+}
 type OverviewIssue = {
     severity: 'warning' | 'error';
     message: string;
@@ -108,7 +122,12 @@ const METRIC_ERROR_PERCENT = 90;
 // right now" flag, and are always cleared by the drag's `dragend`, which
 // the browser guarantees fires whether the drop succeeded or was cancelled.
 let draggingPipelineEl: HTMLElement | null = null;
+let draggingGroupEl: HTMLElement | null = null;
 let draggingOutputEl: HTMLElement | null = null;
+// Updated on every dragover while a pipeline is being dragged, to whichever
+// group (or 'ungrouped') the cursor is currently over — read once at dragend
+// to decide whether the pipeline's group membership actually changed.
+let currentDropGroupKey: string | null = null;
 
 // The order actually being displayed right now (post drag-and-drop, or as
 // last loaded from the server) — the baseline `persist*Order` helpers below
@@ -118,12 +137,52 @@ function currentLayoutOrder(): LayoutOrderEntry[] {
     return state.pipelines.map((p) => ({ id: Number(p.id), outs: p.outs.map((o) => o.id) }));
 }
 
-async function persistPipelineOrder(newPipelineOrder: string[]): Promise<void> {
+async function persistLayoutOrderOnly(newPipelineOrder: string[]): Promise<void> {
     const byId = new Map(currentLayoutOrder().map((e) => [String(e.id), e]));
     const order = newPipelineOrder
         .map((id) => byId.get(id))
         .filter((e): e is LayoutOrderEntry => !!e);
     await updateLayoutOrder(order);
+}
+
+async function persistPipelineOrder(newPipelineOrder: string[]): Promise<void> {
+    await persistLayoutOrderOnly(newPipelineOrder);
+    const { refreshAfterMutation } = await import('./dashboard.js');
+    await refreshAfterMutation();
+}
+
+// Persists a pipeline drag that may have also moved the pipeline into a
+// different group (or out to ungrouped) — the drop position's group is
+// tracked live in `currentDropGroupKey` as the user drags, since the flat
+// list mixes group headers and pipeline rows and there's no other way to
+// tell "the pipeline landed in group X" from the final DOM order alone.
+async function persistPipelineDrop(
+    newPipelineOrder: string[],
+    movedId: string,
+    newGroupKey: string,
+): Promise<void> {
+    await persistLayoutOrderOnly(newPipelineOrder);
+    const pipeline = state.pipelines.find((p) => p.id === movedId);
+    if (pipeline) {
+        const newGroupId = newGroupKey === 'ungrouped' ? null : Number(newGroupKey);
+        if (newGroupId !== pipeline.groupId) {
+            await updatePipeline(movedId, pipeline.name, undefined, newGroupId);
+        }
+    }
+    const { refreshAfterMutation } = await import('./dashboard.js');
+    await refreshAfterMutation();
+}
+
+// Persists a reordering of the groups themselves — a whole-collection
+// replace (same endpoint Settings uses), keeping each group's id/name and
+// just resubmitting them in the new order so `position` follows array index.
+async function persistGroupOrder(groupIds: number[]): Promise<void> {
+    const byId = new Map((state.config.groups ?? []).map((g) => [g.id, g]));
+    const groups = groupIds
+        .map((id) => byId.get(id))
+        .filter((g): g is PipelineGroup => !!g)
+        .map((g) => ({ id: g.id, name: g.name }));
+    await updatePipelineGroups(groups);
     const { refreshAfterMutation } = await import('./dashboard.js');
     await refreshAfterMutation();
 }
@@ -786,7 +845,7 @@ function relayInputSeverityColor(
 function renderPipelineList(): void {
     const listEl = document.getElementById('pipelines');
     if (!listEl) return;
-    if (draggingPipelineEl) return; // preserve the DOM while a drag is in progress
+    if (draggingPipelineEl || draggingGroupEl) return; // preserve the DOM while a drag is in progress
 
     const inputsOn = state.pipelines.filter((p) => inputStatus(p.input) === 'good').length;
     const inputsWarn = state.pipelines.filter((p) => inputStatus(p.input) === 'warn').length;
@@ -838,119 +897,294 @@ function renderPipelineList(): void {
         if (refs.length > 1) dupKeys.set(id, refs);
     }
 
-    listEl.innerHTML = state.pipelines
-        .map((p) => {
-            const outGood = p.outs.filter((o) => outStatus(o, p.input) === 'good').length;
-            const outWarn = p.outs.filter((o) => outStatus(o, p.input) === 'warn').length;
-            const outFailed = p.outs.filter((o) => outStatus(o, p.input) === 'error').length;
-            const outOff = p.outs.filter((o) => outStatus(o, p.input) === 'off').length;
+    const renderPipelineRow = (p: PipelineView, groupKey: string): string => {
+        const outGood = p.outs.filter((o) => outStatus(o, p.input) === 'good').length;
+        const outWarn = p.outs.filter((o) => outStatus(o, p.input) === 'warn').length;
+        const outFailed = p.outs.filter((o) => outStatus(o, p.input) === 'error').length;
+        const outOff = p.outs.filter((o) => outStatus(o, p.input) === 'off').length;
 
-            const inColor = relayInputSeverityColor(
-                p,
-                relayProcessRunning,
-                inputStatusColor(p.input),
-            );
-            const outColor =
-                outFailed > 0
-                    ? STATUS_COLOR_ERROR
-                    : outWarn > 0
-                      ? STATUS_COLOR_WARN
-                      : outGood > 0
-                        ? STATUS_COLOR_GOOD
-                        : STATUS_COLOR_OFF;
-            const selected = p.id === selectedId ? 'bg-base-100' : '';
-            const relayInputSt = relayInputStatus(p, relayProcessRunning);
-            const relayOutputSt = relayOutputStatus(p, relayProcessRunning);
-            const statusIssues: OverviewIssue[] = [
-                ...inputIssues(p.input),
-                ...p.outs.flatMap((o) =>
-                    outputIssues(o, p.input).map((issue) => ({
-                        severity: issue.severity,
-                        message: `${o.name}: ${issue.message}`,
-                    })),
-                ),
-                ...relayIssues(p, relayProcessRunning, relayInputSt, relayOutputSt),
-            ];
-            const statusTooltip = renderIssueTooltip(statusIssues);
+        const inColor = relayInputSeverityColor(p, relayProcessRunning, inputStatusColor(p.input));
+        const outColor =
+            outFailed > 0
+                ? STATUS_COLOR_ERROR
+                : outWarn > 0
+                  ? STATUS_COLOR_WARN
+                  : outGood > 0
+                    ? STATUS_COLOR_GOOD
+                    : STATUS_COLOR_OFF;
+        const selected = p.id === selectedId ? 'bg-base-100' : '';
+        const relayInputSt = relayInputStatus(p, relayProcessRunning);
+        const relayOutputSt = relayOutputStatus(p, relayProcessRunning);
+        const statusIssues: OverviewIssue[] = [
+            ...inputIssues(p.input),
+            ...p.outs.flatMap((o) =>
+                outputIssues(o, p.input).map((issue) => ({
+                    severity: issue.severity,
+                    message: `${o.name}: ${issue.message}`,
+                })),
+            ),
+            ...relayIssues(p, relayProcessRunning, relayInputSt, relayOutputSt),
+        ];
+        const statusTooltip = renderIssueTooltip(statusIssues);
 
-            const badge = (n: number, cls: string) =>
-                n > 0 ? `<div class="badge badge-sm ${cls} px-2">${n}</div>` : '';
-            const uptimeSpan =
-                p.input.live && p.input.uptimeMs !== null
-                    ? `<span class="font-mono text-xs opacity-60 shrink-0">${formatUptime(p.input.uptimeMs)}</span>`
-                    : '';
-            const inputTypeBadge = p.input.connected
-                ? `<span class="badge badge-sm badge-outline shrink-0">${p.srtBonding.acceptedBySrs ? 'Relay' : p.input.isSrt ? 'SRT' : 'RTMP'}</span>`
+        const uptimeSpan =
+            p.input.live && p.input.uptimeMs !== null
+                ? `<span class="font-mono text-xs opacity-60 shrink-0">${formatUptime(p.input.uptimeMs)}</span>`
                 : '';
-            const dupKeyRefs = dupKeys.get(p.streamKeyId);
-            const nameClass = dupKeyRefs ? 'truncate min-w-0 text-warning' : 'truncate min-w-0';
-            const dupKeyWarn = dupKeyRefs
-                ? `<span class="js-tooltip text-warning shrink-0 inline-flex" tabindex="0">${ICON_WARN}<div class="js-tooltip-content hidden">${dupTooltip('Duplicate stream key — also used by:', dupKeyRefs)}</div></span>`
-                : '';
+        const inputTypeBadge = p.input.connected
+            ? `<span class="badge badge-sm badge-outline shrink-0">${p.srtBonding.acceptedBySrs ? 'Relay' : p.input.isSrt ? 'SRT' : 'RTMP'}</span>`
+            : '';
+        const dupKeyRefs = dupKeys.get(p.streamKeyId);
+        const nameClass = dupKeyRefs ? 'truncate min-w-0 text-warning' : 'truncate min-w-0';
+        const dupKeyWarn = dupKeyRefs
+            ? `<span class="js-tooltip text-warning shrink-0 inline-flex" tabindex="0">${ICON_WARN}<div class="js-tooltip-content hidden">${dupTooltip('Duplicate stream key — also used by:', dupKeyRefs)}</div></span>`
+            : '';
 
-            return `<li data-pipeline-id="${p.id}">
+        return `<li data-pipeline-id="${p.id}" data-group-key="${groupKey}">
             <div class="flex items-center gap-2 ${selected} cursor-pointer js-select-pipeline" data-id="${p.id}">
                 <div class="js-tooltip shrink-0">
                     <div class="rounded-box h-5 w-5" style="background:linear-gradient(90deg,${inColor},${inColor} 45%,#242933 45%,#242933 55%,${outColor} 55%)"></div>
                     <div class="js-tooltip-content hidden">${statusTooltip}</div>
                 </div>
-                ${badge(outGood, 'badge-success')}
-                ${badge(outWarn, 'badge-warning')}
-                ${badge(outFailed, 'badge-error')}
-                ${badge(outOff, 'badge-ghost')}
+                ${statusBadge(outGood, 'badge-success')}
+                ${statusBadge(outWarn, 'badge-warning')}
+                ${statusBadge(outFailed, 'badge-error')}
+                ${statusBadge(outOff, 'badge-ghost')}
                 <a class="js-pipeline-drag-handle cursor-grab ${nameClass}" draggable="true" title="Drag to reorder">${escapeHtml(p.name)}</a>
                 ${dupKeyWarn}
                 ${uptimeSpan}
                 ${inputTypeBadge}
             </div>
         </li>`;
-        })
-        .join('');
+    };
+
+    // Bucket pipelines by group — groups always render first, in the order
+    // configured in Settings, followed by ungrouped pipelines. A pipeline
+    // whose group no longer exists (deleted in Settings) falls back to
+    // ungrouped, self-healing the same way a stale layoutOrder id does.
+    const groups = [...(state.config.groups ?? [])].sort((a, b) => a.position - b.position);
+    const groupIds = new Set(groups.map((g) => g.id));
+    const byGroup = new Map<number, PipelineView[]>();
+    const ungrouped: PipelineView[] = [];
+    for (const p of state.pipelines) {
+        if (p.groupId !== null && groupIds.has(p.groupId)) {
+            const list = byGroup.get(p.groupId) ?? [];
+            list.push(p);
+            byGroup.set(p.groupId, list);
+        } else {
+            ungrouped.push(p);
+        }
+    }
+
+    // Marks where groups end and the ungrouped pipelines begin — without it,
+    // the first ungrouped row reads as if it might still belong to the group
+    // above it. Always shown (even with no groups or no ungrouped pipelines)
+    // so the boundary stays a stable, predictable landmark rather than
+    // popping in and out as membership changes.
+    const groupToUngroupedDivider = '<li class="border-base-content/10 my-1 border-t"></li>';
+
+    listEl.innerHTML =
+        groups
+            .map((g) => {
+                const members = byGroup.get(g.id) ?? [];
+                const collapsed = state.collapsedGroupIds.has(g.id);
+                const header = renderGroupHeader(g, members, collapsed);
+                const rows = collapsed
+                    ? ''
+                    : members.map((p) => renderPipelineRow(p, String(g.id))).join('');
+                return header + rows;
+            })
+            .join('') +
+        groupToUngroupedDivider +
+        ungrouped.map((p) => renderPipelineRow(p, 'ungrouped')).join('');
 
     listEl.onclick = (e) => {
+        const toggle = (e.target as Element).closest('.js-toggle-group') as HTMLElement | null;
+        if (toggle?.dataset.groupId) {
+            const groupId = Number(toggle.dataset.groupId);
+            if (state.collapsedGroupIds.has(groupId)) state.collapsedGroupIds.delete(groupId);
+            else state.collapsedGroupIds.add(groupId);
+            renderPipelineList();
+            return;
+        }
         const row = (e.target as Element).closest('.js-select-pipeline') as HTMLElement | null;
         if (row?.dataset.id) window.selectPipeline(row.dataset.id);
     };
 
     listEl.ondragstart = (e) => {
         const target = e.target as Element;
-        const li = target.closest('li[data-pipeline-id]') as HTMLElement | null;
-        if (!target.closest('.js-pipeline-drag-handle') || !li) {
-            e.preventDefault();
+        const pipelineLi = target.closest('li[data-pipeline-id]') as HTMLElement | null;
+        if (target.closest('.js-pipeline-drag-handle') && pipelineLi) {
+            draggingPipelineEl = pipelineLi;
+            currentDropGroupKey = null;
+            pipelineLi.classList.add('opacity-40');
+            e.dataTransfer!.effectAllowed = 'move';
+            e.dataTransfer!.setData('text/plain', pipelineLi.dataset.pipelineId!);
+            e.dataTransfer!.setDragImage(pipelineLi, 12, 12);
             return;
         }
-        draggingPipelineEl = li;
-        li.classList.add('opacity-40');
-        e.dataTransfer!.effectAllowed = 'move';
-        e.dataTransfer!.setData('text/plain', li.dataset.pipelineId!);
-        e.dataTransfer!.setDragImage(li, 12, 12);
+        const groupLi = target.closest('li[data-group-id]') as HTMLElement | null;
+        if (target.closest('.js-group-drag-handle') && groupLi) {
+            draggingGroupEl = groupLi;
+            groupLi.classList.add('opacity-40');
+            e.dataTransfer!.effectAllowed = 'move';
+            e.dataTransfer!.setData('text/plain', groupLi.dataset.groupId!);
+            e.dataTransfer!.setDragImage(groupLi, 12, 12);
+            return;
+        }
+        e.preventDefault();
     };
 
     listEl.ondragover = (e) => {
+        if (draggingGroupEl) {
+            // Groups only reorder among themselves — hovering a pipeline row
+            // (or empty space) simply doesn't move the header.
+            const overGroupLi = (e.target as Element).closest(
+                'li[data-group-id]',
+            ) as HTMLElement | null;
+            if (!overGroupLi || overGroupLi === draggingGroupEl) return;
+            e.preventDefault();
+            e.dataTransfer!.dropEffect = 'move';
+            const rect = overGroupLi.getBoundingClientRect();
+            const before = e.clientY < rect.top + rect.height / 2;
+            overGroupLi.parentElement?.insertBefore(
+                draggingGroupEl,
+                before ? overGroupLi : overGroupLi.nextElementSibling,
+            );
+            return;
+        }
+
         if (!draggingPipelineEl) return;
         e.preventDefault();
         e.dataTransfer!.dropEffect = 'move';
-        const overLi = (e.target as Element).closest('li[data-pipeline-id]') as HTMLElement | null;
-        if (!overLi || overLi === draggingPipelineEl) return;
-        const rect = overLi.getBoundingClientRect();
+        const overGroupLi = (e.target as Element).closest(
+            'li[data-group-id]',
+        ) as HTMLElement | null;
+        if (overGroupLi) {
+            // Dropping directly on a group's header moves the pipeline into
+            // that group as its first member — the only way to target a
+            // collapsed (or currently empty) group, which has no member rows
+            // of its own to drop onto.
+            currentDropGroupKey = overGroupLi.dataset.groupId!;
+            overGroupLi.parentElement?.insertBefore(
+                draggingPipelineEl,
+                overGroupLi.nextElementSibling,
+            );
+            return;
+        }
+        const overPipelineLi = (e.target as Element).closest(
+            'li[data-pipeline-id]',
+        ) as HTMLElement | null;
+        if (!overPipelineLi) {
+            // Empty space below the last row — only reachable past the last
+            // group's members or the ungrouped rows, so it always means "drop
+            // into ungrouped, at the end" (also how an empty ungrouped bucket,
+            // which otherwise has no row to drop onto, is reachable at all).
+            currentDropGroupKey = 'ungrouped';
+            listEl.appendChild(draggingPipelineEl);
+            return;
+        }
+        if (overPipelineLi === draggingPipelineEl) return;
+        currentDropGroupKey = overPipelineLi.dataset.groupKey!;
+        const rect = overPipelineLi.getBoundingClientRect();
         const before = e.clientY < rect.top + rect.height / 2;
-        overLi.parentElement?.insertBefore(
+        overPipelineLi.parentElement?.insertBefore(
             draggingPipelineEl,
-            before ? overLi : overLi.nextElementSibling,
+            before ? overPipelineLi : overPipelineLi.nextElementSibling,
         );
     };
 
     listEl.ondrop = (e) => e.preventDefault();
 
     listEl.ondragend = () => {
-        if (!draggingPipelineEl) return;
-        draggingPipelineEl.classList.remove('opacity-40');
-        draggingPipelineEl = null;
-        const order = Array.from(listEl.querySelectorAll('li[data-pipeline-id]')).map(
-            (li) => (li as HTMLElement).dataset.pipelineId!,
-        );
-        void persistPipelineOrder(order);
+        if (draggingGroupEl) {
+            draggingGroupEl.classList.remove('opacity-40');
+            const groupOrder = Array.from(listEl.querySelectorAll('li[data-group-id]')).map((li) =>
+                Number((li as HTMLElement).dataset.groupId),
+            );
+            draggingGroupEl = null;
+            void persistGroupOrder(groupOrder);
+            return;
+        }
+        if (draggingPipelineEl) {
+            const movedId = draggingPipelineEl.dataset.pipelineId!;
+            const newGroupKey = currentDropGroupKey ?? draggingPipelineEl.dataset.groupKey!;
+            draggingPipelineEl.classList.remove('opacity-40');
+            const order = Array.from(listEl.querySelectorAll('li[data-pipeline-id]')).map(
+                (li) => (li as HTMLElement).dataset.pipelineId!,
+            );
+            draggingPipelineEl = null;
+            currentDropGroupKey = null;
+            void persistPipelineDrop(order, movedId, newGroupKey);
+        }
     };
+}
+
+const ICON_CHEVRON_RIGHT = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><path d="m9 18 6-6-6-6"/></svg>`;
+const ICON_CHEVRON_DOWN = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><path d="m6 9 6 6 6-6"/></svg>`;
+
+// A group's aggregate status: the input half is the worst input status among
+// its member pipelines, the output half is the same good/warn/error/off
+// aggregation a single pipeline row already applies to its own outputs, just
+// combined across every member's outputs. Collapsed, the header shows that
+// swatch plus ok/warn/error counts of member pipelines (each pipeline's own
+// overall status is the worse of its input status and its output aggregate)
+// — the whole point of collapsing is keeping health visible without
+// expanding. Expanded, the header shows just the name since the member rows
+// underneath already show their own status individually.
+function renderGroupHeader(
+    group: PipelineGroup,
+    members: PipelineView[],
+    collapsed: boolean,
+): string {
+    let inSt: InputStatus = 'off';
+    let outGood = 0;
+    let outWarn = 0;
+    let outFailed = 0;
+    let memberOk = 0;
+    let memberWarn = 0;
+    let memberError = 0;
+    for (const p of members) {
+        const pInSt = inputStatus(p.input);
+        inSt = worstStatus(inSt, pInSt);
+        let pOutGood = 0;
+        let pOutWarn = 0;
+        let pOutFailed = 0;
+        for (const o of p.outs) {
+            const st = outStatus(o, p.input);
+            if (st === 'good') pOutGood++;
+            else if (st === 'warn') pOutWarn++;
+            else if (st === 'error') pOutFailed++;
+        }
+        outGood += pOutGood;
+        outWarn += pOutWarn;
+        outFailed += pOutFailed;
+        const pOutSt: OutStatus =
+            pOutFailed > 0 ? 'error' : pOutWarn > 0 ? 'warn' : pOutGood > 0 ? 'good' : 'off';
+        const overall = worstStatus(pInSt, pOutSt);
+        if (overall === 'error') memberError++;
+        else if (overall === 'warn') memberWarn++;
+        else if (overall === 'good') memberOk++;
+    }
+    const outSt: OutStatus =
+        outFailed > 0 ? 'error' : outWarn > 0 ? 'warn' : outGood > 0 ? 'good' : 'off';
+    const inColor = statusColor(inSt);
+    const outColor = statusColor(outSt);
+
+    const summary = collapsed
+        ? `<div class="rounded-box h-5 w-5 shrink-0" style="background:linear-gradient(90deg,${inColor},${inColor} 45%,#242933 45%,#242933 55%,${outColor} 55%)"></div>
+           ${statusBadge(memberOk, 'badge-success')}
+           ${statusBadge(memberWarn, 'badge-warning')}
+           ${statusBadge(memberError, 'badge-error')}`
+        : '';
+
+    return `<li data-group-id="${group.id}">
+        <div class="flex items-center gap-2 cursor-pointer js-toggle-group font-semibold opacity-90" data-group-id="${group.id}">
+            ${collapsed ? ICON_CHEVRON_RIGHT : ICON_CHEVRON_DOWN}
+            ${summary}
+            <span class="js-group-drag-handle cursor-grab truncate min-w-0" draggable="true" title="Drag to reorder">${escapeHtml(group.name)}</span>
+        </div>
+    </li>`;
 }
 
 // ── Pipeline info (middle column) ─────────────────────

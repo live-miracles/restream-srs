@@ -346,6 +346,124 @@ describe('Settings API integration', () => {
         });
     });
 
+    describe('POST /api/settings/pipeline-groups', () => {
+        test('saves groups in array order', async () => {
+            const harness = createHarness();
+            const res = await harness.request('POST', '/api/settings/pipeline-groups', {
+                groups: [{ name: 'Main' }, { name: 'Backup' }],
+            });
+
+            assert.equal(res.status, 200);
+            assert.deepEqual(
+                res.body.groups.map((g) => [g.name, g.position]),
+                [
+                    ['Main', 0],
+                    ['Backup', 1],
+                ],
+            );
+            assert.equal(harness.db.listPipelineGroups().length, 2);
+        });
+
+        test('preserves the id of a group that survives across saves', async () => {
+            const harness = createHarness();
+            const first = await harness.request('POST', '/api/settings/pipeline-groups', {
+                groups: [{ name: 'Main' }],
+            });
+            const groupId = first.body.groups[0].id;
+
+            const second = await harness.request('POST', '/api/settings/pipeline-groups', {
+                groups: [{ id: groupId, name: 'Renamed' }],
+            });
+
+            assert.equal(second.status, 200);
+            assert.equal(second.body.groups[0].id, groupId);
+            assert.equal(second.body.groups[0].name, 'Renamed');
+        });
+
+        test('omitting a group from the array deletes it and unassigns member pipelines', async () => {
+            const harness = createHarness();
+            const first = await harness.request('POST', '/api/settings/pipeline-groups', {
+                groups: [{ name: 'Main' }],
+            });
+            const groupId = first.body.groups[0].id;
+            const pipeline = harness.db.createPipeline();
+            harness.db.updatePipeline(pipeline.id, pipeline.name, undefined, groupId);
+
+            const res = await harness.request('POST', '/api/settings/pipeline-groups', {
+                groups: [],
+            });
+
+            assert.equal(res.status, 200);
+            assert.deepEqual(harness.db.listPipelineGroups(), []);
+            assert.equal(harness.db.getPipeline(pipeline.id).groupId, null);
+        });
+
+        test('rejects a missing name', async () => {
+            const harness = createHarness();
+            const res = await harness.request('POST', '/api/settings/pipeline-groups', {
+                groups: [{ name: '' }],
+            });
+            assert.equal(res.status, 400);
+        });
+
+        test('rejects a whitespace-only name', async () => {
+            const harness = createHarness();
+            const res = await harness.request('POST', '/api/settings/pipeline-groups', {
+                groups: [{ name: '   ' }],
+            });
+            assert.equal(res.status, 400);
+        });
+
+        test('rejects a non-array groups value', async () => {
+            const harness = createHarness();
+            const res = await harness.request('POST', '/api/settings/pipeline-groups', {
+                groups: 'not-an-array',
+            });
+            assert.equal(res.status, 400);
+        });
+
+        test('rejects an over-length name', async () => {
+            const harness = createHarness();
+            const res = await harness.request('POST', '/api/settings/pipeline-groups', {
+                groups: [{ name: 'x'.repeat(81) }],
+            });
+            assert.equal(res.status, 400);
+        });
+
+        test('rejects more than the 50-group maximum', async () => {
+            const harness = createHarness();
+            const groups = Array.from({ length: 51 }, (_, i) => ({ name: `Group ${i}` }));
+            const res = await harness.request('POST', '/api/settings/pipeline-groups', {
+                groups,
+            });
+            assert.equal(res.status, 400);
+        });
+
+        test('rejects a duplicate id in the same request', async () => {
+            const harness = createHarness();
+            const first = await harness.request('POST', '/api/settings/pipeline-groups', {
+                groups: [{ name: 'Main' }],
+            });
+            const groupId = first.body.groups[0].id;
+
+            const res = await harness.request('POST', '/api/settings/pipeline-groups', {
+                groups: [
+                    { id: groupId, name: 'A' },
+                    { id: groupId, name: 'B' },
+                ],
+            });
+            assert.equal(res.status, 400);
+        });
+
+        test('rejects a non-object array entry', async () => {
+            const harness = createHarness();
+            const res = await harness.request('POST', '/api/settings/pipeline-groups', {
+                groups: ['not-an-object'],
+            });
+            assert.equal(res.status, 400);
+        });
+    });
+
     describe('POST /api/settings/layout-order', () => {
         test('saves custom pipeline and output order', async () => {
             const harness = createHarness();

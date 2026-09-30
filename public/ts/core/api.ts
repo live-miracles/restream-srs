@@ -10,6 +10,7 @@ import type {
     SrsLogsData,
     LayoutOrderEntry,
     LegHistoryData,
+    PipelineGroup,
 } from '../types.js';
 
 let loadingCount = 0;
@@ -122,12 +123,27 @@ export const updateLayoutOrder = (order: LayoutOrderEntry[]) =>
         body: { order },
     });
 
+export const updatePipelineGroups = (groups: { id?: number; name: string }[]) =>
+    apiRequest<{ groups: PipelineGroup[] }>('/api/settings/pipeline-groups', {
+        method: 'POST',
+        body: { groups },
+    });
+
 export const createPipeline = () => apiRequest('/api/pipelines', { method: 'POST' });
 
-export const updatePipeline = (id: string, name: string, streamKeyId?: number) =>
+export const updatePipeline = (
+    id: string,
+    name: string,
+    streamKeyId?: number,
+    groupId?: number | null,
+) =>
     apiRequest(`/api/pipelines/${id}`, {
         method: 'POST',
-        body: streamKeyId !== undefined ? { name, streamKeyId } : { name },
+        body: {
+            name,
+            ...(streamKeyId !== undefined ? { streamKeyId } : {}),
+            ...(groupId !== undefined ? { groupId } : {}),
+        },
     });
 
 export const deletePipeline = (id: string) =>

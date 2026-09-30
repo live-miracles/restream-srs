@@ -9,6 +9,13 @@ export interface Pipeline {
     name: string;
     streamKey: string;
     streamKeyId: number;
+    groupId: number | null;
+}
+
+export interface PipelineGroup {
+    id: number;
+    name: string;
+    position: number;
 }
 
 export interface TranslationConfig {
@@ -118,6 +125,14 @@ export interface Db {
     listStreamKeys(): StreamKey[];
     regenerateStreamKeys(): StreamKey[];
 
+    listPipelineGroups(): PipelineGroup[];
+    // Whole-collection replace, keyed by id (not by array position) so a
+    // group that survives the save keeps the same id — pipelines reference
+    // groups by id via a foreign key. An item with no id is inserted as a
+    // new group; an existing group id left out of the array is deleted
+    // (member pipelines fall back to ungrouped via ON DELETE SET NULL).
+    replacePipelineGroups(groups: { id?: number; name: string }[]): PipelineGroup[];
+
     createPipeline(): Pipeline;
     getPipeline(id: number): Pipeline | undefined;
     // Resolves a translator selection back to its owning pipeline. Stream
@@ -126,7 +141,14 @@ export interface Db {
     // key, same ambiguity Restream destinations already accept.
     getPipelineByStreamKey(streamKey: string): Pipeline | undefined;
     listPipelines(): Pipeline[];
-    updatePipeline(id: number, name: string, streamKeyId?: number): Pipeline | null;
+    // groupId is tri-state: omitted leaves the pipeline's group untouched,
+    // null clears it, a number reassigns it.
+    updatePipeline(
+        id: number,
+        name: string,
+        streamKeyId?: number,
+        groupId?: number | null,
+    ): Pipeline | null;
     deletePipeline(id: number): boolean;
 
     createOutput(params: {

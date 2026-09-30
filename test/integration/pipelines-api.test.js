@@ -236,6 +236,60 @@ describe('Pipelines API integration', () => {
             // Key didn't actually change, so the active-output guard never applies.
             assert.deepEqual(harness.previewService.stopped, []);
         });
+
+        test('leaves the group untouched when groupId is omitted', async () => {
+            const harness = createHarness();
+            const [group] = harness.db.replacePipelineGroups([{ name: 'Main' }]);
+            const p = harness.db.createPipeline();
+            harness.db.updatePipeline(p.id, p.name, undefined, group.id);
+
+            const res = await harness.request('POST', `/api/pipelines/${p.id}`, { name: 'New' });
+
+            assert.equal(res.status, 200);
+            assert.equal(res.body.groupId, group.id);
+        });
+
+        test('reassigns the group', async () => {
+            const harness = createHarness();
+            const [group] = harness.db.replacePipelineGroups([{ name: 'Main' }]);
+            const p = harness.db.createPipeline();
+
+            const res = await harness.request('POST', `/api/pipelines/${p.id}`, {
+                name: p.name,
+                groupId: group.id,
+            });
+
+            assert.equal(res.status, 200);
+            assert.equal(res.body.groupId, group.id);
+        });
+
+        test('clears the group with an explicit null groupId', async () => {
+            const harness = createHarness();
+            const [group] = harness.db.replacePipelineGroups([{ name: 'Main' }]);
+            const p = harness.db.createPipeline();
+            harness.db.updatePipeline(p.id, p.name, undefined, group.id);
+
+            const res = await harness.request('POST', `/api/pipelines/${p.id}`, {
+                name: p.name,
+                groupId: null,
+            });
+
+            assert.equal(res.status, 200);
+            assert.equal(res.body.groupId, null);
+        });
+
+        test('rejects an unknown groupId with 400 and does not change the pipeline', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+
+            const res = await harness.request('POST', `/api/pipelines/${p.id}`, {
+                name: p.name,
+                groupId: 999999,
+            });
+
+            assert.equal(res.status, 400);
+            assert.equal(harness.db.getPipeline(p.id).groupId, null);
+        });
     });
 
     describe('DELETE /api/pipelines/:id', () => {

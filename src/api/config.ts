@@ -53,6 +53,7 @@ export function registerConfigApi(app: Express, db: Db): void {
             pipelines,
             outputs: db.listOutputs(),
             hostProbeTargets: db.listHostProbeTargets(),
+            groups: db.listPipelineGroups(),
             encodings: Object.keys(ENCODINGS),
             streamKeys: db.listStreamKeys(),
             serverName: db.getSetting('serverName') ?? 'Restream SRS',

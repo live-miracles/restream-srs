@@ -134,10 +134,21 @@ export function readAppConfig(): AppConfig {
         throw new Error(`Failed to read app config ${CONFIG_PATH}: ${String(err)}`);
     }
 
+    // PORT/DATABASE_PATH env vars override restream.json when set — lets an
+    // isolated instance (e.g. automated UI testing) run alongside a
+    // developer's own `npm run dev` without colliding on the port or
+    // clobbering their database. Unset by default, so normal dev/production
+    // runs are unaffected.
     cachedConfig = {
-        port: asPort(raw.port, DEFAULT_RAW_CONFIG.port as number),
+        port: asPort(
+            process.env.PORT ? Number(process.env.PORT) : undefined,
+            asPort(raw.port, DEFAULT_RAW_CONFIG.port as number),
+        ),
         databasePath: resolveFilePath(
-            asString(raw.database_path, DEFAULT_RAW_CONFIG.database_path as string),
+            asString(
+                process.env.DATABASE_PATH,
+                asString(raw.database_path, DEFAULT_RAW_CONFIG.database_path as string),
+            ),
             configDir,
         ),
         srsConfigPath: resolveFilePath(

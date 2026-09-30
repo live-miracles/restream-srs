@@ -2,6 +2,8 @@ import type { Express } from 'express';
 import type { Db, HostProbeTarget } from '../types.js';
 
 const MAX_HOST_PROBE_TARGETS = 10;
+const MAX_PIPELINE_GROUPS = 50;
+const MAX_PIPELINE_GROUP_NAME_LENGTH = 80;
 
 function normalizeHostProbeTargets(value: unknown): HostProbeTarget[] | null {
     // Reject (not silently treat as "clear everything"): this used to double
@@ -54,6 +56,34 @@ function normalizeLayoutOrder(value: unknown): { id: number; outs: string[] }[] 
     return order;
 }
 
+// Whole-collection replace for pipeline groups: [{id?, name}], in the array's
+// order (which becomes each group's position). An id is only present for a
+// group the client already knows about; an id absent from the array means
+// "delete this group" (its member pipelines fall back to ungrouped).
+function normalizePipelineGroups(value: unknown): { id?: number; name: string }[] | null {
+    if (!Array.isArray(value)) return null;
+    if (value.length > MAX_PIPELINE_GROUPS) return null;
+
+    const groups: { id?: number; name: string }[] = [];
+    const seenIds = new Set<number>();
+    for (const item of value) {
+        if (!item || typeof item !== 'object') return null;
+        const row = item as Record<string, unknown>;
+        const name = typeof row.name === 'string' ? row.name.trim() : '';
+        if (!name || name.length > MAX_PIPELINE_GROUP_NAME_LENGTH) return null;
+
+        if (row.id === undefined) {
+            groups.push({ name });
+            continue;
+        }
+        const id = Number(row.id);
+        if (!Number.isInteger(id) || id < 1 || seenIds.has(id)) return null;
+        seenIds.add(id);
+        groups.push({ id, name });
+    }
+    return groups;
+}
+
 export function registerSettingsApi(app: Express, db: Db): void {
     app.post('/api/settings/general', (req, res) => {
         const name = (req.body?.name as string | undefined)?.trim();
@@ -89,6 +119,16 @@ export function registerSettingsApi(app: Express, db: Db): void {
 
         db.setSetting('layoutOrder', JSON.stringify(order));
         return res.json({ layoutOrder: order });
+    });
+
+    app.post('/api/settings/pipeline-groups', (req, res) => {
+        const groups = normalizePipelineGroups(req.body?.groups);
+        if (groups === null) {
+            return res.status(400).json({ error: 'Invalid pipeline group configuration' });
+        }
+
+        const saved = db.replacePipelineGroups(groups);
+        return res.json({ groups: saved });
     });
 
     app.post('/api/settings/regenerate-stream-keys', (req, res) => {

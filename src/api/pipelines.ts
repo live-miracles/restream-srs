@@ -53,7 +53,23 @@ export function registerPipelineApi(
             previewService.stop(id);
         }
 
-        const updated = db.updatePipeline(id, name, streamKeyId);
+        // groupId is tri-state: the key may be absent (leave the pipeline's
+        // group untouched), explicit null (clear it), or a number (reassign).
+        let groupId: number | null | undefined;
+        if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'groupId')) {
+            const raw = req.body.groupId;
+            if (raw === null) {
+                groupId = null;
+            } else {
+                const n = Number(raw);
+                if (!Number.isInteger(n) || !db.listPipelineGroups().some((g) => g.id === n)) {
+                    return res.status(400).json({ error: 'invalid groupId' });
+                }
+                groupId = n;
+            }
+        }
+
+        const updated = db.updatePipeline(id, name, streamKeyId, groupId);
         return res.json(updated);
     });
 

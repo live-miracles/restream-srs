@@ -9,10 +9,20 @@ export interface Pipeline {
     name: string;
     streamKey: string;
     streamKeyId: number;
+    groupId: number | null;
     rtmpPublishUrl: string;
     srtPublishUrl: string;
     rtmpPublishUrlLocal: string;
     srtPublishUrlLocal: string;
+}
+
+// A collapsible section pipelines can be assigned to (see the pipeline edit
+// form). Ordered by `position`; managed as a whole in Settings — see
+// registerSettingsApi's normalizePipelineGroups for the write-side contract.
+export interface PipelineGroup {
+    id: number;
+    name: string;
+    position: number;
 }
 
 export interface HostProbeTarget {
@@ -349,6 +359,7 @@ export interface ConfigData {
     pipelines: Pipeline[];
     outputs: Output[];
     hostProbeTargets: HostProbeTarget[];
+    groups: PipelineGroup[];
     encodings: string[];
     streamKeys: StreamKey[];
     serverName: string;
@@ -387,6 +398,7 @@ export interface PipelineView {
     name: string;
     streamKey: string;
     streamKeyId: number;
+    groupId: number | null;
     srtBonding: SrtBondingStatus;
     rtmpPublishUrl: string;
     srtPublishUrl: string;

@@ -155,6 +155,7 @@ describe('Config API integration', () => {
         assert.deepEqual(res.body.pipelines, []);
         assert.deepEqual(res.body.outputs, []);
         assert.deepEqual(res.body.hostProbeTargets, []);
+        assert.deepEqual(res.body.groups, []);
         assert.equal(res.body.serverName, 'Restream SRS');
         assert.equal(res.body.publicHost, 'localhost');
         assert.deepEqual(res.body.layoutOrder, []);
@@ -247,6 +248,22 @@ describe('Config API integration', () => {
         db.setSetting('layoutOrder', '');
         const res = await get();
         assert.deepEqual(res.body.layoutOrder, []);
+    });
+
+    test('pipeline groups are present in the response, ordered by position', async () => {
+        const { db, get } = loadHarness();
+        const [backup, main] = db.replacePipelineGroups([{ name: 'Backup' }, { name: 'Main' }]);
+        // Reorder so 'Main' comes first — position follows array order.
+        db.replacePipelineGroups([
+            { id: main.id, name: main.name },
+            { id: backup.id, name: backup.name },
+        ]);
+
+        const res = await get();
+        assert.deepEqual(
+            res.body.groups.map((g) => g.name),
+            ['Main', 'Backup'],
+        );
     });
 
     test('multiple pipelines and outputs are all present in the response', async () => {

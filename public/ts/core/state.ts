@@ -24,6 +24,10 @@ export interface AppState {
     // 'problems' hides rows that are neither warning nor error, so a failing
     // input/output is findable at a glance at the 50-input / 500-output scale.
     overviewFilter: OverviewFilter;
+    // Which pipeline groups are collapsed in the left-column list. Per-browser
+    // only — intentionally not persisted server-side, so it resets on reload
+    // and doesn't sync across viewers.
+    collapsedGroupIds: Set<number>;
 }
 
 export const state: AppState = {
@@ -37,4 +41,5 @@ export const state: AppState = {
     chartOffsetMs: 0,
     hostChartOffsetMs: 0,
     overviewFilter: 'all',
+    collapsedGroupIds: new Set(),
 };

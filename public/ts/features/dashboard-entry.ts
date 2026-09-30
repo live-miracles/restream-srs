@@ -5,8 +5,11 @@ import {
     openSettings,
     addHostProbeRow,
     removeHostProbeRow,
+    addPipelineGroupRow,
+    removePipelineGroupRow,
     submitGeneralSettingsForm,
     submitHostProbesForm,
+    submitPipelineGroupsForm,
     submitPasswordForm,
     logoutUser,
     regenerateStreamKeysBtn,
@@ -39,8 +42,11 @@ declare global {
         openDocsBtn: () => Promise<void>;
         addHostProbeRowBtn: () => void;
         removeHostProbeRowBtn: (slot: number) => void;
+        addPipelineGroupRowBtn: () => void;
+        removePipelineGroupRowBtn: (rowKey: string) => void;
         settingsGeneralFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
         settingsHostProbesFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
+        settingsPipelineGroupsFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
         settingsPasswordFormBtn: (btn?: HTMLButtonElement) => Promise<void>;
         logoutBtn: () => Promise<void>;
         regenerateStreamKeysBtn: (btn?: HTMLButtonElement) => Promise<void>;
@@ -114,8 +120,11 @@ window.openDocsBtn = async () => {
 };
 window.addHostProbeRowBtn = () => addHostProbeRow();
 window.removeHostProbeRowBtn = (slot) => removeHostProbeRow(slot);
+window.addPipelineGroupRowBtn = () => addPipelineGroupRow();
+window.removePipelineGroupRowBtn = (rowKey) => removePipelineGroupRow(rowKey);
 window.settingsGeneralFormBtn = (btn) => submitGeneralSettingsForm(btn);
 window.settingsHostProbesFormBtn = (btn) => submitHostProbesForm(btn);
+window.settingsPipelineGroupsFormBtn = (btn) => submitPipelineGroupsForm(btn);
 window.settingsPasswordFormBtn = (btn) => submitPasswordForm(btn);
 window.logoutBtn = () => logoutUser();
 window.regenerateStreamKeysBtn = (btn) => regenerateStreamKeysBtn(btn);

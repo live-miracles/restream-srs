@@ -12,10 +12,19 @@ export function setupDatabaseSchema(db: Database.Database): void {
     ).run();
 
     db.prepare(
+        `CREATE TABLE IF NOT EXISTS pipeline_groups (
+            id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            name     TEXT NOT NULL,
+            position INTEGER NOT NULL
+        )`,
+    ).run();
+
+    db.prepare(
         `CREATE TABLE IF NOT EXISTS pipelines (
             id            INTEGER PRIMARY KEY,
             name          TEXT NOT NULL,
-            stream_key_id INTEGER REFERENCES stream_keys(id)
+            stream_key_id INTEGER REFERENCES stream_keys(id),
+            group_id      INTEGER REFERENCES pipeline_groups(id) ON DELETE SET NULL
         )`,
     ).run();
 

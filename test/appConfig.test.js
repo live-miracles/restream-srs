@@ -86,6 +86,47 @@ describe('readAppConfig: port validation (asPort)', () => {
     });
 });
 
+describe('readAppConfig: PORT/DATABASE_PATH env overrides', () => {
+    const originalPort = process.env.PORT;
+    const originalDbPath = process.env.DATABASE_PATH;
+
+    after(() => {
+        if (originalPort === undefined) delete process.env.PORT;
+        else process.env.PORT = originalPort;
+        if (originalDbPath === undefined) delete process.env.DATABASE_PATH;
+        else process.env.DATABASE_PATH = originalDbPath;
+    });
+
+    beforeEach(() => {
+        delete process.env.PORT;
+        delete process.env.DATABASE_PATH;
+    });
+
+    test('PORT env var overrides restream.json when set', () => {
+        process.env.PORT = '9999';
+        const readAppConfig = loadAppConfig(FULL_VALID_CONFIG);
+        assert.equal(readAppConfig().port, 9999);
+    });
+
+    test('an invalid PORT env var falls back to restream.json, not the hardcoded default', () => {
+        process.env.PORT = 'not-a-number';
+        const readAppConfig = loadAppConfig({ ...FULL_VALID_CONFIG, port: 9000 });
+        assert.equal(readAppConfig().port, 9000);
+    });
+
+    test('DATABASE_PATH env var overrides restream.json when set', () => {
+        process.env.DATABASE_PATH = 'override.sqlite';
+        const readAppConfig = loadAppConfig(FULL_VALID_CONFIG);
+        assert.equal(readAppConfig().databasePath, path.resolve(tempDir, 'override.sqlite'));
+    });
+
+    test('with no env vars set, restream.json values are used as before', () => {
+        const readAppConfig = loadAppConfig(FULL_VALID_CONFIG);
+        assert.equal(readAppConfig().port, 8080);
+        assert.ok(readAppConfig().databasePath.endsWith('db.sqlite'));
+    });
+});
+
 describe('readAppConfig: string fields (asString)', () => {
     test('an empty or whitespace-only ffmpeg_path falls back to the default', () => {
         const readAppConfig = loadAppConfig({ ...FULL_VALID_CONFIG, ffmpeg_path: '   ' });
