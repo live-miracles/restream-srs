@@ -129,6 +129,18 @@ double-check the implementation for bugs, regressions, unsafe assumptions, and
 unintended changes. Always run the applicable formatting and format-check
 commands for every change, including documentation and UI changes.
 
+**This repository is public on GitHub.** Never commit real stream keys, SRT
+passphrases, destination RTMP/SRT URLs (they can embed a third-party
+platform's own stream key, e.g. YouTube), or customer/encoder IP addresses —
+this applies to code and config as much as to prose, and especially to
+fail-reports and other incident write-ups, which tend to paste real log
+output verbatim. Redact these before committing (e.g. `key01_<redacted>`,
+`<redacted-ip>`, `<redacted-srt-passphrase>` — keep the non-secret parts, like
+a `keyNN_` prefix or a bare destination hostname, since they're still useful
+for understanding an incident). If a real secret is committed and pushed
+anyway, treat it as compromised: rotate it, and don't rely on a history
+rewrite alone to undo the exposure.
+
 Test effort should be proportional to the change during implementation. Small,
 low-risk changes—especially UI-only styling changes—may skip the full test
 suite after targeted validation. Substantial changes should run the full test
