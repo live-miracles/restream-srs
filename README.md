@@ -119,6 +119,68 @@ Default ports from `srs.conf` and `srt-bonding-relay.json`:
 Do **not** expose 1985 (SRS HTTP API), 8080 (if the dashboard is served through
 a tunnel), or 8081 (relay status) — the app talks to those over loopback.
 
+### Cloudflare Tunnel (dashboard access)
+
+The dashboard is meant to be reached through a Cloudflare Tunnel plus
+Cloudflare Access (see [Security](#security)), so port 8080 can stay closed in
+the firewall. The installer does not set this up; `cloudflared` runs as its own
+systemd service, outside the three services above. Ingest (RTMP/SRT) and
+outputs never go through the tunnel, so restarting `cloudflared` only
+interrupts dashboard/API access.
+
+1. **Create the tunnel** in Cloudflare Zero Trust → Networks → Tunnels →
+   *Create a tunnel* (type *Cloudflared*). Copy the tunnel token from the
+   install command it shows (the long string after `--token`).
+2. **Add a public hostname** to the tunnel, e.g. `restream.example.com`, with
+   service `HTTP` → `localhost:8080`.
+3. **Protect it with Cloudflare Access**: Zero Trust → Access → Applications →
+   add a self-hosted application for that hostname with an allow policy for
+   your team. Without this the hostname is open to the internet and only the
+   dashboard password stands in the way.
+4. **Install `cloudflared`** from the
+   [Cloudflare package repository](https://pkg.cloudflare.com/) (or the `.deb`
+   from its GitHub releases).
+5. **Store the token in a root-only environment file** rather than on the
+   command line. Do **not** use `cloudflared service install <token>`: it puts
+   the token in `ExecStart`, where every local user can read it via
+   `ps`/`/proc/<pid>/cmdline` and the world-readable unit file.
+   ```bash
+   sudo install -d -m 0750 /etc/cloudflared
+   sudo sh -c 'umask 077; printf "TUNNEL_TOKEN=%s\n" "<paste-token-here>" > /etc/cloudflared/tunnel.env'
+   ```
+   `cloudflared tunnel run` reads the `TUNNEL_TOKEN` environment variable
+   itself, so no `--token` flag is needed.
+6. **Create the unit** `/etc/systemd/system/cloudflared.service`:
+   ```ini
+   [Unit]
+   Description=Cloudflare Tunnel client
+   After=network-online.target
+   Wants=network-online.target
+
+   [Service]
+   TimeoutStartSec=15
+   Type=notify
+   EnvironmentFile=/etc/cloudflared/tunnel.env
+   ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run
+   Restart=on-failure
+   RestartSec=5s
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+7. **Start it and check**:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now cloudflared
+   journalctl -u cloudflared -n 20 --no-pager   # look for "Registered tunnel connection"
+   ps -eo args | grep '[c]loudflared'            # the token must not appear here
+   ```
+
+To rotate the token, generate a new one in the Zero Trust dashboard, update
+`/etc/cloudflared/tunnel.env`, and `sudo systemctl restart cloudflared`. Treat
+the token as compromised (and rotate it) if it was ever printed in a log or
+terminal, or was previously passed on the command line.
+
 ### SRS and SRT relay config
 
 The repository copies both runtime config files during install:
@@ -343,6 +405,13 @@ streamed to diagnostics to keep incident volume from crowding out the window).
 Once per minute it also stores compact health snapshots containing SRT counters,
 leg rates/health, relay forwarding state, and FFmpeg output progress so an
 incident can be investigated after the live one-hour chart window has passed.
+The snapshots also record resource usage: per-output FFmpeg RSS/CPU and memory
+limit (translation mixers included), CPU and RSS for the Node control plane
+(plus its V8 heap), SRS and the SRT relay (the same samples the dashboard
+shows, up to ~10 s old), and host total/available memory and swap. Separately,
+`host-memory-low` (available memory under 15% of total) and
+`host-memory-recovered` (back above 20%) events are logged on transition, the
+former with the five largest processes by RSS.
 Files are
 rotated daily or at 100 MB, whichever comes first, with a 5 GB total diagnostics
 cap that removes the oldest rotated files first. The installer configures
@@ -471,7 +540,7 @@ The app runs these recovery loops:
 | Health poll / input recovery | SRS reachability, live pipeline inputs, desired running outputs | When SRS and the pipeline input become ready, outputs whose desired state is `running` are started or restarted with staggered timing | Computed once every 5s and shared by dashboard clients. Inputs become live from SRS publisher presence; ffprobe fills in media/track metadata and retries every `FFPROBE_FAILED_REFRESH_MS` until it succeeds, then stops for that publisher. |
 | Output progress watchdog | Every running FFmpeg output process | After warmup, if the input is ready but FFmpeg `total_size` / `out_time_ms` stop advancing for the configured stall window | Protocol-agnostic backstop; covers SRT outputs and local RTMP relays |
 | Remote RTMP socket watchdog | Running outputs with a remote RTMP/RTMPS destination | After socket warmup and grace, if the destination socket is missing or remains in a closing state such as `CLOSE-WAIT` | Uses one `ss -H -tanp` snapshot per watchdog interval; a local RTMP/RTMPS destination is ignored because local input/output sockets are ambiguous |
-| Output memory watchdog | Every running FFmpeg output process | After warmup, if process RSS crosses `memory_limit_mb` (or its per-encoding override) | Reads `/proc/<pid>/status`; unconditional — a leaking process can still show advancing `total_size`/healthy sockets, so this doesn't wait on the other two. Once RSS crosses 70% of the limit the output surfaces a yellow "High memory usage" warning in the dashboard, before the watchdog actually restarts it at 100%. The limit is doubled for outputs on a 4K (≥3840px on either dimension) input — the 2x multiplier is a placeholder, not a measured baseline; see [#11](https://github.com/live-miracles/restream-srs/issues/11) |
+| Output memory watchdog | Every running FFmpeg output process, including translation mixers (checked every 5 s; a mixer over its limit is restarted with a `translation-mixer-restart` event, reason `memory limit exceeded`) | After warmup, if process RSS crosses `memory_limit_mb` (or its per-encoding override) | Reads `/proc/<pid>/status`; unconditional — a leaking process can still show advancing `total_size`/healthy sockets, so this doesn't wait on the other two. Once RSS crosses 70% of the limit the output surfaces a yellow "High memory usage" warning in the dashboard, before the watchdog actually restarts it at 100%. The limit is doubled for outputs on a 4K (≥3840px on either dimension) input — the 2x multiplier is a placeholder, not a measured baseline; see [#11](https://github.com/live-miracles/restream-srs/issues/11) |
 | Translator audio meter watchdog | Running translation-mixer outputs | After the same startup warmup grace as the output progress watchdog, if the translator audio meter has gone quiet for `translator_meter_stale_ms` (including a translator that never delivered a single sample) | Watches independently of the SRS live-state poll, so a translator that connects but sends a dead/silent track is still caught. Valid translator silence is not treated as a disconnect — FFmpeg continues emitting silent meter samples in that case — so this only fires when the meter itself stops updating. Restarts the mixer so it attaches to the current translator session. |
 
 All output watchdogs above use the same restart path: they write a detailed
