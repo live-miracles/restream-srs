@@ -138,6 +138,9 @@ function makeTranslationInputState() {
         getProtocol() {
             return 'rtmp';
         },
+        isHighRes() {
+            return false;
+        },
         pullUrl(_pipelineId, streamKey) {
             return `rtmp://127.0.0.1:1935/live/${streamKey}`;
         },
@@ -440,7 +443,7 @@ describe('translation mixer watchdog integration', () => {
         const service = createTranslationMixerService(
             db,
             makeTranslationInputState(),
-            { reportExternalStatus() {}, reportExternalProgress() {} },
+            { reportExternalStatus() {}, reportExternalProgress() {}, reportExternalUsage() {} },
             diagnostics,
         );
 
@@ -476,7 +479,7 @@ describe('translation mixer watchdog integration', () => {
         const service = createTranslationMixerService(
             db,
             makeTranslationInputState(),
-            { reportExternalStatus() {}, reportExternalProgress() {} },
+            { reportExternalStatus() {}, reportExternalProgress() {}, reportExternalUsage() {} },
             diagnostics,
         );
 
@@ -488,5 +491,92 @@ describe('translation mixer watchdog integration', () => {
         assert.equal(db.lastError, null);
 
         service.shutdown();
+    });
+    // Serves a fake /proc/<pid>/status for the mixer's ffmpeg pid; every other
+    // read (including the CPU tracker's /proc/<pid>/stat) goes to the real fs.
+    function mockMixerRss(t, pid, rssMb) {
+        const realReadFileSync = fs.readFileSync;
+        t.mock.method(fs, 'readFileSync', (file, ...rest) =>
+            file === `/proc/${pid}/status`
+                ? `Name:\tffmpeg\nVmRSS:\t${rssMb * 1024} kB\n`
+                : realReadFileSync(file, ...rest),
+        );
+    }
+
+    test('reports the mixer ffmpeg RSS and limit for getStats/health without restarting under the limit', async (t) => {
+        mockMixerRss(t, 4242, 50);
+        const usage = [];
+        const diagnostics = makeDiagnosticsRecorder();
+        const procs = [];
+        const spawnNext = () => {
+            const proc = new FakeMixerFfmpeg(4242);
+            procs.push(proc);
+            return proc;
+        };
+        const createTranslationMixerService = loadTranslationMixerService(t, spawnNext, {
+            translatorMeterStaleMs: 60_000,
+        });
+        const service = createTranslationMixerService(
+            makeTranslationDb(makeTranslationOutput()),
+            makeTranslationInputState(),
+            {
+                reportExternalStatus() {},
+                reportExternalProgress() {},
+                reportExternalUsage: (id, u) => usage.push({ id, ...u }),
+            },
+            diagnostics,
+        );
+
+        service.start();
+        await sleep(1200);
+        procs[0].emit('exit', 137, null); // crash: the exit event should carry the last RSS
+        service.shutdown();
+
+        assert.equal(procs.length, 1, 'must not restart while under the memory limit');
+        const exited = diagnostics.events.find((e) => e.name === 'translation-mixer-exited');
+        assert.ok(exited, 'expected an exit event');
+        assert.equal(exited.fields.lastRssMb, 50);
+        assert.equal(exited.fields.code, 137);
+        assert.equal(typeof exited.fields.uptimeSec, 'number');
+        assert.ok(usage.length >= 1, 'expected at least one usage report');
+        assert.equal(usage[0].id, 'out1');
+        assert.equal(usage[0].rssBytes, 50 * 1024 * 1024);
+        assert.equal(usage[0].limitBytes, 200 * 1024 * 1024); // default 'copy' limit
+    });
+
+    test('restarts a mixer whose ffmpeg exceeds the memory limit and records why', async (t) => {
+        mockMixerRss(t, 4242, 250);
+        const procs = [];
+        const spawnNext = () => {
+            const proc = new FakeMixerFfmpeg(4242);
+            procs.push(proc);
+            return proc;
+        };
+        const db = makeTranslationDb(makeTranslationOutput());
+        const diagnostics = makeDiagnosticsRecorder();
+        const createTranslationMixerService = loadTranslationMixerService(t, spawnNext, {
+            translatorMeterStaleMs: 60_000,
+        });
+        const service = createTranslationMixerService(
+            db,
+            makeTranslationInputState(),
+            { reportExternalStatus() {}, reportExternalProgress() {}, reportExternalUsage() {} },
+            diagnostics,
+        );
+
+        service.start();
+        await sleep(1200);
+        service.shutdown();
+
+        assert.deepEqual(procs[0].killSignals, ['SIGTERM']);
+        assert.match(db.lastError, /memory limit exceeded/);
+        assert.match(db.lastError, /rss=250MB limit=200MB/);
+        assert.equal(db.lastErrorKind, 'crash');
+        const restart = diagnostics.events.find((e) => e.name === 'translation-mixer-restart');
+        assert.ok(restart, 'expected a translation-mixer-restart diagnostics event');
+        assert.equal(restart.fields.reason, 'memory limit exceeded');
+        assert.equal(restart.fields.rssMb, 250);
+        assert.equal(restart.fields.limitMb, 200);
+        assert.equal(restart.fields.pid, 4242);
     });
 });

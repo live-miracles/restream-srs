@@ -9,7 +9,8 @@ import { context as zmqContext, Request } from 'zeromq';
 // This gives every new socket a zero linger instead, so shutdown can't hang.
 zmqContext.blocky = false;
 import { buildTranslationMixerArgs, volumePercentToAmplitude } from '../utils/ffmpeg.js';
-import { readAppConfig } from '../utils/appConfig.js';
+import { readAppConfig, outputMemoryLimitBytes } from '../utils/appConfig.js';
+import { readProcRssBytes, createProcCpuTracker } from '../utils/procStats.js';
 import type { Db, Output, TranslationConfig } from '../types.js';
 import type { InputProtocol, InputState } from './inputState.js';
 import type { OutputService } from './outputs.js';
@@ -17,6 +18,9 @@ import type { DiagnosticsLogger } from '../utils/diagnostics.js';
 
 const RECONCILE_INTERVAL_MS = 1000;
 const SIGKILL_DELAY_MS = 5000;
+// Same cadence as the output watchdog's own RSS/CPU sampling (its default
+// intervalMs); reconcile ticks every second, so each job is sampled every 5th tick.
+const USAGE_SAMPLE_INTERVAL_MS = 5000;
 const STDERR_TAIL_BYTES = 3000;
 const MIXER_CONTROL_PORT_BASE = 31000;
 const MIXER_CONTROL_PORT_RANGE = 20000;
@@ -54,6 +58,8 @@ interface MixerJob {
     controlPort: number | null;
     startedAtMs: number;
     lastOutputProgressAtMs: number;
+    lastUsageSampleAtMs: number;
+    lastRssBytes: number | null;
     lastOutTimeUs: number | null;
     lastTotalSizeBytes: number | null;
     lastBitrateKbps: number | null;
@@ -87,6 +93,10 @@ export interface TranslationMixerService {
     start(): void;
     getState(outputId: string): TranslationOutputState | null;
     shutdown(): void;
+}
+
+function mb(bytes: number | null): number | null {
+    return bytes == null ? null : Math.round(bytes / (1024 * 1024));
 }
 
 function appendTail(existing: string, chunk: Buffer): string {
@@ -358,6 +368,7 @@ export function createTranslationMixerService(
     const modeTrackers = new Map<string, ModeTracker>();
     const stopRequested = new Set<string>();
     const usedControlPorts = new Set<number>();
+    const cpuTracker = createProcCpuTracker();
     let reconciling = false;
     let shuttingDown = false;
 
@@ -412,6 +423,8 @@ export function createTranslationMixerService(
             outputId: output.id,
             pipelineId: output.pipelineId,
             reason: opts.reason,
+            pid: job.process.pid ?? null,
+            rssMb: mb(job.lastRssBytes),
             ...opts.extra,
         });
         await stopJob(output.id, false);
@@ -517,6 +530,8 @@ export function createTranslationMixerService(
             controlPort,
             startedAtMs: Date.now(),
             lastOutputProgressAtMs: Date.now(),
+            lastUsageSampleAtMs: 0,
+            lastRssBytes: null,
             lastOutTimeUs: null,
             lastTotalSizeBytes: null,
             lastBitrateKbps: null,
@@ -604,6 +619,7 @@ export function createTranslationMixerService(
         });
         child.once('exit', (code, signal) => {
             controller.close();
+            cpuTracker.delete(output.id);
             void control?.close();
             if (controlPort !== null) usedControlPorts.delete(controlPort);
             const wasStop = stopRequested.delete(output.id);
@@ -619,6 +635,8 @@ export function createTranslationMixerService(
                     signal,
                     message,
                     requestedStop: wasStop,
+                    lastRssMb: mb(current.lastRssBytes),
+                    uptimeSec: Math.round((Date.now() - current.startedAtMs) / 1000),
                 });
                 if (!shuttingDown) {
                     try {
@@ -638,17 +656,49 @@ export function createTranslationMixerService(
         });
     }
 
+    // Samples the mixer ffmpeg's RSS/CPU for getStats()/health and restarts it if
+    // it crosses the same per-encoding memory limit copy/transcode outputs get
+    // (the 2026-07-10 swresample blow-up applies to any ffmpeg fed a corrupt
+    // input). Returns true when it restarted the job.
+    async function checkMixerUsage(output: Output, job: MixerJob, now: number): Promise<boolean> {
+        if (now - job.lastUsageSampleAtMs < USAGE_SAMPLE_INTERVAL_MS) return false;
+        job.lastUsageSampleAtMs = now;
+        const pid = job.process.pid;
+        const rssBytes = pid == null ? null : readProcRssBytes(pid);
+        const limitBytes = outputMemoryLimitBytes(
+            appConfig.outputWatchdog,
+            output.videoEncoding,
+            inputState.isHighRes(output.pipelineId),
+        );
+        job.lastRssBytes = rssBytes;
+        outputService.reportExternalUsage(output.id, {
+            rssBytes,
+            limitBytes,
+            cpuPercent: pid == null ? null : cpuTracker.sample(output.id, pid),
+        });
+        if (
+            rssBytes == null ||
+            rssBytes < limitBytes ||
+            now - job.startedAtMs < appConfig.outputWatchdog.warmupMs
+        )
+            return false;
+        await restartWatchdogJob(output, job, {
+            headline: 'watchdog: translation mixer memory limit exceeded; restarting process',
+            reason: 'memory limit exceeded',
+            contextLine: `rss=${mb(rssBytes)}MB limit=${mb(limitBytes)}MB`,
+            extra: { limitMb: mb(limitBytes) },
+        });
+        return true;
+    }
+
     async function checkMixerWatchdogs(): Promise<void> {
         const now = Date.now();
         const { warmupMs, stallMs, translatorMeterStaleMs } = appConfig.outputWatchdog;
         for (const [outputId, job] of jobs) {
             const output = db.getOutput(outputId);
-            if (
-                !output ||
-                output.desiredState !== 'running' ||
-                !inputState.isLive(output.pipelineId)
-            )
-                continue;
+            if (!output || output.desiredState !== 'running') continue;
+            if (await checkMixerUsage(output, job, now)) continue;
+            if (!inputState.isLive(output.pipelineId)) continue;
 
             if (shouldRestartForStaleTranslatorMeter(job, now, warmupMs, translatorMeterStaleMs)) {
                 const staleSeconds = Math.round((now - job.lastTranslatorMeterAtMs) / 1000);

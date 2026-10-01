@@ -123,6 +123,30 @@ function resolveCommand(value: string, configDir: string): string {
     return value;
 }
 
+// 'copy' (stream-copy) outputs run far leaner than libx264 transcode profiles
+// (720p/1080p/vertical_rotate), which legitimately sit well above the base
+// limit due to scale-filter + encoder buffers — see memoryLimitMbByEncoding
+// in DEFAULT_WATCHDOG_CONFIG above for measured baselines.
+//
+// A 4K input decodes/copies much larger frames than the baselines above were
+// measured against, so a 4K pipeline's outputs legitimately run higher RSS.
+// HIGH_RES_MEMORY_MULTIPLIER is a placeholder guess (not a measured baseline
+// like the others) — see live-miracles/restream-srs#11 to replace it with a
+// real number once we have measured 4K RSS baselines.
+const HIGH_RES_MEMORY_MULTIPLIER = 2;
+
+// Shared by the output service and the translation mixer so both apply the same
+// per-encoding limit.
+export function outputMemoryLimitBytes(
+    watchdog: OutputWatchdogConfig,
+    videoEncoding: string,
+    highRes: boolean,
+): number {
+    const mb = watchdog.memoryLimitMbByEncoding[videoEncoding] ?? watchdog.memoryLimitMb;
+    const scaledMb = highRes ? mb * HIGH_RES_MEMORY_MULTIPLIER : mb;
+    return scaledMb * 1024 * 1024;
+}
+
 export function readAppConfig(): AppConfig {
     if (cachedConfig) return cachedConfig;
 

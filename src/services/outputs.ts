@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
 import { INPUT_TIMEOUT_US, buildFfmpegArgs, validateOutputUrl } from '../utils/ffmpeg.js';
-import { readAppConfig } from '../utils/appConfig.js';
+import { readAppConfig, outputMemoryLimitBytes } from '../utils/appConfig.js';
 import {
     readProcRssBytes,
     createProcCpuTracker,
@@ -38,24 +38,8 @@ const SOCKET_SNAPSHOT_TIMEOUT_MS = 2000;
 // (yellow) signal that a leak may be building without waiting for the kill.
 const MEMORY_WARNING_RATIO = 0.7;
 
-// 'copy' (stream-copy) outputs run far leaner than libx264 transcode profiles
-// (720p/1080p/vertical_rotate), which legitimately sit well above the base
-// limit due to scale-filter + encoder buffers — see memoryLimitMbByEncoding
-// in appConfig.ts for measured baselines.
-//
-// A 4K input decodes/copies much larger frames than the baselines above were
-// measured against, so a 4K pipeline's outputs legitimately run higher RSS.
-// HIGH_RES_MEMORY_MULTIPLIER is a placeholder guess (not a measured baseline
-// like the others) — see live-miracles/restream-srs#11 to replace it with a
-// real number once we have measured 4K RSS baselines.
-const HIGH_RES_MEMORY_MULTIPLIER = 2;
-
 function memoryLimitBytesFor(videoEncoding: string, highRes: boolean): number {
-    const mb =
-        appConfig.outputWatchdog.memoryLimitMbByEncoding[videoEncoding] ??
-        appConfig.outputWatchdog.memoryLimitMb;
-    const scaledMb = highRes ? mb * HIGH_RES_MEMORY_MULTIPLIER : mb;
-    return scaledMb * 1024 * 1024;
+    return outputMemoryLimitBytes(appConfig.outputWatchdog, videoEncoding, highRes);
 }
 
 interface OutputStats {
@@ -121,6 +105,14 @@ export interface OutputService {
             lastOutTimeUs: number | null;
             lastTotalSizeBytes: number | null;
         },
+    ): void;
+    // Same idea again for process usage: the mixer owns its ffmpeg process, so it
+    // samples RSS/CPU itself (and enforces the limit) and reports them here so
+    // getStats() shows real numbers and the usual high-memory warning instead
+    // of null.
+    reportExternalUsage(
+        outputId: string,
+        usage: { rssBytes: number | null; limitBytes: number; cpuPercent: number | null },
     ): void;
     shutdown(): void;
 }
@@ -249,6 +241,33 @@ export function createOutputService(
             lastTimestampWarningAtMs: existing?.lastTimestampWarningAtMs ?? null,
             lastTimestampWarning: existing?.lastTimestampWarning ?? null,
         });
+    }
+
+    function reportExternalUsage(
+        outputId: string,
+        usage: { rssBytes: number | null; limitBytes: number; cpuPercent: number | null },
+    ): void {
+        // A sample that raced with the process exiting must not resurrect the
+        // usage entries setStatus() just cleared.
+        if (statuses.get(outputId)?.status !== 'running') return;
+        if (usage.rssBytes != null) {
+            memoryUsage.set(outputId, { rssBytes: usage.rssBytes, limitBytes: usage.limitBytes });
+            if (usage.rssBytes >= usage.limitBytes * MEMORY_WARNING_RATIO) {
+                memoryWarnings.set(
+                    outputId,
+                    `High memory usage: ${Math.round(usage.rssBytes / (1024 * 1024))}MB / ${Math.round(
+                        usage.limitBytes / (1024 * 1024),
+                    )}MB limit (${Math.round((usage.rssBytes / usage.limitBytes) * 100)}%)`,
+                );
+            } else {
+                memoryWarnings.delete(outputId);
+            }
+        } else {
+            memoryUsage.delete(outputId);
+            memoryWarnings.delete(outputId);
+        }
+        if (usage.cpuPercent != null) cpuUsage.set(outputId, usage.cpuPercent);
+        else cpuUsage.delete(outputId);
     }
 
     function getRetry(outputId: string) {
@@ -873,6 +892,7 @@ export function createOutputService(
 
         reportExternalStatus: setStatus,
         reportExternalProgress,
+        reportExternalUsage,
 
         // Double-start safety here relies on startJob() being synchronous up to and
         // including spawn()+setStatus('running'): there is no await before the process

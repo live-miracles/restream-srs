@@ -714,6 +714,58 @@ describe('output service control surface', () => {
         service.shutdown();
     });
 
+    test('reportExternalUsage surfaces mixer RSS/CPU and the high-memory warning, and clears on stop', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const createOutputService = loadOutputService(t, proc, { progressStallMs: 60_000 });
+        const service = createOutputService(db, makeReadyInputState());
+        const mb = 1024 * 1024;
+
+        // A late sample for an output that isn't running must not create state.
+        service.reportExternalUsage('out1', {
+            rssBytes: 10 * mb,
+            limitBytes: 200 * mb,
+            cpuPercent: 5,
+        });
+        assert.equal(service.getStats('out1').memoryUsageBytes, null);
+
+        service.reportExternalStatus('out1', 'running', 4242);
+        service.reportExternalUsage('out1', {
+            rssBytes: 100 * mb,
+            limitBytes: 200 * mb,
+            cpuPercent: 12,
+        });
+        let stats = service.getStats('out1');
+        assert.equal(stats.memoryUsageBytes, 100 * mb);
+        assert.equal(stats.memoryLimitBytes, 200 * mb);
+        assert.equal(stats.cpuPercent, 12);
+        assert.equal(stats.warningReason, null);
+
+        service.reportExternalUsage('out1', {
+            rssBytes: 150 * mb,
+            limitBytes: 200 * mb,
+            cpuPercent: 12,
+        });
+        assert.match(
+            service.getStats('out1').warningReason,
+            /High memory usage: 150MB \/ 200MB limit \(75%\)/,
+        );
+
+        service.reportExternalUsage('out1', {
+            rssBytes: 100 * mb,
+            limitBytes: 200 * mb,
+            cpuPercent: null,
+        });
+        stats = service.getStats('out1');
+        assert.equal(stats.warningReason, null);
+        assert.equal(stats.cpuPercent, null);
+
+        service.reportExternalStatus('out1', 'stopped', null);
+        assert.equal(service.getStats('out1').memoryUsageBytes, null);
+
+        service.shutdown();
+    });
+
     test('start() throws for an unknown output id and never spawns', async (t) => {
         const proc = new FakeFfmpeg();
         const db = makeDb();
