@@ -22,6 +22,7 @@ import type {
 } from './srtRelay.js';
 import { inputPullUrl, type InputProtocol, type InputState } from './inputState.js';
 import type { DiagnosticsLogger } from '../utils/diagnostics.js';
+import { readHostMemory, topProcessesByRss } from '../utils/procStats.js';
 import { isProbeUsable, probeError, runFfprobe, type ProbeResult } from './mediaProbe.js';
 import type { TranslationMixerService, TranslationOutputState } from './translationMixer.js';
 
@@ -45,6 +46,12 @@ const LEG_HEALTH_WINDOW_MS = 60 * 1000;
 // Sudden latency spikes are still reported independently below.
 const SRT_HIGH_LATENCY_WARN_MS = 1500;
 const DIAGNOSTICS_SNAPSHOT_INTERVAL_MS = 60 * 1000;
+// Host MemAvailable thresholds, as a fraction of total RAM. Enter/exit differ
+// so a box hovering near the line doesn't flap; the transition events carry the
+// top processes by RSS so an OOM investigation can see who was holding memory.
+const HOST_MEMORY_LOW_RATIO = 0.15;
+const HOST_MEMORY_RECOVER_RATIO = 0.2;
+const bytesToMb = (bytes: number): number => Math.round(bytes / (1024 * 1024));
 
 function counterDelta(current: number | null, previous: number | null | undefined): number | null {
     if (current === null || previous === null || previous === undefined) return null;
@@ -296,6 +303,17 @@ function formatDuration(totalSeconds: number): string {
     return parts.join(' ');
 }
 
+interface ProcessUsage {
+    cpuPercent: number | null;
+    ramBytes: number | null;
+}
+
+export type ProcessUsageSource = () => {
+    node: ProcessUsage;
+    srs: ProcessUsage;
+    relay: ProcessUsage;
+};
+
 export function createHealthService(
     db: Db,
     outputService: OutputService,
@@ -303,6 +321,7 @@ export function createHealthService(
     inputState: InputState,
     diagnostics?: DiagnosticsLogger,
     translationMixerService?: TranslationMixerService,
+    getProcessUsage?: ProcessUsageSource,
 ) {
     let snapshot: HealthSnapshot = {
         generatedAt: new Date().toISOString(),
@@ -444,6 +463,41 @@ export function createHealthService(
 
     let pollInProgress = false;
 
+    let hostMemoryLow = false;
+    function checkHostMemory(): void {
+        const host = readHostMemory();
+        if (!host) return;
+        const ratio = host.availableBytes / host.totalBytes;
+        const wasLow = hostMemoryLow;
+        if (!wasLow && ratio < HOST_MEMORY_LOW_RATIO) hostMemoryLow = true;
+        else if (wasLow && ratio >= HOST_MEMORY_RECOVER_RATIO) hostMemoryLow = false;
+        if (hostMemoryLow === wasLow) return;
+        const fields = {
+            availableMb: bytesToMb(host.availableBytes),
+            totalMb: bytesToMb(host.totalBytes),
+            swapUsedMb: bytesToMb(host.swapUsedBytes),
+            thresholdPercent: Math.round(
+                (hostMemoryLow ? HOST_MEMORY_LOW_RATIO : HOST_MEMORY_RECOVER_RATIO) * 100,
+            ),
+        };
+        if (hostMemoryLow) {
+            const top = topProcessesByRss(5).map((p) => ({
+                pid: p.pid,
+                name: p.name,
+                rssMb: bytesToMb(p.rssBytes),
+            }));
+            console.warn(
+                `[host] memory low: ${fields.availableMb}MB of ${fields.totalMb}MB available; top: ${top
+                    .map((p) => `${p.name}(${p.pid})=${p.rssMb}MB`)
+                    .join(' ')}`,
+            );
+            diagnostics?.event('host-memory-low', { ...fields, topProcesses: top });
+        } else {
+            console.log(`[host] memory recovered: ${fields.availableMb}MB available`);
+            diagnostics?.event('host-memory-recovered', fields);
+        }
+    }
+
     async function poll(): Promise<void> {
         if (pollInProgress) return;
         pollInProgress = true;
@@ -545,6 +599,7 @@ export function createHealthService(
             diagnostics?.event('relay-transition', { from: 'failed', to: 'running' });
         }
         prevRelayFailed = relayFailed;
+        checkHostMemory();
 
         const liveByPath = new Map<string, SrsStream>();
         for (const s of streams) {
@@ -1162,6 +1217,7 @@ export function createHealthService(
                                 failures: output.failures,
                                 warningReason: output.warningReason,
                                 memoryUsageBytes: output.memoryUsageBytes,
+                                memoryLimitBytes: output.memoryLimitBytes,
                                 cpuPercent: output.cpuPercent,
                             },
                         ]),
@@ -1169,9 +1225,40 @@ export function createHealthService(
                     alerts: pipelineHealth.alerts,
                 };
             }
+            const mem = process.memoryUsage();
+            const host = readHostMemory();
+            const usage = getProcessUsage?.();
             diagnostics.event('health-snapshot', {
                 srsReachable,
                 relay: relayStats,
+                // CPU/RSS of the control plane, SRS and the relay over time (same
+                // samples the dashboard shows, up to ~10s old). The per-output
+                // numbers below only cover ffmpeg, so a Node heap leak or a
+                // runaway SRS/relay would otherwise be invisible until the OOM
+                // killer acted. Node's RSS is read fresh; heap detail is Node-only.
+                processes: {
+                    node: {
+                        cpuPercent: usage?.node.cpuPercent ?? null,
+                        rssBytes: mem.rss,
+                        heapUsedBytes: mem.heapUsed,
+                        heapTotalBytes: mem.heapTotal,
+                        externalBytes: mem.external,
+                        arrayBuffersBytes: mem.arrayBuffers,
+                    },
+                    srs: {
+                        cpuPercent: usage?.srs.cpuPercent ?? null,
+                        rssBytes: usage?.srs.ramBytes ?? null,
+                    },
+                    relay: {
+                        cpuPercent: usage?.relay.cpuPercent ?? null,
+                        rssBytes: usage?.relay.ramBytes ?? null,
+                    },
+                },
+                host: {
+                    totalBytes: host?.totalBytes ?? null,
+                    availableBytes: host?.availableBytes ?? null,
+                    swapUsedBytes: host?.swapUsedBytes ?? null,
+                },
                 pipelines: pipelineDiagnostics,
             });
             lastDiagnosticsSnapshotAt = snapshotAt;

@@ -11,7 +11,7 @@ import { createHealthService } from './services/health.js';
 import { registerPipelineApi } from './api/pipelines.js';
 import { registerOutputApi } from './api/outputs.js';
 import { registerConfigApi } from './api/config.js';
-import { registerMetricsApi } from './api/metrics.js';
+import { registerMetricsApi, getProcessUsage } from './api/metrics.js';
 import { registerSettingsApi } from './api/settings.js';
 import { createPreviewService } from './services/preview.js';
 import { registerPreviewApi } from './api/preview.js';
@@ -71,6 +71,7 @@ const healthService = createHealthService(
     inputState,
     diagnostics,
     translationMixerService,
+    getProcessUsage,
 );
 
 // Unauthenticated routes

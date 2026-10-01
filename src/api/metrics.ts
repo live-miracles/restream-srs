@@ -152,6 +152,12 @@ function updateRelayUsage(srtRelayService: SrtRelayService): void {
     };
 }
 
+// Latest samples for the diagnostics snapshot, so it reports the same numbers
+// the dashboard shows instead of sampling the three processes a second time.
+export function getProcessUsage(): { node: ProcUsage; srs: ProcUsage; relay: ProcUsage } {
+    return { node: nodeUsage, srs: srsUsage, relay: relayUsage };
+}
+
 export interface MetricSample {
     ts: number;
     cpu: number;

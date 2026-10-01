@@ -1089,4 +1089,147 @@ describe('createHealthService diagnostics and bonded-leg alerts', () => {
 
         service.shutdown();
     });
+    // Serves a fake /proc/meminfo (and process list) and lets every other read
+    // through, so the rest of the health service still sees the real fs.
+    function mockHostMemory(t, state) {
+        const realReadFileSync = fs.readFileSync;
+        const realReaddirSync = fs.readdirSync;
+        t.mock.method(fs, 'readFileSync', (file, ...rest) => {
+            if (file === '/proc/meminfo') {
+                return `MemTotal: 1024000 kB\nMemAvailable: ${state.availableKb} kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n`;
+            }
+            if (file === '/proc/77/status') return 'Name:\tffmpeg\nVmRSS:\t 99000 kB\n';
+            return realReadFileSync(file, ...rest);
+        });
+        t.mock.method(fs, 'readdirSync', (dir, ...rest) =>
+            dir === '/proc' ? ['77'] : realReaddirSync(dir, ...rest),
+        );
+    }
+
+    test('logs host-memory-low/recovered transitions with top processes, with hysteresis', async (t) => {
+        const state = { availableKb: 400_000 }; // 39% of 1000MB: healthy
+        mockHostMemory(t, state);
+        t.mock.method(globalThis, 'fetch', async (url) => {
+            if (String(url).includes('/streams/'))
+                return jsonResponse({ code: 0, streams: [streamFixture()] });
+            return jsonResponse({ code: 0, clients: [] });
+        });
+        const createHealthService = loadHealthService(t);
+        const diagnostics = makeDiagnosticsSpy();
+        const service = createHealthService(
+            makeFakeDb([{ id: 1, name: 'P1', streamKey: 'key01', streamKeyId: 1 }]),
+            makeFakeOutputService(),
+            makeFakeSrtRelay(),
+            makeFakeInputState(),
+            diagnostics,
+        );
+        const app = express();
+        service.registerRoutes(app);
+        const memoryEvents = () =>
+            diagnostics.events.filter((e) => e.event.startsWith('host-memory-'));
+
+        t.mock.timers.enable({ apis: ['setInterval'] });
+        service.start();
+        await sleep(20);
+        assert.deepEqual(memoryEvents(), [], 'no event while memory is healthy');
+
+        state.availableKb = 100_000; // ~10% < 15%
+        await tickPoll(t);
+        assert.equal(memoryEvents().length, 1);
+        assert.equal(memoryEvents()[0].event, 'host-memory-low');
+        assert.equal(memoryEvents()[0].availableMb, 98);
+        assert.equal(memoryEvents()[0].totalMb, 1000);
+        assert.deepEqual(memoryEvents()[0].topProcesses, [{ pid: 77, name: 'ffmpeg', rssMb: 97 }]);
+
+        state.availableKb = 150_000; // ~14.6%: still low, must not flap
+        await tickPoll(t);
+        state.availableKb = 190_000; // ~18.6% < 20% recovery threshold
+        await tickPoll(t);
+        assert.equal(memoryEvents().length, 1, 'no repeat events while still below recovery');
+
+        state.availableKb = 300_000; // ~29%
+        await tickPoll(t);
+        assert.deepEqual(
+            memoryEvents().map((e) => e.event),
+            ['host-memory-low', 'host-memory-recovered'],
+        );
+
+        service.shutdown();
+    });
+
+    test('health-snapshot records node/srs/relay CPU and RSS, host memory and each output memory limit', async (t) => {
+        mockHostMemory(t, { availableKb: 400_000 });
+        t.mock.method(globalThis, 'fetch', async (url) => {
+            if (String(url).includes('/streams/'))
+                return jsonResponse({ code: 0, streams: [streamFixture()] });
+            return jsonResponse({ code: 0, clients: [] });
+        });
+        const createHealthService = loadHealthService(t);
+        const diagnostics = makeDiagnosticsSpy();
+        const MB = 1024 * 1024;
+        const service = createHealthService(
+            makeFakeDb([{ id: 1, name: 'P1', streamKey: 'key01', streamKeyId: 1 }]),
+            makeFakeOutputService(),
+            makeFakeSrtRelay(),
+            makeFakeInputState(),
+            diagnostics,
+            undefined,
+            () => ({
+                node: { cpuPercent: 7, ramBytes: 1 }, // node RSS is read fresh, not from here
+                srs: { cpuPercent: 12, ramBytes: 48 * MB },
+                relay: { cpuPercent: null, ramBytes: 10 * MB },
+            }),
+        );
+
+        t.mock.timers.enable({ apis: ['setInterval'] });
+        service.start();
+        await sleep(20);
+
+        const snapshot = diagnostics.events.find((e) => e.event === 'health-snapshot');
+        assert.ok(snapshot, 'expected a health-snapshot event on the first poll');
+        const { node, srs, relay } = snapshot.processes;
+        assert.equal(node.cpuPercent, 7);
+        assert.ok(node.rssBytes > 1, 'node RSS must be read from the live process');
+        assert.ok(node.heapUsedBytes > 0);
+        assert.ok(node.heapTotalBytes >= node.heapUsedBytes);
+        assert.deepEqual(srs, { cpuPercent: 12, rssBytes: 48 * MB });
+        assert.deepEqual(relay, { cpuPercent: null, rssBytes: 10 * MB });
+        assert.deepEqual(snapshot.host, {
+            totalBytes: 1024000 * 1024,
+            availableBytes: 400_000 * 1024,
+            swapUsedBytes: 0,
+        });
+
+        service.shutdown();
+    });
+
+    test('health-snapshot still records node and host memory when no process-usage source is wired', async (t) => {
+        mockHostMemory(t, { availableKb: 400_000 });
+        t.mock.method(globalThis, 'fetch', async (url) => {
+            if (String(url).includes('/streams/'))
+                return jsonResponse({ code: 0, streams: [streamFixture()] });
+            return jsonResponse({ code: 0, clients: [] });
+        });
+        const createHealthService = loadHealthService(t);
+        const diagnostics = makeDiagnosticsSpy();
+        const service = createHealthService(
+            makeFakeDb([{ id: 1, name: 'P1', streamKey: 'key01', streamKeyId: 1 }]),
+            makeFakeOutputService(),
+            makeFakeSrtRelay(),
+            makeFakeInputState(),
+            diagnostics,
+        );
+
+        t.mock.timers.enable({ apis: ['setInterval'] });
+        service.start();
+        await sleep(20);
+
+        const snapshot = diagnostics.events.find((e) => e.event === 'health-snapshot');
+        assert.ok(snapshot.processes.node.rssBytes > 0);
+        assert.equal(snapshot.processes.node.cpuPercent, null);
+        assert.deepEqual(snapshot.processes.srs, { cpuPercent: null, rssBytes: null });
+        assert.equal(snapshot.host.availableBytes, 400_000 * 1024);
+
+        service.shutdown();
+    });
 });

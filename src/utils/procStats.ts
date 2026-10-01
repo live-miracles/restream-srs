@@ -14,6 +14,65 @@ export function readProcRssBytes(pid: number): number | null {
     }
 }
 
+export interface HostMemory {
+    totalBytes: number;
+    // MemAvailable is the kernel's estimate of what can be allocated without
+    // swapping (free + reclaimable cache); "free" alone is misleadingly low on
+    // a healthy box because the page cache fills whatever is left over.
+    availableBytes: number;
+    swapUsedBytes: number;
+}
+
+export function readHostMemory(): HostMemory | null {
+    try {
+        const meminfo = fs.readFileSync('/proc/meminfo', 'utf8');
+        const kb = (name: string): number | null => {
+            const match = new RegExp(`^${name}:\\s+(\\d+)\\s+kB$`, 'm').exec(meminfo);
+            return match ? parseInt(match[1], 10) * 1024 : null;
+        };
+        const totalBytes = kb('MemTotal');
+        const availableBytes = kb('MemAvailable');
+        if (totalBytes == null || availableBytes == null) return null;
+        const swapTotal = kb('SwapTotal') ?? 0;
+        const swapFree = kb('SwapFree') ?? 0;
+        return { totalBytes, availableBytes, swapUsedBytes: Math.max(0, swapTotal - swapFree) };
+    } catch {
+        return null;
+    }
+}
+
+export interface ProcessRss {
+    pid: number;
+    name: string;
+    rssBytes: number;
+}
+
+// Largest processes by RSS, for post-incident evidence when host memory runs
+// low. Scans all of /proc, so only call it on a transition, not on a poll.
+export function topProcessesByRss(limit: number): ProcessRss[] {
+    let entries: string[];
+    try {
+        entries = fs.readdirSync('/proc');
+    } catch {
+        return [];
+    }
+    const found: ProcessRss[] = [];
+    for (const entry of entries) {
+        if (!/^\d+$/.test(entry)) continue;
+        try {
+            const status = fs.readFileSync(`/proc/${entry}/status`, 'utf8');
+            const name = /^Name:\s+(.+)$/m.exec(status)?.[1];
+            const rss = /^VmRSS:\s+(\d+)\s+kB$/m.exec(status);
+            if (name && rss) {
+                found.push({ pid: Number(entry), name, rssBytes: parseInt(rss[1], 10) * 1024 });
+            }
+        } catch {
+            continue; // process exited mid-scan
+        }
+    }
+    return found.sort((a, b) => b.rssBytes - a.rssBytes).slice(0, limit);
+}
+
 function readProcCpuTicks(pid: number): number | null {
     try {
         const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');

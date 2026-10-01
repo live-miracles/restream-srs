@@ -6,6 +6,8 @@ const fs = require('node:fs');
 
 const {
     readProcRssBytes,
+    readHostMemory,
+    topProcessesByRss,
     findPidsByExecutable,
     createProcCpuTracker,
 } = require('../src/utils/procStats');
@@ -249,5 +251,59 @@ describe('createProcCpuTracker', () => {
         t.mock.method(fs, 'readFileSync', () => '1 (ffmpeg) S 1 1 1 0 -1 0 0 0 0 0 x y');
         const tracker = createProcCpuTracker();
         assert.equal(tracker.sample('out1', 1), null);
+    });
+});
+
+describe('readHostMemory', () => {
+    test('parses MemTotal/MemAvailable and derives swap in use', (t) => {
+        t.mock.method(
+            fs,
+            'readFileSync',
+            () =>
+                'MemTotal:         981000 kB\nMemFree:  100000 kB\nMemAvailable:     240000 kB\nSwapTotal: 2048 kB\nSwapFree: 1024 kB\n',
+        );
+        assert.deepEqual(readHostMemory(), {
+            totalBytes: 981000 * 1024,
+            availableBytes: 240000 * 1024,
+            swapUsedBytes: 1024 * 1024,
+        });
+    });
+
+    test('treats a box with no swap as zero swap used', (t) => {
+        t.mock.method(fs, 'readFileSync', () => 'MemTotal: 1000 kB\nMemAvailable: 500 kB\n');
+        assert.equal(readHostMemory().swapUsedBytes, 0);
+    });
+
+    test('returns null when MemAvailable is missing or /proc is unreadable', (t) => {
+        t.mock.method(fs, 'readFileSync', () => 'MemTotal: 1000 kB\n');
+        assert.equal(readHostMemory(), null);
+        t.mock.method(fs, 'readFileSync', () => {
+            throw new Error('ENOENT');
+        });
+        assert.equal(readHostMemory(), null);
+    });
+});
+
+describe('topProcessesByRss', () => {
+    test('returns the largest processes first, skipping ones that vanish mid-scan', (t) => {
+        t.mock.method(fs, 'readdirSync', () => ['1', '20', '30', '40', 'self', 'cpuinfo']);
+        t.mock.method(fs, 'readFileSync', (file) => {
+            if (file === '/proc/1/status') return 'Name:\tsystemd\nVmRSS:\t 10000 kB\n';
+            if (file === '/proc/20/status') return 'Name:\tnode\nVmRSS:\t 140000 kB\n';
+            if (file === '/proc/30/status') return 'Name:\tkthreadd\nState:\tS\n'; // no VmRSS
+            throw new Error('ENOENT'); // pid 40 exited
+        });
+        assert.deepEqual(topProcessesByRss(5), [
+            { pid: 20, name: 'node', rssBytes: 140000 * 1024 },
+            { pid: 1, name: 'systemd', rssBytes: 10000 * 1024 },
+        ]);
+        assert.equal(topProcessesByRss(1).length, 1);
+    });
+
+    test('returns an empty list when /proc is missing', (t) => {
+        t.mock.method(fs, 'readdirSync', () => {
+            throw new Error('ENOENT');
+        });
+        assert.deepEqual(topProcessesByRss(5), []);
     });
 });
