@@ -15,6 +15,12 @@ const legHistoryOffsets = new Map<string, number>();
 const legHistoryCache = new Map<string, LegHistoryData>();
 const legHistoryRequestIds = new Map<string, number>();
 const legHistoryInFlight = new Set<string>();
+// Older pages (offset > 0) are static apart from their newest edge, so they
+// are prefetched one step ahead and reused briefly. This keeps paging
+// instant like the overview charts, whose full history is already client-side.
+const LEG_HISTORY_PAGE_TTL_MS = 60 * 1000;
+const legHistoryPageCache = new Map<string, { data: LegHistoryData; fetchedAt: number }>();
+const legHistoryPrefetching = new Set<string>();
 
 function formatLegChartTimeTick(ts: number): string {
     const date = new Date(ts);
@@ -218,9 +224,48 @@ function mergeLegHistory(
     return merged;
 }
 
+function legHistoryPageKey(pipelineId: string, offset: number): string {
+    return `${pipelineId}:${offset}`;
+}
+
+function freshLegHistoryPage(pipelineId: string, offset: number): LegHistoryData | undefined {
+    if (offset === 0) return undefined;
+    const entry = legHistoryPageCache.get(legHistoryPageKey(pipelineId, offset));
+    return entry && Date.now() - entry.fetchedAt < LEG_HISTORY_PAGE_TTL_MS ? entry.data : undefined;
+}
+
+// Best-effort: a failed prefetch is tolerated on purpose. The page simply
+// isn't cached, so the next click does the normal fetch and shows its own
+// error if that also fails.
+async function prefetchLegHistoryPage(pipelineId: string, offset: number): Promise<void> {
+    const key = legHistoryPageKey(pipelineId, offset);
+    if (
+        document.hidden ||
+        legHistoryPrefetching.has(key) ||
+        freshLegHistoryPage(pipelineId, offset)
+    ) {
+        return;
+    }
+    legHistoryPrefetching.add(key);
+    try {
+        const to = Date.now() - offset;
+        const data = await api.getLegHistory(pipelineId, to - LEG_HISTORY_WINDOW_MS, to);
+        if (!data) return;
+        const now = Date.now();
+        for (const [k, entry] of legHistoryPageCache) {
+            if (now - entry.fetchedAt >= LEG_HISTORY_PAGE_TTL_MS) legHistoryPageCache.delete(k);
+        }
+        legHistoryPageCache.set(key, { data, fetchedAt: now });
+    } catch {
+        // See above: tolerated, falls back to an on-demand fetch.
+    } finally {
+        legHistoryPrefetching.delete(key);
+    }
+}
+
 async function loadLegHistory(pipelineId: string, showLoading = true): Promise<void> {
     const offset = legHistoryOffsets.get(pipelineId) ?? 0;
-    const requestKey = `${pipelineId}:${offset}`;
+    const requestKey = legHistoryPageKey(pipelineId, offset);
     if (legHistoryInFlight.has(requestKey)) return;
     legHistoryInFlight.add(requestKey);
 
@@ -233,28 +278,36 @@ async function loadLegHistory(pipelineId: string, showLoading = true): Promise<v
     };
     const to = Date.now() - offset;
     const from = to - LEG_HISTORY_WINDOW_MS;
+    const prefetchedPage = freshLegHistoryPage(pipelineId, offset);
     const content = document.getElementById('srt-leg-history-content');
-    if (content && showLoading) {
-        // The chart canvases are about to be replaced by the placeholder, so
-        // drop the chart-mode marker too — otherwise renderLegHistoryCharts
-        // sees a matching mode on the next render and skips recreating the
-        // canvases it just lost, leaving this placeholder on screen forever.
-        delete content.dataset.chartMode;
-        content.innerHTML = '<p class="text-sm opacity-50">Loading leg history…</p>';
+    if (content && showLoading && !prefetchedPage) {
+        if (content.dataset.chartMode) {
+            // Paging: keep the current charts on screen (dimmed) until the
+            // new window arrives, instead of blanking them behind a
+            // placeholder and flashing.
+            content.classList.add('opacity-50');
+        } else {
+            content.innerHTML = '<p class="text-sm opacity-50">Loading leg history…</p>';
+        }
     }
     const cached = offset === 0 ? legHistoryCache.get(pipelineId) : undefined;
     const cachedTimestamps =
         cached?.legs.flatMap((leg) => leg.samples.map((sample) => sample.ts)) ?? [];
     const latestCachedTs = cachedTimestamps.length > 0 ? Math.max(...cachedTimestamps) : undefined;
     try {
-        const data = await api.getLegHistory(pipelineId, from, to, latestCachedTs);
+        const data =
+            prefetchedPage ?? (await api.getLegHistory(pipelineId, from, to, latestCachedTs));
         if (!isCurrentRequest()) return;
         const content = document.getElementById('srt-leg-history-content');
         if (!content) return;
         if (!data) {
+            delete content.dataset.chartMode;
             content.innerHTML =
                 '<p class="text-sm text-error">Unable to load SRT input history. Please try again.</p>';
             return;
+        }
+        if (offset > 0 && !prefetchedPage) {
+            legHistoryPageCache.set(requestKey, { data, fetchedAt: Date.now() });
         }
         const displayData = offset === 0 ? mergeLegHistory(pipelineId, data, from, to) : data;
         const range = document.getElementById('srt-leg-history-range');
@@ -270,18 +323,25 @@ async function loadLegHistory(pipelineId: string, showLoading = true): Promise<v
         const forward = document.getElementById(
             'srt-leg-history-forward',
         ) as HTMLButtonElement | null;
-        if (back) back.disabled = data.oldestTs === null || data.from <= data.oldestTs;
+        const hasOlder = data.oldestTs !== null && data.from > data.oldestTs;
+        if (back) back.disabled = !hasOlder;
         if (forward) forward.disabled = offset === 0;
         renderLegHistoryCharts(pipelineId, displayData);
+        if (hasOlder) void prefetchLegHistoryPage(pipelineId, offset + LEG_HISTORY_PAGE_STEP_MS);
     } catch {
         if (!isCurrentRequest()) return;
         const content = document.getElementById('srt-leg-history-content');
         if (content) {
+            delete content.dataset.chartMode;
             content.innerHTML =
                 '<p class="text-sm text-error">Unable to load SRT input history. Please try again.</p>';
         }
     } finally {
         legHistoryInFlight.delete(requestKey);
+        // A newer request owns the dimming; only the latest one clears it.
+        if (legHistoryRequestIds.get(pipelineId) === requestId) {
+            document.getElementById('srt-leg-history-content')?.classList.remove('opacity-50');
+        }
     }
 }
 
@@ -321,17 +381,9 @@ function fmtRawCount(n: number | null | undefined): string {
 // surface a curated subset, this is the "show me everything" escape hatch.
 // Split from showSrtBondingDetails so the modal's refresh button can re-pull
 // the latest polled state.pipelines snapshot without reopening the dialog.
-function renderSrtBondingDetailsContent(pipelineId: string, target?: HTMLElement | null): void {
-    const titleEl = document.getElementById('logs-modal-title');
-    const contentEl = target ?? document.getElementById('logs-modal-content');
-    if (!contentEl) return;
-
+function renderSrtStatsSections(pipelineId: string): string {
     const pipeline = state.pipelines.find((p) => p.id === pipelineId);
-    if (titleEl) titleEl.textContent = `SRT Bonding Details — ${pipeline?.name ?? pipelineId}`;
-    if (!pipeline) {
-        contentEl.innerHTML = '<p class="opacity-50 text-sm">No SRT bonding data.</p>';
-        return;
-    }
+    if (!pipeline) return '<p class="opacity-50 text-sm">No SRT bonding data.</p>';
 
     const { input, output } = pipeline.srtBonding;
 
@@ -420,11 +472,24 @@ function renderSrtBondingDetailsContent(pipelineId: string, target?: HTMLElement
                   })
                   .join('');
 
+    return srtDetailSection('Input', inputRows) + srtDetailSection('Output', outputRows) + legsHtml;
+}
+
+function renderSrtBondingDetailsContent(pipelineId: string, target?: HTMLElement | null): void {
+    const titleEl = document.getElementById('logs-modal-title');
+    const contentEl = target ?? document.getElementById('logs-modal-content');
+    if (!contentEl) return;
+
+    const pipeline = state.pipelines.find((p) => p.id === pipelineId);
+    if (titleEl) titleEl.textContent = `SRT Bonding Details — ${pipeline?.name ?? pipelineId}`;
+    if (!pipeline) {
+        contentEl.innerHTML = '<p class="opacity-50 text-sm">No SRT bonding data.</p>';
+        return;
+    }
+
     contentEl.innerHTML =
         renderLegHistorySection(pipelineId) +
-        srtDetailSection('Input', inputRows) +
-        srtDetailSection('Output', outputRows) +
-        legsHtml;
+        `<div data-srt-stats-body>${renderSrtStatsSections(pipelineId)}</div>`;
     document.getElementById('srt-leg-history-back')?.addEventListener('click', () => {
         legHistoryOffsets.set(
             pipelineId,
@@ -449,6 +514,10 @@ export function renderSrtBondingDetailsInline(pipelineId: string): void {
         target.dataset.pipelineId === pipelineId &&
         !!document.getElementById('srt-leg-history-section');
     if (alreadyRendered) {
+        // The raw counters come from the already-polled state.pipelines
+        // snapshot, so re-rendering them is free (no request).
+        const body = target.querySelector('[data-srt-stats-body]');
+        if (body) body.innerHTML = renderSrtStatsSections(pipelineId);
         // Poll refreshes re-render the live dashboard every five seconds. Do
         // not restart a paged historical request on each poll, otherwise a
         // slow request can be perpetually superseded before it renders.
