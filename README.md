@@ -531,6 +531,25 @@ broadcast path.
 entire gap. If translator disconnects become frequent enough to matter,
 investigate the translator's own network path rather than this timeout.
 
+### Translation sync is only tight for SRT sources
+
+Translation pipelines are meant to use SRT inputs. With an SRT source the
+mixed output keeps the source and translator within a fraction of a second
+(measured ~0 s, or up to ~0.7 s translator-behind when the translator also
+sends video), before the configured translation delay is added. This relies
+on the mixer opening the translator first with a short probe; see the comment
+in `buildTranslationMixerArgs`.
+
+An RTMP source still works, but SRS's GOP cache makes every new RTMP player
+start at the last keyframe, so the source can trail the translation by up to
+its keyframe interval (measured −2.2 s to +0.2 s with a 2 s GOP), varying per
+mixer start. This is not compensated: doing so would mean either disabling
+SRS's GOP cache globally (slower start/restart for every output and preview)
+or estimating the offset at runtime inside a live process.
+
+**Mitigation:** use SRT for translation sources. If RTMP is unavoidable, a
+1 s keyframe interval on the encoder keeps the error near 1 s.
+
 ### Watchdogs
 
 The app runs these recovery loops:

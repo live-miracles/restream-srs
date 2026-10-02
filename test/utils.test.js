@@ -261,7 +261,7 @@ describe('buildTranslationMixerArgs', () => {
             ['-readrate', '1'],
         );
         assert.deepEqual(
-            args.slice(args.indexOf('srt://translator') - 3, args.indexOf('srt://translator') - 1),
+            args.slice(args.indexOf('srt://translator') - 7, args.indexOf('srt://translator') - 5),
             ['-readrate', '1'],
         );
         const filter = args[args.indexOf('-filter_complex') + 1];
@@ -270,7 +270,33 @@ describe('buildTranslationMixerArgs', () => {
         assert.match(filter, /azmq=bind_address/);
         assert.match(filter, /ametadata=mode=print/);
         assert.match(filter, /amix=inputs=2/);
-        assert.equal(args[args.indexOf('-map', args.indexOf('-filter_complex')) + 1], '0:v:0?');
+        assert.equal(args[args.indexOf('-map', args.indexOf('-filter_complex')) + 1], '1:v:0?');
+    });
+
+    test('opens the translator first with a short probe and leaves the source probe at defaults', () => {
+        const args = buildTranslationMixerArgs('srt://source', 'srt://translator', 'rtmp://mixed', {
+            videoEncoding: 'copy',
+            translationDelayMs: 800,
+            voiceThresholdDb: -20,
+            controlPort: 31001,
+            duckVolumePercent: 6,
+            duckDurationMs: 900,
+            restoreSilenceMs: 2000,
+            restoreVolumePercent: 32,
+            restoreDurationMs: 1000,
+        });
+        const inputs = args.filter((value, index) => args[index - 1] === '-i');
+        assert.deepEqual(inputs, ['srt://translator', 'srt://source']);
+        const translatorAt = args.indexOf('srt://translator');
+        assert.deepEqual(args.slice(translatorAt - 5, translatorAt - 1), [
+            '-analyzeduration',
+            '500000',
+            '-probesize',
+            '500000',
+        ]);
+        const sourceArgs = args.slice(translatorAt + 1, args.indexOf('srt://source'));
+        assert.ok(!sourceArgs.includes('-analyzeduration'));
+        assert.ok(!sourceArgs.includes('-probesize'));
     });
 
     test("defaults to each input's first track when no track index is given", () => {
@@ -286,8 +312,8 @@ describe('buildTranslationMixerArgs', () => {
             restoreDurationMs: 1000,
         });
         const filter = args[args.indexOf('-filter_complex') + 1];
-        assert.match(filter, /^\[0:a:0\]/);
-        assert.match(filter, /\[1:a:0\]/);
+        assert.match(filter, /^\[1:a:0\]aresample[^;]*\[source\]/);
+        assert.match(filter, /\[0:a:0\]aresample[^;]*\[translator_audio\]/);
     });
 
     test('selects the configured source/translator track in the sidechain mix', () => {
@@ -305,8 +331,8 @@ describe('buildTranslationMixerArgs', () => {
             restoreDurationMs: 1000,
         });
         const filter = args[args.indexOf('-filter_complex') + 1];
-        assert.match(filter, /^\[0:a:2\]/);
-        assert.match(filter, /\[1:a:3\]/);
+        assert.match(filter, /^\[1:a:2\]aresample[^;]*\[source\]/);
+        assert.match(filter, /\[0:a:3\]aresample[^;]*\[translator_audio\]/);
     });
 
     test('selects the configured source track when the translator is unavailable', () => {

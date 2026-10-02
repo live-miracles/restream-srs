@@ -161,7 +161,8 @@ export function volumePercentToAmplitude(volumePercent: number): number {
 }
 
 // Build one upstream program stream for a translation mix. The source input
-// owns the video; the translator input contributes audio only. The translator
+// owns the video; the translator input contributes audio only (see below for
+// why the translator is input 0 and the source input 1). The translator
 // is split so its immediate copy drives the sidechain while its audible copy
 // is delayed to compensate for the translator's lead/arrival timing.
 export function buildTranslationMixerArgs(
@@ -188,10 +189,10 @@ export function buildTranslationMixerArgs(
     const formatArgs = outputUrl.startsWith('srt://') ? ['-f', 'mpegts'] : ['-f', 'flv'];
     const sourceTrackIndex = config.sourceTrackIndex ?? 0;
     const translatorTrackIndex = config.translatorTrackIndex ?? 0;
-    if (sourceInputUrl.startsWith('srt://')) args.push('-readrate', '1');
-    args.push('-i', sourceInputUrl);
 
     if (!translatorInputUrl) {
+        if (sourceInputUrl.startsWith('srt://')) args.push('-readrate', '1');
+        args.push('-i', sourceInputUrl);
         args.push(
             '-map',
             '0:v:0?',
@@ -214,14 +215,29 @@ export function buildTranslationMixerArgs(
         return args;
     }
 
+    // Input order is load-bearing for A/V sync. FFmpeg opens inputs one after
+    // another and starts each input's timeline at its own first packet, so
+    // whatever time the first-opened input spends probing (analyzeduration
+    // defaults to 5 s) becomes a fixed offset between the two legs. With the
+    // source first, the source ended up ~2 s (RTMP) to ~6 s (SRT) behind the
+    // translation. The translator is therefore opened first (input 0) with a
+    // short probe — it is our own audio-only pull, so 0.5 s is plenty — and
+    // the source (input 1) keeps FFmpeg's default probe so its video codec
+    // parameters are still found reliably. Measured residual over SRT: ~0 s
+    // (up to ~0.7 s translator-behind if the translator also carries video).
+    // Over RTMP, SRS's GOP cache starts the source up to one GOP in the past,
+    // so an RTMP source can still trail the translation by up to its keyframe
+    // interval; this ordering cannot remove that.
     if (translatorInputUrl.startsWith('srt://')) args.push('-readrate', '1');
-    args.push('-i', translatorInputUrl);
+    args.push('-analyzeduration', '500000', '-probesize', '500000', '-i', translatorInputUrl);
+    if (sourceInputUrl.startsWith('srt://')) args.push('-readrate', '1');
+    args.push('-i', sourceInputUrl);
     const delay = Math.max(0, Math.round(config.translationDelayMs));
     args.push(
         '-filter_complex',
-        `[0:a:${sourceTrackIndex}]aresample=48000:async=1:first_pts=0[source];` +
+        `[1:a:${sourceTrackIndex}]aresample=48000:async=1:first_pts=0[source];` +
             `[source]volume@source_gain=1,azmq=bind_address=tcp\\\\://127.0.0.1\\\\:${config.controlPort}[source_controlled];` +
-            `[1:a:${translatorTrackIndex}]aresample=48000:async=1:first_pts=0,asplit=2[translator_audio][translator_meter];` +
+            `[0:a:${translatorTrackIndex}]aresample=48000:async=1:first_pts=0,asplit=2[translator_audio][translator_meter];` +
             `[translator_audio]adelay=${delay}:all=1[translator_delayed];` +
             // astats' `reset` is a frame count, not seconds — 0 (or a value
             // that rounds/truncates to it) disables periodic reset entirely,
@@ -235,7 +251,7 @@ export function buildTranslationMixerArgs(
             `[translator_meter]astats=metadata=1:reset=1,ametadata=mode=print:file=pipe\\\\:3,anullsink;` +
             `[source_controlled][translator_delayed]amix=inputs=2:duration=longest:dropout_transition=0.2[mixed_audio]`,
         '-map',
-        '0:v:0?',
+        '1:v:0?',
         '-map',
         '[mixed_audio]',
         ...videoArgs,
