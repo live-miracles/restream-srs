@@ -1232,4 +1232,38 @@ describe('createHealthService diagnostics and bonded-leg alerts', () => {
 
         service.shutdown();
     });
+
+    test('records a failed ffprobe in diagnostics and the pipeline log, once per publisher in the log', async (t) => {
+        t.mock.method(globalThis, 'fetch', async (url) => {
+            if (String(url).includes('/streams/'))
+                return jsonResponse({ code: 0, streams: [streamFixture()] });
+            return jsonResponse({ code: 0, clients: [] });
+        });
+        const createHealthService = loadHealthService(t);
+        const diagnostics = makeDiagnosticsSpy();
+        const db = makeFakeDb([{ id: 1, name: 'P1', streamKey: 'key01', streamKeyId: 1 }]);
+        const service = createHealthService(
+            db,
+            makeFakeOutputService(),
+            makeFakeSrtRelay(),
+            makeFakeInputState(),
+            diagnostics,
+        );
+
+        t.mock.timers.enable({ apis: ['setInterval'] });
+        service.start();
+        await sleep(50);
+
+        const failed = diagnostics.events.filter((e) => e.event === 'media-probe-failed');
+        assert.equal(failed.length, 1);
+        assert.equal(failed[0].pipelineId, 1);
+        assert.equal(failed[0].reason, 'exit');
+        assert.equal(failed[0].attempt, 1);
+        assert.match(failed[0].error, /ffprobe did not detect a readable media stream/);
+        const probeLogs = db.logs.filter((l) => l.event === 'probe_failed');
+        assert.equal(probeLogs.length, 1);
+        assert.equal(probeLogs[0].pipelineId, 1);
+
+        service.shutdown();
+    });
 });

@@ -1,5 +1,5 @@
 import { execFile } from 'child_process';
-import type { ChildProcess } from 'child_process';
+import type { ChildProcess, ExecFileException } from 'child_process';
 import { type SrsStreamVideo, type SrsStreamAudio, type AudioTrackInfo } from '../utils/srs.js';
 import { readAppConfig } from '../utils/appConfig.js';
 
@@ -10,6 +10,28 @@ export interface ProbeResult {
     video: SrsStreamVideo | null;
     audio: SrsStreamAudio | null;
     audioTracks: AudioTrackInfo[];
+}
+
+// Why a probe produced no result, for diagnostics. stderr is redacted: ffprobe
+// echoes the pull URL (stream key, SRT passphrase) in its error messages.
+export interface ProbeFailure {
+    reason: 'timeout' | 'exit' | 'parse';
+    elapsedMs: number;
+    exitCode: number | string | null;
+    signal: string | null;
+    stderrTail: string;
+}
+
+const STDERR_TAIL_CHARS = 1000;
+
+export function redactProbeOutput(text: string, url: string): string {
+    return text
+        .split(url)
+        .join('<pull-url>')
+        .replace(/passphrase=[^&\s]*/g, 'passphrase=<redacted>')
+        .replace(/\bkey\d+_[0-9a-f]+/gi, (m) => `${m.slice(0, m.indexOf('_') + 1)}<redacted>`)
+        .trim()
+        .slice(-STDERR_TAIL_CHARS);
 }
 
 export function isProbeUsable(result: ProbeResult | null): boolean {
@@ -49,15 +71,31 @@ export function probeError(result: ProbeResult | null, checkedAt: number): strin
 export function runFfprobe(
     url: string,
     onChild?: (child: ChildProcess) => void,
+    onFailure?: (failure: ProbeFailure) => void,
 ): Promise<ProbeResult | null> {
     return new Promise((resolve) => {
+        const startedAt = Date.now();
+        const fail = (
+            reason: ProbeFailure['reason'],
+            err: ExecFileException | null,
+            stderr: string,
+        ): void => {
+            onFailure?.({
+                reason,
+                elapsedMs: Date.now() - startedAt,
+                exitCode: err?.code ?? null,
+                signal: err?.signal ?? null,
+                stderrTail: redactProbeOutput(stderr, url),
+            });
+            resolve(null);
+        };
         const child = execFile(
             FFPROBE_CMD,
-            ['-v', 'quiet', '-print_format', 'json', '-show_streams', url],
+            ['-v', 'error', '-print_format', 'json', '-show_streams', url],
             { timeout: FFPROBE_TIMEOUT_MS, killSignal: 'SIGKILL' },
-            (err, stdout) => {
+            (err, stdout, stderr) => {
                 if (err) {
-                    resolve(null);
+                    fail(err.killed ? 'timeout' : 'exit', err, String(stderr ?? ''));
                     return;
                 }
                 try {
@@ -102,7 +140,7 @@ export function runFfprobe(
                         audioTracks,
                     });
                 } catch {
-                    resolve(null);
+                    fail('parse', null, String(stderr ?? ''));
                 }
             },
         );

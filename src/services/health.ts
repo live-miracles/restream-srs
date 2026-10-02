@@ -23,7 +23,13 @@ import type {
 import { inputPullUrl, type InputProtocol, type InputState } from './inputState.js';
 import type { DiagnosticsLogger } from '../utils/diagnostics.js';
 import { readHostMemory, topProcessesByRss } from '../utils/procStats.js';
-import { isProbeUsable, probeError, runFfprobe, type ProbeResult } from './mediaProbe.js';
+import {
+    isProbeUsable,
+    probeError,
+    runFfprobe,
+    type ProbeFailure,
+    type ProbeResult,
+} from './mediaProbe.js';
 import type { TranslationMixerService, TranslationOutputState } from './translationMixer.js';
 
 export { isProbeUsable };
@@ -212,6 +218,8 @@ interface ProbeStatus {
     checkedAt: number;
     ok: boolean;
     error: string | null;
+    // Consecutive failed probes for this publisher; reset by a success.
+    failedAttempts: number;
 }
 
 interface SrsPublisherInfo {
@@ -406,6 +414,68 @@ export function createHealthService(
         ffprobeGenerations.set(pipelineId, (ffprobeGenerations.get(pipelineId) ?? 0) + 1);
     }
 
+    // Failed probes leave the dashboard error as the only trace unless they are
+    // recorded. Every failure goes to diagnostics (bounded by the 30 s retry
+    // cadence and the diagnostics size caps); the pipeline log only gets the
+    // first failure and the recovery per publisher so a persistently bad input
+    // cannot flood it.
+    function recordProbeOutcome(
+        pipelineId: number,
+        protocol: InputProtocol,
+        outcome: {
+            ok: boolean;
+            previousFailures: number;
+            error: string | null;
+            failure: ProbeFailure | null;
+            elapsedMs: number;
+        },
+    ): void {
+        const { ok, previousFailures, error, failure, elapsedMs } = outcome;
+        if (ok && previousFailures === 0) return;
+        let pipelineLogEvent: string | null = null;
+        let pipelineLogMessage = '';
+        if (ok) {
+            pipelineLogEvent = 'probe_recovered';
+            pipelineLogMessage = `ffprobe validated the input after ${previousFailures} failed ${previousFailures === 1 ? 'attempt' : 'attempts'}`;
+            diagnostics?.event('media-probe-recovered', {
+                pipelineId,
+                protocol,
+                failedAttempts: previousFailures,
+                elapsedMs,
+            });
+        } else {
+            const reason = failure?.reason ?? 'unusable';
+            if (previousFailures === 0) {
+                pipelineLogEvent = 'probe_failed';
+                pipelineLogMessage =
+                    reason === 'timeout'
+                        ? `ffprobe timed out after ${Math.round(elapsedMs / 1000)}s without media data`
+                        : `ffprobe failed (${reason}): ${error ?? 'no usable video stream'}`;
+            }
+            diagnostics?.event('media-probe-failed', {
+                pipelineId,
+                protocol,
+                reason,
+                attempt: previousFailures + 1,
+                elapsedMs,
+                exitCode: failure?.exitCode ?? null,
+                signal: failure?.signal ?? null,
+                error,
+                stderrTail: failure?.stderrTail ?? '',
+            });
+            console.warn(
+                `[probe] pipeline ${pipelineId} (${protocol}) attempt ${previousFailures + 1} failed: ${reason} after ${elapsedMs}ms`,
+            );
+        }
+        if (pipelineLogEvent) {
+            try {
+                db.appendPipelineLog(pipelineId, pipelineLogEvent, pipelineLogMessage);
+            } catch {
+                /* non-critical */
+            }
+        }
+    }
+
     function scheduleFfprobe(
         pipelineId: number,
         streamKey: string,
@@ -421,18 +491,35 @@ export function createHealthService(
             const startedAt = Date.now();
             ffprobeStartedAt.set(pipelineId, startedAt);
             try {
-                const result = await runFfprobe(url, (child) => {
-                    ffprobeChildren.set(pipelineId, child);
-                });
+                let failure: ProbeFailure | null = null;
+                const result = await runFfprobe(
+                    url,
+                    (child) => {
+                        ffprobeChildren.set(pipelineId, child);
+                    },
+                    (info) => {
+                        failure = info;
+                    },
+                );
                 if ((ffprobeGenerations.get(pipelineId) ?? 0) !== generation) return;
                 const ok = isProbeUsable(result);
                 const checkedAt = Date.now();
+                const previousFailures = ffprobeResults.get(pipelineId)?.failedAttempts ?? 0;
+                const error = ok ? null : probeError(result, checkedAt);
                 ffprobeResults.set(pipelineId, {
                     result,
                     startedAt,
                     checkedAt,
                     ok,
-                    error: ok ? null : probeError(result, checkedAt),
+                    error,
+                    failedAttempts: ok ? 0 : previousFailures + 1,
+                });
+                recordProbeOutcome(pipelineId, protocol, {
+                    ok,
+                    previousFailures,
+                    error,
+                    failure,
+                    elapsedMs: checkedAt - startedAt,
                 });
             } finally {
                 ffprobeInFlight.delete(pipelineId);
