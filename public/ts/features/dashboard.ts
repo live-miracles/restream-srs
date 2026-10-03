@@ -1,6 +1,7 @@
 import {
     getConfig,
     getHealth,
+    getRejectedPublishes,
     getHostProbes,
     getSystemMetrics,
     getMetricsHistory,
@@ -95,12 +96,14 @@ async function fetchAndRender(): Promise<void> {
 
     const inOverview = !getUrlParam('p');
     const latestMetricTs = state.metricsHistory.at(-1)?.ts;
-    const [configResult, healthResult, metricsResult, historyResult] = await Promise.all([
-        doConfig ? getConfig() : Promise.resolve(null),
-        getHealth(),
-        getSystemMetrics(),
-        inOverview ? getMetricsHistory(latestMetricTs) : Promise.resolve(null),
-    ]);
+    const [configResult, healthResult, rejectedResult, metricsResult, historyResult] =
+        await Promise.all([
+            doConfig ? getConfig() : Promise.resolve(null),
+            getHealth(),
+            getRejectedPublishes(),
+            getSystemMetrics(),
+            inOverview ? getMetricsHistory(latestMetricTs) : Promise.resolve(null),
+        ]);
 
     if (configResult) {
         state.config = configResult;
@@ -138,6 +141,10 @@ async function fetchAndRender(): Promise<void> {
             state.health.srtRelay?.lastError && state.health.srtRelay.status !== 'running'
                 ? `SRT bonding relay is not responding: ${state.health.srtRelay.lastError}`
                 : 'SRT bonding relay is not running — bonded SRT input unavailable';
+    }
+    if (rejectedResult) {
+        state.rejectedPublishes = rejectedResult.rejected;
+        state.rejectedOmitted = rejectedResult.omitted;
     }
     if (metricsResult) state.metrics = metricsResult;
     if (historyResult) mergeMetricsHistory(historyResult);

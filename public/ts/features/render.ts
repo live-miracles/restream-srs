@@ -2009,6 +2009,7 @@ function renderPipelineInfo(selectedId: string | null): void {
 // ── Outputs list (right column) ───────────────────────
 
 const ICON_WARN = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>`;
+const ICON_CROSS = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`;
 const ICON_ERROR = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>`;
 
 function renderOutputsList(pipeline: PipelineView): void {
@@ -2167,7 +2168,75 @@ export function renderPipelines(): void {
     const docsBtn = document.getElementById('docs-nav-btn');
     docsBtn?.classList.toggle('btn-active', view === 'docs');
     renderPipelineList();
+    renderRejectedPublishes();
     renderPipelineInfo(selectedId);
+}
+
+// Publish/play attempts SRS refused (key with no pipeline, unrecognized name, or
+// a play request from an encoder whose SRT stream id lacks m=publish). Shown apart
+// from the pipeline list (below a divider) so it is clear these are not
+// pipelines and nothing is being forwarded — an encoder on such a key can look
+// healthy on its own side. Hidden when there is nothing recent.
+function renderRejectedPublishes(): void {
+    const el = document.getElementById('rejected-publishes');
+    if (!el) return;
+    const rejected = state.rejectedPublishes;
+    el.classList.toggle('hidden', rejected.length === 0);
+    if (rejected.length === 0) {
+        el.innerHTML = '';
+        return;
+    }
+    const rows = rejected
+        .map((r) => {
+            const via =
+                r.protocol === 'srt'
+                    ? r.ip && !/^(127\.|::1$|::ffff:127\.)/.test(r.ip)
+                        ? `SRT from ${escapeHtml(r.ip)}`
+                        : 'SRT (via relay)'
+                    : `RTMP${r.ip ? ` from ${escapeHtml(r.ip)}` : ''}`;
+            const keyWhy =
+                r.reason === 'assigned'
+                    ? 'The key is assigned to a pipeline'
+                    : r.reason === 'unassigned'
+                      ? 'Key is valid but not assigned to a pipeline'
+                      : r.reason === 'unknown'
+                        ? 'Key not recognized (wrong secret or key was regenerated)'
+                        : 'Stream name is empty or not a stream key (e.g. a typo or a missing keyNN_ prefix)';
+            const why =
+                r.kind === 'play'
+                    ? `SRS treated this as a play request, and plays from outside are refused. If this is an encoder, its SRT stream id is probably missing m=publish (e.g. #!::r=live/keyNN_...,m=publish). ${keyWhy}`
+                    : keyWhy;
+            const playBadge =
+                r.kind === 'play'
+                    ? `<span class="badge badge-sm badge-warning badge-outline shrink-0">Play request</span>`
+                    : '';
+            const streamsBadge =
+                r.reason === 'unrecognized'
+                    ? `<span class="badge badge-sm badge-ghost shrink-0" title="Distinct unrecognized stream names combined in this row">${r.streams}${r.streamsCapped ? '+' : ''} stream${r.streams === 1 && !r.streamsCapped ? '' : 's'}</span>`
+                    : '';
+            const recent = r.lastAttemptAgoMs < 60_000;
+            return `<li class="flex flex-col gap-1 py-1.5 ${recent ? '' : 'opacity-50'}">
+                <div class="flex items-center gap-2">
+                    <span class="js-tooltip text-warning shrink-0 inline-flex" tabindex="0">${ICON_WARN}<div class="js-tooltip-content hidden"><div class="text-sm">${escapeHtml(why)}. Nothing is being forwarded.</div></div></span>
+                    <span class="font-mono text-sm">${r.reason === 'unrecognized' ? 'Unrecognized' : escapeHtml(r.label)}</span>
+                    <span class="badge badge-sm badge-outline shrink-0">${r.protocol === 'srt' ? 'SRT' : 'RTMP'}</span>
+                    ${playBadge}
+                    <span class="min-w-0 truncate text-xs opacity-60" title="${escapeHtml(via)}">${escapeHtml(via)}</span>
+                </div>
+                <div class="flex items-center gap-2 pl-5">
+                    ${streamsBadge}
+                    <span class="badge badge-sm badge-error shrink-0 gap-1 px-2" title="${r.attempts} rejected attempt${r.attempts === 1 ? '' : 's'}">${ICON_CROSS}${r.attempts}</span>
+                    <span class="font-mono text-xs opacity-60">${formatUptime(r.lastAttemptAgoMs)} ago</span>
+                </div>
+            </li>`;
+        })
+        .join('');
+    el.innerHTML = `<div class="border-base-content/10 border-t pt-2">
+        <div class="text-xs font-bold uppercase opacity-60">Rejected publish attempts</div>
+        <div class="mb-1 text-xs opacity-50">Not pipelines — nothing here is being forwarded</div>
+        <ul>${rows}</ul>
+        ${state.rejectedOmitted > 0 ? `<div class="text-xs opacity-50">+${state.rejectedOmitted} more</div>` : ''}
+    </div>`;
 }
 
 // ── Hover tooltips ────────────────────────────────────

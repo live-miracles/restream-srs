@@ -354,6 +354,24 @@ export interface HealthData {
     pipelines: Record<string, PipelineHealth>;
 }
 
+export interface RejectedPublish {
+    label: string;
+    kind: 'publish' | 'play';
+    reason: 'assigned' | 'unassigned' | 'unknown' | 'unrecognized';
+    protocol: 'rtmp' | 'srt';
+    ip: string | null;
+    attempts: number;
+    lastAttemptAgoMs: number;
+    streams: number;
+    streamsCapped: boolean;
+}
+
+export interface RejectedPublishesData {
+    rejected: RejectedPublish[];
+    // Entries beyond the API's row cap that are not included.
+    omitted: number;
+}
+
 export interface ConfigData {
     configRev: number;
     pipelines: Pipeline[];

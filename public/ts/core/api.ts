@@ -1,6 +1,7 @@
 import type {
     ConfigData,
     HealthData,
+    RejectedPublishesData,
     HostProbeOverview,
     PipelineLog,
     OutputPayload,
@@ -92,6 +93,8 @@ async function apiRequest<T>(
 
 export const getConfig = () => apiRequest<ConfigData>('/api/config');
 export const getHealth = () => apiRequest<HealthData>('/api/health');
+export const getRejectedPublishes = () =>
+    apiRequest<RejectedPublishesData>('/api/rejected-publishes');
 export const getHostProbes = (hours = 24) =>
     apiRequest<HostProbeOverview>(`/api/host-probes?hours=${hours}`);
 export const getSystemMetrics = () => apiRequest<SystemMetrics>('/api/metrics/system');

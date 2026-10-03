@@ -15,8 +15,9 @@ import { registerMetricsApi, getProcessUsage } from './api/metrics.js';
 import { registerSettingsApi } from './api/settings.js';
 import { createPreviewService } from './services/preview.js';
 import { registerPreviewApi } from './api/preview.js';
-import { registerSrsHooks, registerSrsLogsApi } from './api/srs.js';
+import { registerRejectedPublishesApi, registerSrsHooks, registerSrsLogsApi } from './api/srs.js';
 import { createInputState } from './services/inputState.js';
+import { createRejectedPublishes } from './services/rejectedPublishes.js';
 import {
     registerAuthApi,
     requireAuth,
@@ -54,6 +55,7 @@ const diagnostics = createDiagnosticsLogger(
 );
 
 const inputState = createInputState();
+const rejectedPublishes = createRejectedPublishes();
 const outputService = createOutputService(db, inputState, diagnostics);
 const srtRelayService = createSrtRelayService(diagnostics);
 const previewService = createPreviewService(db, inputState);
@@ -75,7 +77,7 @@ const healthService = createHealthService(
 );
 
 // Unauthenticated routes
-registerSrsHooks(app, db, inputState);
+registerSrsHooks(app, db, inputState, rejectedPublishes);
 registerAuthApi(app, db);
 
 // Auth middleware for all remaining /api/* routes
@@ -91,6 +93,7 @@ registerMetricsApi(app, srtRelayService);
 healthService.registerRoutes(app);
 hostProbeService.registerRoutes(app);
 registerSrsLogsApi(app, healthService.getSrsEvents);
+registerRejectedPublishesApi(app, rejectedPublishes);
 
 app.use(
     '/hls',

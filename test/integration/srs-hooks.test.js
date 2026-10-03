@@ -5,8 +5,13 @@ const assert = require('node:assert/strict');
 const express = require('express');
 const { Readable, Writable } = require('node:stream');
 
-const { registerSrsHooks, registerSrsLogsApi } = require('../../src/api/srs');
+const {
+    registerSrsHooks,
+    registerSrsLogsApi,
+    registerRejectedPublishesApi,
+} = require('../../src/api/srs');
 const { createInputState } = require('../../src/services/inputState');
+const { createRejectedPublishes } = require('../../src/services/rejectedPublishes');
 const childProcess = require('node:child_process');
 
 class MockRequest extends Readable {
@@ -68,20 +73,40 @@ function dispatch(app, method, route, body) {
     });
 }
 
-function createHarness(assignedKeys) {
+function createHarness(assignedKeys, unassignedKeys = []) {
     const app = express();
+    const calls = { listStreamKeys: 0, listPipelines: 0 };
+    let configRev = 1;
     const db = {
-        listPipelines: () =>
-            assignedKeys.map((streamKey, index) => ({
+        getConfigRev: () => configRev,
+        listStreamKeys: () => {
+            calls.listStreamKeys++;
+            return [...assignedKeys, ...unassignedKeys].map((key, index) => ({
+                id: index + 1,
+                slot: index + 1,
+                key,
+            }));
+        },
+        listPipelines: () => {
+            calls.listPipelines++;
+            return assignedKeys.map((streamKey, index) => ({
                 id: index + 1,
                 name: `Pipeline ${index + 1}`,
                 streamKey,
                 streamKeyId: index + 1,
-            })),
+            }));
+        },
     };
     const inputState = createInputState();
-    registerSrsHooks(app, db, inputState);
+    const rejectedPublishes = createRejectedPublishes();
+    registerSrsHooks(app, db, inputState, rejectedPublishes);
+    registerRejectedPublishesApi(app, rejectedPublishes);
     return {
+        calls,
+        bumpConfigRev: () => {
+            configRev++;
+        },
+        rejected: () => dispatch(app, 'GET', '/api/rejected-publishes'),
         publish: (body) => dispatch(app, 'POST', '/api/srs/on_publish', body),
         play: (body) => dispatch(app, 'POST', '/api/srs/on_play', body),
         ready: () => dispatch(app, 'GET', '/api/ready'),
@@ -115,6 +140,180 @@ describe('SRS publish hook integration', () => {
 
         assert.equal(res.status, 403);
         assert.deepEqual(res.body, { code: 403 });
+    });
+
+    test('records a rejected unassigned key without exposing its secret', async () => {
+        const harness = createHarness(['key01_good'], ['key02_spare']);
+        const logs = [];
+        const origLog = console.log;
+        console.log = (...args) => logs.push(args.join(' '));
+        try {
+            await harness.publish({
+                app: 'live',
+                stream: 'key02_spare',
+                tcUrl: 'srt://127.0.0.1/live',
+                ip: '127.0.0.1',
+            });
+            await harness.publish({ app: 'live', stream: 'key02_spare', ip: '127.0.0.1' });
+        } finally {
+            console.log = origLog;
+        }
+
+        const res = await harness.rejected();
+        assert.equal(res.body.rejected.length, 1);
+        const [entry] = res.body.rejected;
+        assert.equal(entry.label, 'key02');
+        assert.equal(entry.reason, 'unassigned');
+        assert.equal(entry.protocol, 'rtmp');
+        assert.equal(entry.attempts, 2);
+        assert.ok(!JSON.stringify(res.body).includes('spare'));
+        // Repeats are throttled, and the secret is never logged.
+        assert.equal(logs.filter((l) => l.includes('rejected publish')).length, 1);
+        assert.ok(logs.every((l) => !l.includes('spare')));
+    });
+
+    test('flags a stale key (right label, wrong secret) as unknown', async () => {
+        const harness = createHarness(['key01_good']);
+
+        await harness.publish({ app: 'live', stream: 'key01_old', ip: '203.0.113.5' });
+
+        const [entry] = (await harness.rejected()).body.rejected;
+        assert.equal(entry.label, 'key01');
+        assert.equal(entry.reason, 'unknown');
+        assert.equal(entry.ip, '203.0.113.5');
+    });
+
+    test('lists names that are not shaped like a stream key only as an aggregate', async () => {
+        const harness = createHarness(['key01_good']);
+
+        const res = await harness.publish({ app: 'live', stream: 'random-name' });
+
+        assert.equal(res.status, 403);
+        const { rejected } = (await harness.rejected()).body;
+        assert.equal(rejected.length, 1);
+        assert.equal(rejected[0].reason, 'unrecognized');
+        assert.equal(rejected[0].label, '');
+        assert.ok(!JSON.stringify(rejected).includes('random-name'));
+    });
+
+    test('records and logs a publish with no stream name instead of failing silently', async () => {
+        const harness = createHarness(['key01_good']);
+        const logs = [];
+        const origLog = console.log;
+        console.log = (...args) => logs.push(args.join(' '));
+        let res;
+        try {
+            res = await harness.publish({ app: 'live', tcUrl: 'srt://127.0.0.1/live' });
+        } finally {
+            console.log = origLog;
+        }
+
+        assert.equal(res.status, 400);
+        assert.ok(logs.some((l) => l.includes('missing stream name')));
+        const { rejected } = (await harness.rejected()).body;
+        assert.equal(rejected.length, 1);
+        assert.equal(rejected[0].protocol, 'srt');
+        assert.equal(rejected[0].reason, 'unrecognized');
+    });
+
+    test('allowed publishes are not listed as rejected', async () => {
+        const harness = createHarness(['key01_good']);
+
+        await harness.publish({ app: 'live', stream: 'key01_good' });
+
+        assert.deepEqual((await harness.rejected()).body, { rejected: [], omitted: 0 });
+    });
+
+    test('records a rejected outside play (e.g. SRT id missing m=publish) apart from publishes', async () => {
+        const harness = createHarness(['key01_good']);
+        const logs = [];
+        const origLog = console.log;
+        console.log = (...args) => logs.push(args.join(' '));
+        let res;
+        try {
+            res = await harness.play({
+                app: 'live',
+                stream: 'key01_good',
+                ip: '203.0.113.5',
+                tcUrl: 'srt://203.0.113.9/live',
+            });
+            await harness.play({
+                app: 'live',
+                stream: 'abc',
+                ip: '203.0.113.5',
+                tcUrl: 'srt://x/live',
+            });
+        } finally {
+            console.log = origLog;
+        }
+
+        assert.equal(res.status, 403);
+        const { rejected } = (await harness.rejected()).body;
+        assert.equal(rejected.length, 2);
+        const keyed = rejected.find((r) => r.label === 'key01');
+        assert.equal(keyed.kind, 'play');
+        assert.equal(keyed.reason, 'assigned');
+        assert.equal(keyed.protocol, 'srt');
+        const aggregate = rejected.find((r) => r.reason === 'unrecognized');
+        assert.equal(aggregate.kind, 'play');
+        assert.ok(!JSON.stringify(rejected).includes('good'));
+        assert.ok(!JSON.stringify(rejected).includes('abc'));
+        assert.ok(logs.some((l) => l.includes('rejected play')));
+        assert.ok(logs.every((l) => !l.includes('key01_good') && !l.includes('abc')));
+    });
+
+    test('loopback plays (the app own ffmpeg) are allowed and not recorded', async () => {
+        const harness = createHarness(['key01_good']);
+
+        const res = await harness.play({ app: 'live', stream: 'key01_good', ip: '127.0.0.1' });
+
+        assert.equal(res.status, 200);
+        assert.deepEqual((await harness.rejected()).body, { rejected: [], omitted: 0 });
+    });
+
+    test('does not query the DB per rejected attempt for key labelling', async () => {
+        const harness = createHarness(['key01_good'], ['key02_spare']);
+        const rejectionsBefore = harness.calls.listStreamKeys;
+        const pipelinesBefore = harness.calls.listPipelines;
+
+        for (let i = 0; i < 50; i++) {
+            await harness.publish({ app: 'live', stream: 'key02_spare', ip: '203.0.113.5' });
+            await harness.play({ app: 'live', stream: 'key02_spare', ip: '203.0.113.5' });
+        }
+
+        // One rebuild of the key sets; the authorization path itself still reads
+        // pipelines on every publish (unchanged behavior).
+        assert.equal(harness.calls.listStreamKeys - rejectionsBefore, 1);
+        assert.equal(harness.calls.listPipelines - pipelinesBefore, 50 + 1);
+
+        // A config change (e.g. regenerated keys) refreshes the labelling.
+        harness.bumpConfigRev();
+        await harness.publish({ app: 'live', stream: 'key02_spare', ip: '203.0.113.5' });
+        assert.equal(harness.calls.listStreamKeys - rejectionsBefore, 2);
+    });
+
+    test('names that are not key-shaped never trigger a key lookup', async () => {
+        const harness = createHarness(['key01_good']);
+        const before = harness.calls.listStreamKeys;
+
+        for (let i = 0; i < 20; i++) {
+            await harness.publish({ app: 'live', stream: `junk-${i}`, ip: '203.0.113.5' });
+            await harness.play({ app: 'live', stream: `junk-${i}`, ip: '203.0.113.5' });
+        }
+
+        assert.equal(harness.calls.listStreamKeys, before);
+    });
+
+    test('caps the rows returned and reports how many were left out', async () => {
+        const harness = createHarness(['key01_good']);
+
+        for (let i = 10; i < 50; i++) {
+            await harness.publish({ app: 'live', stream: `key${i}_x`, ip: '203.0.113.5' });
+        }
+
+        const { rejected, omitted } = (await harness.rejected()).body;
+        assert.equal(rejected.length, 25);
+        assert.equal(omitted, 15);
     });
 
     test('rejects a cross-protocol publish to an already-live pipeline', async () => {

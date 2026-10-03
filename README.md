@@ -254,8 +254,20 @@ they're hardened at the SRS/relay layer instead:
   directly.
 - RTMP listens on a non-default port (`21935`, not `1935`) to cut down on
   generic scanner noise.
-- Rejected publish/play attempts are logged, but this app does not install
-  fail2ban; see [Known issues](#why-fail2ban-is-not-used).
+- Rejected publish/play attempts are logged (stream keys redacted to their
+  `keyNN` label; repeated rejections of the same key are throttled to one line
+  a minute), but this app does not install fail2ban; see
+  [Known issues](#why-fail2ban-is-not-used).
+- Rejected publishes also appear in the dashboard under the pipeline list
+  ("Rejected publish attempts", kept for 5 minutes): one row per `keyNN` label,
+  plus one aggregate "Unrecognized" row per protocol for empty or non-key
+  stream names. The row shows how many distinct names it combines (counted by
+  an in-memory hash, capped at 100); names are never shown or stored. An SRT encoder on a key with no pipeline
+  still connects to the relay and can look healthy on its own side while SRS
+  refuses the stream.
+  Outside `on_play` rejections are listed too, marked "Play request": an SRT
+  stream id without `m=publish` is a play request to SRS, so an encoder with an
+  incomplete id lands there rather than in `on_publish`.
 
 Never expose `1985` (SRS HTTP API) or `8081` (relay status) — the app only
 talks to those over loopback.
@@ -285,6 +297,7 @@ RTMP input → RTMP pull), so there is no pull-method setting.
 |--------|------|-------------|
 | GET | `/api/config` | Pipelines, outputs, encodings, stream keys, server name |
 | GET | `/api/health` | Live input/output status snapshot (refreshed every 5s) |
+| GET | `/api/rejected-publishes` | Recent publish attempts rejected for a key with no pipeline (label only, never the secret) |
 | GET | `/api/version` | App version / build info |
 | GET | `/api/metrics/system` | Host CPU, RAM, disk and network stats |
 | GET | `/api/srs-logs` | Recent SRS up/down events and log tails for SRS, the dashboard, and the relay |
@@ -673,7 +686,8 @@ act on:
   fail2ban jail watched it. As of `srt-bonding-relay` v2.1.0 that line is no
   longer logged, so a jail would have nothing left to match.
 
-The app still logs rejected `on_publish` and `on_play` attempts, which would be
+The app still logs rejected `on_publish` and `on_play` attempts (publish
+rejections are throttled per key, so a jail would see fewer lines), which would be
 enough for a fail2ban jail covering repeated bad RTMP stream-key attempts from
 the same IP. That protection is intentionally not included because it is only a
 partial defense: it does not cover SRT bad passphrases, does little against

@@ -4,6 +4,13 @@ import type { Db } from '../types.js';
 import { kickSrsClientsByStream } from '../utils/srs.js';
 import type { SrsEvent } from '../services/health.js';
 import type { InputState } from '../services/inputState.js';
+import {
+    createRejectedPublishes,
+    isKeyShaped,
+    redactStreamName,
+    type KeyState,
+    type RejectedPublishes,
+} from '../services/rejectedPublishes.js';
 
 const MAX_LOG_READ_BYTES = 100 * 1024;
 const MAX_LOG_TAIL_LINES = 200;
@@ -51,8 +58,37 @@ async function readJournalOnlyTail(unit: string, maxLines: number): Promise<LogT
 // the whole map each window so it can't grow unbounded under a flood of
 // distinct (attacker-controlled) stream names.
 const KICK_COOLDOWN_MS = 5000;
+const MAX_LISTED_REJECTIONS = 25;
 
-export function registerSrsHooks(app: Express, db: Db, inputState: InputState): void {
+export function registerSrsHooks(
+    app: Express,
+    db: Db,
+    inputState: InputState,
+    rejectedPublishes: RejectedPublishes = createRejectedPublishes(),
+): void {
+    // Which keys exist / are assigned only decides how a rejected attempt is
+    // labelled in the dashboard (never whether it is accepted), so it is cached
+    // and rebuilt only when the config revision changes — a refused publisher can
+    // retry every 10-40ms and must not turn into a DB query per attempt. Names
+    // that are not key-shaped are never looked up at all.
+    let keySetsRev = -1;
+    let validKeys = new Set<string>();
+    let assignedKeys = new Set<string>();
+    const keyStateOf = (stream: string): KeyState => {
+        if (!isKeyShaped(stream)) return 'unknown';
+        const rev = db.getConfigRev();
+        if (rev !== keySetsRev) {
+            validKeys = new Set(db.listStreamKeys().map((k) => k.key));
+            assignedKeys = new Set(db.listPipelines().map((p) => p.streamKey));
+            keySetsRev = rev;
+        }
+        return assignedKeys.has(stream)
+            ? 'assigned'
+            : validKeys.has(stream)
+              ? 'unassigned'
+              : 'unknown';
+    };
+
     let recentlyKicked = new Map<string, number>();
     setInterval(() => {
         recentlyKicked = new Map();
@@ -66,13 +102,43 @@ export function registerSrsHooks(app: Express, db: Db, inputState: InputState): 
         const stream = req.body?.stream as string | undefined;
         const hookApp = req.body?.app as string | undefined;
         const ip = (req.body?.ip as string | undefined) ?? 'unknown';
-        if (!stream) return res.status(400).json({ code: 400 });
+        const protocol = (req.body?.tcUrl as string | undefined)?.startsWith('srt://')
+            ? 'srt'
+            : 'rtmp';
+
+        // Records and logs a rejection. The name is redacted (never log a stream
+        // key), and repeats are throttled: the SRT relay retries a refused
+        // publish every second. The IP goes before the attacker-controlled name
+        // so logs stay easy to scan and cannot be made to look like a different
+        // client.
+        const noteRejection = (name: string, keyState: KeyState, why: string): void => {
+            const result = rejectedPublishes.record(
+                name,
+                keyState,
+                protocol,
+                ip === 'unknown' ? null : ip,
+            );
+            if (!result.shouldLog) return;
+            const suppressed =
+                result.suppressed > 0 ? ` (${result.suppressed} similar attempts suppressed)` : '';
+            console.log(
+                `[srs-hook] rejected publish from ${ip}: ${result.displayName} (${protocol}, ${why})${suppressed}`,
+            );
+        };
+
+        if (!stream) {
+            noteRejection('', 'unknown', 'missing stream name');
+            return res.status(400).json({ code: 400 });
+        }
 
         const pipeline = db.listPipelines().find((p) => p.streamKey === stream);
         if (!pipeline) {
-            // Put the IP before the attacker-controlled stream name so logs stay
-            // easy to scan and cannot be made to look like a different client.
-            console.log(`[srs-hook] rejected publish from ${ip}: ${stream}`);
+            const keyIsValid = keyStateOf(stream) !== 'unknown';
+            noteRejection(
+                stream,
+                keyIsValid ? 'unassigned' : 'unknown',
+                keyIsValid ? 'key not assigned to a pipeline' : 'unknown stream key',
+            );
             const kickKey = `${hookApp ?? ''}/${stream}`;
             if (hookApp && !recentlyKicked.has(kickKey)) {
                 recentlyKicked.set(kickKey, Date.now());
@@ -91,22 +157,15 @@ export function registerSrsHooks(app: Express, db: Db, inputState: InputState): 
         // after switching an already-live pipeline's publisher to SRT. Reject a
         // cross-protocol publish to an already-live pipeline outright so this
         // can't happen; the existing stream must be stopped first.
-        const incomingProtocol = (req.body?.tcUrl as string | undefined)?.startsWith('srt://')
-            ? 'srt'
-            : 'rtmp';
         const currentProtocol = inputState.getProtocol(pipeline.id);
-        if (
-            inputState.isLive(pipeline.id) &&
-            currentProtocol &&
-            currentProtocol !== incomingProtocol
-        ) {
+        if (inputState.isLive(pipeline.id) && currentProtocol && currentProtocol !== protocol) {
             console.log(
-                `[srs-hook] rejected publish from ${ip}: ${stream} (already live via ${currentProtocol}, attempted ${incomingProtocol})`,
+                `[srs-hook] rejected publish from ${ip}: ${redactStreamName(stream)} (already live via ${currentProtocol}, attempted ${protocol})`,
             );
             return res.status(403).json({ code: 403 });
         }
 
-        console.log(`[srs-hook] allowed publish from ${ip}: ${stream}`);
+        console.log(`[srs-hook] allowed publish from ${ip}: ${redactStreamName(stream)}`);
         return res.json({ code: 0 });
     });
 
@@ -117,13 +176,47 @@ export function registerSrsHooks(app: Express, db: Db, inputState: InputState): 
     // calls on_play for native SRT connections even with srt_to_rtmp off).
     app.post('/api/srs/on_play', (req, res) => {
         const ip = (req.body?.ip as string | undefined) ?? '';
-        const stream = req.body?.stream as string | undefined;
+        const stream = (req.body?.stream as string | undefined) ?? '';
         const loopback = ip === '::1' || ip.startsWith('127.') || ip.startsWith('::ffff:127.');
         if (!loopback) {
-            console.log(`[srs-hook] rejected play from ${ip || 'unknown'}: ${stream ?? '?'}`);
+            // An SRT stream id without "m=publish" is a play request to SRS, so an
+            // encoder with an incomplete id is rejected here, not in on_publish.
+            // Record it like a refused publish so it is visible in the dashboard.
+            const protocol = (req.body?.tcUrl as string | undefined)?.startsWith('srt://')
+                ? 'srt'
+                : 'rtmp';
+            const result = rejectedPublishes.record(
+                stream,
+                keyStateOf(stream),
+                protocol,
+                ip || null,
+                'play',
+            );
+            if (result.shouldLog) {
+                const suppressed =
+                    result.suppressed > 0
+                        ? ` (${result.suppressed} similar attempts suppressed)`
+                        : '';
+                console.log(
+                    `[srs-hook] rejected play from ${ip || 'unknown'}: ${result.displayName} (${protocol})${suppressed}`,
+                );
+            }
             return res.status(403).json({ code: 403 });
         }
         return res.json({ code: 0 });
+    });
+}
+
+// Authenticated: unlike the SRS hooks above, this is read by the dashboard.
+export function registerRejectedPublishesApi(app: Express, rejected: RejectedPublishes): void {
+    app.get('/api/rejected-publishes', (_req, res) => {
+        // A scan of the public RTMP port can create many entries; cap what the
+        // dashboard has to render and say how many were left out.
+        const all = rejected.list();
+        res.json({
+            rejected: all.slice(0, MAX_LISTED_REJECTIONS),
+            omitted: Math.max(0, all.length - MAX_LISTED_REJECTIONS),
+        });
     });
 }
 

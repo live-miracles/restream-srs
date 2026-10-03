@@ -6,6 +6,7 @@ import type {
     SystemMetrics,
     MetricSample,
     StreamKey,
+    RejectedPublish,
 } from '../types.js';
 
 export type OverviewFilter = 'all' | 'active' | 'problems';
@@ -18,6 +19,9 @@ export interface AppState {
     metricsHistory: MetricSample[];
     hostProbes: Partial<HostProbeOverview>;
     streamKeys: StreamKey[];
+    // Recent publish/play attempts SRS refused (from the on_publish/on_play hooks).
+    rejectedPublishes: RejectedPublish[];
+    rejectedOmitted: number;
     chartOffsetMs: number;
     hostChartOffsetMs: number;
     // Overview table filter: 'active' hides rows that are offline/stopped,
@@ -38,6 +42,8 @@ export const state: AppState = {
     metricsHistory: [],
     hostProbes: {},
     streamKeys: [],
+    rejectedPublishes: [],
+    rejectedOmitted: 0,
     chartOffsetMs: 0,
     hostChartOffsetMs: 0,
     overviewFilter: 'all',
