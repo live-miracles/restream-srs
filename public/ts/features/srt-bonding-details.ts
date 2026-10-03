@@ -358,9 +358,59 @@ function renderLegHistorySection(pipelineId: string): string {
     </div>`;
 }
 
+// Hover explanations for each statistic, keyed by the row label. Shown via the
+// shared `.js-tooltip` portal (see initHoverTooltips in render.ts).
+const SRT_STAT_DESCRIPTIONS: Record<string, string> = {
+    IP: 'Remote IP address of the sender (encoder) for this bonded link.',
+    Port: 'Remote UDP port the sender is transmitting from.',
+    Health: 'Leg health based on its connection state and whether packets are still flowing. OK is healthy, WARN is pending or stalled, ERROR is broken or unknown.',
+    'Health issue': 'The specific condition that moved this link out of OK health.',
+    State: 'Whether this leg is currently connected and delivering packets.',
+    'Recv Packets Total':
+        'Total SRT data packets received, including retransmitted copies and duplicates across bonded legs.',
+    'Recv Unique Packets Total':
+        'Packets received after removing duplicates across bonded legs — what is actually delivered to the stream.',
+    'Recv Loss Total':
+        'Packets detected as missing on the network (sequence gaps). SRT tries to recover them by retransmission, so loss does not always mean lost video.',
+    'Recv Drop Total':
+        'Packets that were never recovered in time and were dropped. These cause visible glitches or audio/video artefacts.',
+    'Retransmit Total':
+        'Packets that had to be sent again because the receiver reported them missing. High values indicate a lossy network.',
+    'Sent Packets Total':
+        'Total SRT data packets sent to the destination, including retransmissions.',
+    'Send Loss Total':
+        'Packets the destination reported as lost and requested again (NAK). Indicates loss on the path to the destination.',
+    'Send Drop Total':
+        'Packets dropped on the sender because they were too late to be delivered within the latency window.',
+    RTT: 'Round-Trip Time: how long a packet takes to travel to the peer and back. Higher RTT needs a larger latency setting to allow retransmissions.',
+    Latency:
+        'Negotiated SRT latency: the buffer window that lets SRT retransmit lost packets before playout. Larger is safer on bad networks but adds delay.',
+    Bandwidth:
+        'Estimated link capacity measured by SRT packet probing. If the stream rate approaches this, expect loss.',
+    'Recv Rate': 'Current incoming data rate on this link.',
+    'Send Rate': 'Current outgoing data rate to the destination.',
+    'Belated Total':
+        'Packets that arrived after their scheduled delivery time and were too late to use.',
+    'Belated Avg':
+        'Average lateness of belated packets. Consistently high values suggest increasing latency.',
+    'Undecrypt Total':
+        'Packets that could not be decrypted, typically due to a passphrase mismatch or key-rotation problem.',
+    'Reorder Distance':
+        'Largest observed out-of-order gap, in packets. High values point to multi-path or heavily jittered delivery.',
+    'Recv Buffer': 'Amount of media currently held in the receive buffer waiting to be played out.',
+    'Send Buffer':
+        'Amount of media currently queued in the send buffer awaiting delivery or acknowledgement.',
+};
+
+const ICON_INFO = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>`;
+
 function srtDetailRow(label: string, value: string): string {
+    const description = SRT_STAT_DESCRIPTIONS[label];
+    const info = description
+        ? `<span class="js-tooltip inline-flex shrink-0 opacity-50 hover:opacity-100" tabindex="0" aria-label="${escapeHtml(description)}">${ICON_INFO}<div class="js-tooltip-content hidden"><div class="max-w-xs text-xs whitespace-normal">${escapeHtml(description)}</div></div></span>`
+        : '';
     return `<div class="flex items-center gap-3 py-1 border-b border-base-content/10 last:border-b-0">
-        <span class="opacity-60">${label}</span>
+        <span class="inline-flex items-center gap-1"><span class="opacity-60">${label}</span>${info}</span>
         <span>${value}</span>
     </div>`;
 }
