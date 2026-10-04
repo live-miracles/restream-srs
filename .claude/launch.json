@@ -1,0 +1,20 @@
+{
+    "version": "0.0.1",
+    "configurations": [
+        {
+            "name": "dashboard",
+            "runtimeExecutable": "npx",
+            "runtimeArgs": ["tsx", "src/index.ts"],
+            "port": 8080
+        },
+        {
+            "name": "dashboard-preview",
+            "runtimeExecutable": "bash",
+            "runtimeArgs": [
+                "-c",
+                "PORT=8090 DATABASE_PATH=.claude/preview-scratch/preview.sqlite npx tsx src/index.ts"
+            ],
+            "port": 8090
+        }
+    ]
+}

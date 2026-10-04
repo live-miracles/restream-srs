@@ -111,6 +111,12 @@ configuration, or diagnostics are high-risk and should be tested for:
 - service restart and host reboot recovery; and
 - useful logs and state after each failure.
 
+`scripts/test-stack.sh` starts an isolated local stack (own SRS, control plane
+and fresh database, with a fake output ffmpeg that can emit an FFmpeg
+timestamp-discontinuity flood) that does not touch a developer's own
+`npm run dev`; use it to exercise these paths and the dashboard end to end.
+`.claude/skills/run-restream-srs/SKILL.md` documents it.
+
 Prefer small, reversible changes. Keep the README and this guide aligned when
 capacity, service behavior, supported protocols, or operational guarantees
 change.

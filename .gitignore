@@ -1,5 +1,9 @@
 .vscode/
-.claude/
+# .claude/ is shared (skills, launch configs); only per-user/runtime files are
+# ignored. preview-scratch holds a scratch DB with stream keys and a session.
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/preview-scratch/
 CLAUDE.md
 node_modules/
 dist/
