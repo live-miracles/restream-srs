@@ -849,6 +849,7 @@ describe('output service control surface', () => {
             lastTotalSizeBytes: null,
             progressAgeMs: null,
             outputProgressAgeMs: null,
+            timestampInstability: null,
         });
 
         service.shutdown();
@@ -1235,5 +1236,135 @@ describe('output diagnostics events', () => {
         );
 
         service.shutdown();
+    });
+    describe('timestamp warning bursts', () => {
+        const audioLine = (n) =>
+            `[aist#0:0/aac @ 0x5c4063a05240] timestamp discontinuity (stream id=256): -14980000, new offset= -${5160000 + n}\n`;
+        const videoLine = (n) =>
+            `[vist#0:1/h264 @ 0x62c407ef8200] timestamp discontinuity (stream id=257): 14980000, new offset= -${20140000 + n}\n`;
+        const flood = (pairs) =>
+            Array.from({ length: pairs }, (_, i) => audioLine(i) + videoLine(i)).join('');
+        const eventsNamed = (diagnostics, name) =>
+            diagnostics.events.filter((e) => e.event === name);
+
+        // Real timers drive the watchdog tick and stream delivery; only Date.now
+        // is controlled, so minutes of burst history can be simulated instantly.
+        function startWithClock(t) {
+            const clock = { now: Date.now() };
+            t.mock.method(Date, 'now', () => clock.now);
+            return clock;
+        }
+
+        test('folds a flood into one event per kind, then a summary and a recovery', async (t) => {
+            const clock = startWithClock(t);
+            const t0 = clock.now;
+            const proc = new FakeFfmpeg();
+            const diagnostics = makeDiagnosticsSpy();
+            const createOutputService = loadOutputService(t, proc, {
+                progressStallMs: 1e9,
+                socketWarmupMs: 1e9,
+            });
+            const service = createOutputService(makeDb(), makeReadyInputState(), diagnostics);
+
+            await service.start('out1');
+            proc.stderr.write(flood(200));
+            await sleep(25);
+
+            assert.equal(
+                eventsNamed(diagnostics, 'ffmpeg-timestamp-warning').length,
+                2,
+                '400 lines of two kinds (audio/video) log one event each, not one per line',
+            );
+            assert.deepEqual(service.getStats('out1').timestampInstability, { sinceMs: t0 });
+            assert.equal(eventsNamed(diagnostics, 'ffmpeg-timestamp-warning-summary').length, 0);
+
+            // Every gap stays under the 30 s quiet window, and the assertions
+            // allow the watchdog tick to run just before or after each chunk
+            // is delivered (it runs on a real timer while only Date.now is mocked).
+            clock.now = t0 + 29_000;
+            proc.stderr.write(flood(50));
+            await sleep(25);
+            assert.equal(eventsNamed(diagnostics, 'ffmpeg-timestamp-warning-summary').length, 0);
+
+            clock.now = t0 + 58_000;
+            proc.stderr.write(flood(1));
+            await sleep(25);
+            const summaries = eventsNamed(diagnostics, 'ffmpeg-timestamp-warning-summary');
+            assert.ok(summaries.length >= 1, 'a summary follows 30 s of suppressed lines');
+            for (const summary of summaries) {
+                assert.equal(
+                    Object.values(summary.kinds).reduce((a, b) => a + b, 0),
+                    summary.count,
+                );
+            }
+            assert.match(
+                service.getStats('out1').warningReason,
+                /^FFmpeg reported: .*timestamp discontinuity/,
+            );
+
+            clock.now = t0 + 58_000 + 31_000;
+            await sleep(25);
+            const recovered = eventsNamed(diagnostics, 'ffmpeg-timestamp-recovered');
+            assert.equal(recovered.length, 1);
+            assert.equal(recovered[0].durationMs, 58_000);
+            assert.equal(recovered[0].count, 502);
+            assert.equal(
+                eventsNamed(diagnostics, 'ffmpeg-timestamp-warning-summary').reduce(
+                    (total, summary) => total + summary.count,
+                    0,
+                ),
+                500,
+                'every suppressed line (502 total minus the 2 logged individually) is counted',
+            );
+            const after = service.getStats('out1');
+            assert.equal(after.timestampInstability, null);
+            assert.equal(after.warningReason, null);
+
+            service.shutdown();
+        });
+
+        test('decode errors alone are logged but do not count as input timestamp instability', async (t) => {
+            startWithClock(t);
+            const proc = new FakeFfmpeg();
+            const diagnostics = makeDiagnosticsSpy();
+            const createOutputService = loadOutputService(t, proc, {
+                progressStallMs: 1e9,
+                socketWarmupMs: 1e9,
+            });
+            const service = createOutputService(makeDb(), makeReadyInputState(), diagnostics);
+
+            await service.start('out1');
+            proc.stderr.write(
+                '[h264 @ 0x580060534940] non-existing PPS 0 referenced\n[h264 @ 0x580060534940] decode_slice_header error\n',
+            );
+            await sleep(25);
+
+            assert.equal(eventsNamed(diagnostics, 'ffmpeg-timestamp-warning').length, 2);
+            assert.equal(service.getStats('out1').timestampInstability, null);
+            assert.match(service.getStats('out1').warningReason, /decode_slice_header error/);
+
+            service.shutdown();
+        });
+
+        test('records an open burst on the ffmpeg-exited event', async (t) => {
+            startWithClock(t);
+            const proc = new FakeFfmpeg();
+            const diagnostics = makeDiagnosticsSpy();
+            const createOutputService = loadOutputService(t, proc, {
+                progressStallMs: 1e9,
+                socketWarmupMs: 1e9,
+            });
+            const service = createOutputService(makeDb(), makeReadyInputState(), diagnostics);
+
+            await service.start('out1');
+            proc.stderr.write(flood(1));
+            await sleep(25);
+            await service.stopAndWait('out1');
+
+            const exited = eventsNamed(diagnostics, 'ffmpeg-exited')[0];
+            assert.deepEqual(exited.timestampBurst, { durationMs: 0, count: 2 });
+
+            service.shutdown();
+        });
     });
 });

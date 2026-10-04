@@ -143,6 +143,7 @@ interface OutputHealth {
     lastTotalSizeBytes: number | null;
     progressAgeMs: number | null;
     outputProgressAgeMs: number | null;
+    timestampInstability: { sinceMs: number } | null;
     // Only present for audioEncoding === 'translation' outputs — null bitrate
     // above is expected for these until ffmpeg progress arrives, but the duck
     // state below is what actually answers "why is the source quiet right now".
@@ -356,6 +357,9 @@ export function createHealthService(
     const inputLiveStartMs = new Map<number, number>();
     const inputPublisherCid = new Map<number, string>();
     const publisherChangedAt = new Map<number, number>();
+    // Pipelines currently flagged 'input-timestamps-unstable', so the
+    // transitions are logged once.
+    const timestampUnstable = new Set<number>();
     const relayInputSamples = new Map<
         number,
         {
@@ -609,6 +613,9 @@ export function createHealthService(
         }
         for (const pipelineId of publisherChangedAt.keys()) {
             if (!activePipelineIds.has(pipelineId)) publisherChangedAt.delete(pipelineId);
+        }
+        for (const pipelineId of timestampUnstable) {
+            if (!activePipelineIds.has(pipelineId)) timestampUnstable.delete(pipelineId);
         }
         for (const pipelineId of relayInputSamples.keys()) {
             if (!activePipelineIds.has(pipelineId)) relayInputSamples.delete(pipelineId);
@@ -884,6 +891,39 @@ export function createHealthService(
                 });
             } else if (changedAt) {
                 publisherChangedAt.delete(pipeline.id);
+            }
+            // Input-level alert alongside the per-output warnings: when the
+            // running outputs of a pipeline report timestamp problems together
+            // (two, or the only one), the common cause is the input's
+            // timestamps, not any single output.
+            const runningOutputs = Object.values(outputsHealth).filter(
+                (o) => o.status === 'running',
+            );
+            const unstableOutputs = runningOutputs.filter((o) => o.timestampInstability);
+            if (
+                unstableOutputs.length > 0 &&
+                unstableOutputs.length >= Math.min(2, runningOutputs.length)
+            ) {
+                const sinceMs = Math.min(
+                    ...unstableOutputs.map((o) => o.timestampInstability?.sinceMs ?? now),
+                );
+                alerts.push({
+                    severity: 'warning',
+                    code: 'input-timestamps-unstable',
+                    message: `Input timestamps are unstable (${unstableOutputs.length} of ${runningOutputs.length} outputs affected). Check the encoder.`,
+                    sinceMs,
+                });
+                if (!timestampUnstable.has(pipeline.id)) {
+                    timestampUnstable.add(pipeline.id);
+                    diagnostics?.event('input-timestamps-unstable', {
+                        pipelineId: pipeline.id,
+                        affectedOutputs: unstableOutputs.length,
+                        runningOutputs: runningOutputs.length,
+                        sinceMs,
+                    });
+                }
+            } else if (timestampUnstable.delete(pipeline.id)) {
+                diagnostics?.event('input-timestamps-recovered', { pipelineId: pipeline.id });
             }
             if (previousRelaySample && rawBondingStatus.inputActive) {
                 const dropped = counterDelta(

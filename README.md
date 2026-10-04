@@ -414,7 +414,9 @@ The control plane also writes structured diagnostics to
 output starts/exits/restarts, SRS and relay transitions, input and bonded-leg
 transitions, and FFmpeg timestamp/media-clock warnings for seven days (the last
 ffmpeg stderr tail at exit is included on the exit event; raw stderr isn't
-streamed to diagnostics to keep incident volume from crowding out the window).
+streamed to diagnostics to keep incident volume from crowding out the window;
+timestamp warnings are aggregated as described under
+[Input timestamp fault detection](#input-timestamp-fault-detection)).
 Once per minute it also stores compact health snapshots containing SRT counters,
 leg rates/health, relay forwarding state, and FFmpeg output progress so an
 incident can be investigated after the live one-hour chart window has passed.
@@ -588,6 +590,31 @@ succeeds:
 | Input check | Scope | Cadence | Notes |
 |-------------|-------|---------|-------|
 | Media validation | Connected RTMP/SRT inputs without a successful probe yet for this publisher | Immediate probe (staggered across pipelines), then retried every `FFPROBE_FAILED_REFRESH_MS` (30s) while it keeps failing | Stops re-probing once a probe succeeds for the current publisher; a new probe cycle starts on the next publisher change. Every failed probe is written to diagnostics as `media-probe-failed` (reason `timeout`/`exit`/`parse`/`unusable`, elapsed time, exit status, redacted ffprobe stderr tail) and the first failure and the later recovery per publisher are added to the pipeline log (`probe_failed` / `probe_recovered`). Input liveness and output recovery do not wait for a valid ffprobe result — ffprobe fills in media/track details when available. |
+
+### Input timestamp fault detection
+
+The server detects when an input's audio/video timestamps become inconsistent
+(for example after an encoder drops and reconnects with its audio and video
+clocks out of step). FFmpeg reports this on every copy output as
+`timestamp discontinuity` / non-monotonous or invalid DTS warnings, at up to tens
+of lines per second per output, so the control plane groups them instead of
+logging each line:
+
+| Stage | Trigger | What is recorded and shown |
+|-------|---------|----------------------------|
+| Warning | First timestamp warning of a kind on an output | `ffmpeg-timestamp-warning` diagnostics event with the FFmpeg line (one per distinct kind per burst, at most 8); the output shows a yellow warning |
+| Summary | Further warnings in the same burst | One `ffmpeg-timestamp-warning-summary` event every 30 s with the suppressed line count per kind, so the volume stays small while the total stays exact |
+| Recovered | No timestamp warning for 30 s | `ffmpeg-timestamp-recovered` event with duration and total count. If the process exits mid-burst, the burst's duration and count are added to the `ffmpeg-exited` event instead |
+| Input alert | Two outputs of one pipeline (or the only running output) are in a timestamp burst at the same time | A single pipeline alert `input-timestamps-unstable` ("Input timestamps are unstable ... Check the encoder.") in addition to the per-output warnings, so the shared cause (the input, not any one output) is visible at pipeline level; logged as `input-timestamps-unstable` / `input-timestamps-recovered` diagnostics events on transition |
+
+Decode-error lines (`non-existing PPS`, `decode_slice_header error`, `corrupt
+input`) go through the same grouping, but do not raise the input alert, since
+they also appear briefly when an output joins mid-GOP.
+
+This is detection and reporting only: outputs are not restarted automatically,
+because the offset originates in the incoming stream and restarting would drop
+the destination connections during a live event. The fix is on the encoder side; in the
+observed incident, reconnecting the encoder cleared the condition.
 
 ### SRT bonding relay
 

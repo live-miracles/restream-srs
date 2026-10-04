@@ -38,6 +38,37 @@ const SOCKET_SNAPSHOT_TIMEOUT_MS = 2000;
 // (yellow) signal that a leak may be building without waiting for the kill.
 const MEMORY_WARNING_RATIO = 0.7;
 
+// ffmpeg prints one timestamp/decode warning per affected packet, which during
+// an input timing fault is tens of lines per second per output. Warnings are
+// grouped into a "burst" per output: the first line of each distinct kind is
+// logged immediately, further lines are counted into one summary per interval,
+// and the burst ends after a quiet period.
+const TIMESTAMP_QUIET_MS = 30_000;
+const TIMESTAMP_SUMMARY_MS = 30_000;
+const TIMESTAMP_MAX_KINDS = 8;
+// `timing` marks warnings that point at the input's timestamps (as opposed to
+// decode errors, which also appear harmlessly while joining mid-GOP) — only
+// those feed the pipeline-level "input timestamps unstable" alert.
+const TIMESTAMP_WARNING_PATTERNS: { pattern: RegExp; timing: boolean }[] = [
+    { pattern: /timestamp discontinuity/i, timing: true },
+    { pattern: /non[- ]monotonous DTS/i, timing: true },
+    { pattern: /invalid DTS/i, timing: true },
+    { pattern: /corrupt input/i, timing: false },
+    { pattern: /non-existing PPS/i, timing: false },
+    { pattern: /decode_slice_header error/i, timing: false },
+];
+
+// Strips memory addresses and numbers so repeats of the same warning (which
+// differ only in offsets/ids) fold into one kind.
+function timestampWarningKind(line: string): string {
+    return line.replace(/0x[0-9a-f]+/gi, '0x').replace(/-?\d+/g, '#');
+}
+
+function formatDuration(ms: number): string {
+    const totalSec = Math.round(ms / 1000);
+    return totalSec < 60 ? `${totalSec}s` : `${Math.floor(totalSec / 60)}m ${totalSec % 60}s`;
+}
+
 function memoryLimitBytesFor(videoEncoding: string, highRes: boolean): number {
     return outputMemoryLimitBytes(appConfig.outputWatchdog, videoEncoding, highRes);
 }
@@ -56,6 +87,22 @@ interface OutputStats {
     lastTotalSizeBytes: number | null;
     progressAgeMs: number | null;
     outputProgressAgeMs: number | null;
+    // Set while this output is in a burst of timestamp-related ffmpeg warnings
+    // (see TIMESTAMP_* above), so the health service can tell when several
+    // outputs of one pipeline are reporting the same input timing fault.
+    timestampInstability: { sinceMs: number } | null;
+}
+
+interface TimestampBurst {
+    startedAtMs: number;
+    lastAtMs: number;
+    count: number;
+    timing: boolean;
+    lastLine: string;
+    knownKinds: Set<string>;
+    lastSummaryAtMs: number;
+    pendingCount: number;
+    pendingKinds: Map<string, number>;
 }
 
 interface OutputProgress {
@@ -71,6 +118,7 @@ interface OutputProgress {
     mediaClockWarning: string | null;
     lastTimestampWarningAtMs: number | null;
     lastTimestampWarning: string | null;
+    timestampBurst: TimestampBurst | null;
 }
 
 interface SocketWarning {
@@ -195,6 +243,11 @@ export function createOutputService(
             lastTotalSizeBytes: p?.lastTotalSize ?? null,
             progressAgeMs: p ? Date.now() - p.lastProgressAtMs : null,
             outputProgressAgeMs: p ? Date.now() - p.lastOutputProgressAtMs : null,
+            timestampInstability:
+                p?.timestampBurst?.timing &&
+                Date.now() - p.timestampBurst.lastAtMs < TIMESTAMP_QUIET_MS
+                    ? { sinceMs: p.timestampBurst.startedAtMs }
+                    : null,
         };
     }
 
@@ -240,6 +293,7 @@ export function createOutputService(
             mediaClockWarning: null,
             lastTimestampWarningAtMs: existing?.lastTimestampWarningAtMs ?? null,
             lastTimestampWarning: existing?.lastTimestampWarning ?? null,
+            timestampBurst: existing?.timestampBurst ?? null,
         });
     }
 
@@ -420,7 +474,7 @@ export function createOutputService(
         if (
             p.lastTimestampWarning &&
             p.lastTimestampWarningAtMs !== null &&
-            now - p.lastTimestampWarningAtMs <= 30_000
+            now - p.lastTimestampWarningAtMs <= TIMESTAMP_QUIET_MS
         ) {
             return p.lastTimestampWarning;
         }
@@ -430,29 +484,90 @@ export function createOutputService(
         return null;
     }
 
+    function flushTimestampSummary(outputId: string, burst: TimestampBurst, now: number): void {
+        if (burst.pendingCount === 0) return;
+        diagnostics?.event('ffmpeg-timestamp-warning-summary', {
+            outputId,
+            windowMs: now - burst.lastSummaryAtMs,
+            count: burst.pendingCount,
+            kinds: Object.fromEntries(burst.pendingKinds),
+            totalCount: burst.count,
+            lastLine: burst.lastLine,
+        });
+        burst.pendingCount = 0;
+        burst.pendingKinds.clear();
+        burst.lastSummaryAtMs = now;
+    }
+
+    // Advances a burst's state: quiet period over -> recovered, pending counts
+    // -> periodic summary. Called on every new warning and from the watchdog
+    // tick (which is what notices the quiet).
+    function evaluateTimestampBurst(outputId: string, p: OutputProgress, now: number): void {
+        const burst = p.timestampBurst;
+        if (!burst) return;
+        if (now - burst.lastAtMs >= TIMESTAMP_QUIET_MS) {
+            flushTimestampSummary(outputId, burst, burst.lastAtMs);
+            const durationMs = burst.lastAtMs - burst.startedAtMs;
+            diagnostics?.event('ffmpeg-timestamp-recovered', {
+                outputId,
+                durationMs,
+                count: burst.count,
+                quietMs: TIMESTAMP_QUIET_MS,
+            });
+            console.log(
+                green(
+                    `[outputs] ${outputId} ffmpeg timestamp warnings stopped after ${formatDuration(durationMs)} (${burst.count} warnings)`,
+                ),
+            );
+            p.timestampBurst = null;
+            return;
+        }
+        if (now - burst.lastSummaryAtMs >= TIMESTAMP_SUMMARY_MS) {
+            flushTimestampSummary(outputId, burst, now);
+        }
+    }
+
     function noteTimestampWarning(outputId: string, stderr: string): void {
         const p = progress.get(outputId);
         if (!p) return;
-        const patterns = [
-            /timestamp discontinuity/i,
-            /non[- ]monotonous DTS/i,
-            /invalid DTS/i,
-            /corrupt input/i,
-            /non-existing PPS/i,
-            /decode_slice_header error/i,
-        ];
-        const line = stderr
-            .split(/\r?\n/)
-            .map((value) => value.trim())
-            .find((value) => patterns.some((pattern) => pattern.test(value)));
-        if (line) {
-            p.lastTimestampWarningAtMs = Date.now();
-            p.lastTimestampWarning = `FFmpeg reported: ${line}`;
-            diagnostics?.event('ffmpeg-timestamp-warning', {
-                outputId,
-                line,
-            });
+        const now = Date.now();
+        // Close a burst whose quiet period already elapsed (the watchdog tick
+        // may not have run yet) so these lines start a new one.
+        if (p.timestampBurst && now - p.timestampBurst.lastAtMs >= TIMESTAMP_QUIET_MS) {
+            evaluateTimestampBurst(outputId, p, now);
         }
+        for (const raw of stderr.split(/\r?\n/)) {
+            const line = raw.trim();
+            const match = TIMESTAMP_WARNING_PATTERNS.find(({ pattern }) => pattern.test(line));
+            if (!match) continue;
+            p.lastTimestampWarningAtMs = now;
+            p.lastTimestampWarning = `FFmpeg reported: ${line}`;
+            const burst = (p.timestampBurst ??= {
+                startedAtMs: now,
+                lastAtMs: now,
+                count: 0,
+                timing: false,
+                lastLine: line,
+                knownKinds: new Set<string>(),
+                lastSummaryAtMs: now,
+                pendingCount: 0,
+                pendingKinds: new Map<string, number>(),
+            });
+            burst.count++;
+            burst.lastAtMs = now;
+            burst.lastLine = line;
+            burst.timing ||= match.timing;
+            const kind = timestampWarningKind(line);
+            if (!burst.knownKinds.has(kind) && burst.knownKinds.size < TIMESTAMP_MAX_KINDS) {
+                burst.knownKinds.add(kind);
+                diagnostics?.event('ffmpeg-timestamp-warning', { outputId, line });
+            } else {
+                const key = burst.knownKinds.has(kind) ? kind : 'other';
+                burst.pendingCount++;
+                burst.pendingKinds.set(key, (burst.pendingKinds.get(key) ?? 0) + 1);
+            }
+        }
+        evaluateTimestampBurst(outputId, p, now);
     }
 
     function formatNullable(value: number | null): string {
@@ -600,6 +715,7 @@ export function createOutputService(
     function checkOutputWatchdog(): void {
         const now = Date.now();
         refreshTcpSocketSnapshot();
+        for (const [outputId, p] of progress) evaluateTimestampBurst(outputId, p, now);
         for (const [outputId, proc] of processes) {
             if (watchdogKills.has(outputId)) continue;
             const output = db.getOutput(outputId);
@@ -778,6 +894,7 @@ export function createOutputService(
             mediaClockWarning: null,
             lastTimestampWarningAtMs: null,
             lastTimestampWarning: null,
+            timestampBurst: null,
             lastOutTimeWallMs: null,
         });
         console.log(green(`[outputs] ${output.id} (${output.name}) started pid=${child.pid}`));
@@ -818,6 +935,9 @@ export function createOutputService(
             const wasStop = stopRequested.delete(output.id);
             const wasWatchdog = watchdogKills.delete(output.id);
             const status = wasStop ? 'stopped' : 'failed';
+            // setStatus() below drops the progress entry, so capture any open
+            // timestamp-warning burst now to record it on the exit event.
+            const openBurst = progress.get(output.id)?.timestampBurst ?? null;
             processes.delete(output.id);
             setStatus(output.id, status, null);
             const exitColor = status === 'failed' ? red : green;
@@ -835,6 +955,14 @@ export function createOutputService(
                 status,
                 watchdog: wasWatchdog,
                 stderrTail: stderrTail.trim() || null,
+                ...(openBurst
+                    ? {
+                          timestampBurst: {
+                              durationMs: openBurst.lastAtMs - openBurst.startedAtMs,
+                              count: openBurst.count,
+                          },
+                      }
+                    : {}),
             });
 
             if (!wasStop) {
