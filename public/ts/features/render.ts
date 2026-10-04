@@ -17,6 +17,7 @@ import {
     STATUS_COLOR_OFF,
 } from '../core/utils.js';
 import { state } from '../core/state.js';
+import { rejectedVia, rejectedWhy } from '../core/rejected.js';
 import type {
     AudioInfo,
     AudioTrackInfo,
@@ -2188,24 +2189,8 @@ function renderRejectedPublishes(): void {
     }
     const rows = rejected
         .map((r) => {
-            const via =
-                r.protocol === 'srt'
-                    ? r.ip && !/^(127\.|::1$|::ffff:127\.)/.test(r.ip)
-                        ? `SRT from ${escapeHtml(r.ip)}`
-                        : 'SRT (via relay)'
-                    : `RTMP${r.ip ? ` from ${escapeHtml(r.ip)}` : ''}`;
-            const keyWhy =
-                r.reason === 'assigned'
-                    ? 'The key is assigned to a pipeline'
-                    : r.reason === 'unassigned'
-                      ? 'Key is valid but not assigned to a pipeline'
-                      : r.reason === 'unknown'
-                        ? 'Key not recognized (wrong secret or key was regenerated)'
-                        : 'Stream name is empty or not a stream key (e.g. a typo or a missing keyNN_ prefix)';
-            const why =
-                r.kind === 'play'
-                    ? `SRS treated this as a play request, and plays from outside are refused. If this is an encoder, its SRT stream id is probably missing m=publish (e.g. #!::r=live/keyNN_...,m=publish). ${keyWhy}`
-                    : keyWhy;
+            const via = rejectedVia(r);
+            const why = rejectedWhy(r);
             const playBadge =
                 r.kind === 'play'
                     ? `<span class="badge badge-sm badge-warning badge-outline shrink-0">Play request</span>`
