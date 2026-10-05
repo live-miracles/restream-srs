@@ -6,11 +6,11 @@ const express = require('express');
 const { Readable, Writable } = require('node:stream');
 
 class MockRequest extends Readable {
-    constructor(method, url, body, ip = '127.0.0.1', cookie) {
+    constructor(method, url, body, ip = '127.0.0.1', cookie, extraHeaders = {}) {
         super();
         this.method = method;
         this.url = url;
-        this.headers = cookie ? { cookie } : {};
+        this.headers = { ...(cookie ? { cookie } : {}), ...extraHeaders };
         this.socket = { remoteAddress: ip };
         this.connection = this.socket;
         this.body = body;
@@ -59,10 +59,10 @@ class MockResponse extends Writable {
     }
 }
 
-function dispatch(app, method, route, body, ip, cookie) {
+function dispatch(app, method, route, body, ip, cookie, extraHeaders) {
     return new Promise((resolve, reject) => {
         app.handle(
-            new MockRequest(method, route, body, ip, cookie),
+            new MockRequest(method, route, body, ip, cookie, extraHeaders),
             new MockResponse(resolve),
             reject,
         );
@@ -98,7 +98,8 @@ async function createHarness(initialPassword, existingDb) {
     registerAuthApi(app, db);
     return {
         db,
-        login: (password, ip) => dispatch(app, 'POST', '/api/auth/login', { password }, ip),
+        login: (password, ip, headers) =>
+            dispatch(app, 'POST', '/api/auth/login', { password }, ip, undefined, headers),
         logout: (cookie) => dispatch(app, 'POST', '/api/auth/logout', undefined, undefined, cookie),
         changePassword: (currentPassword, newPassword, cookie) =>
             dispatch(
@@ -133,6 +134,19 @@ describe('auth login integration', () => {
         assert.equal(res.status, 200);
         assert.deepEqual(res.body, { ok: true });
         assert.match(res.headers['set-cookie'], /^session=[0-9a-f]{64}; HttpOnly/);
+    });
+
+    test('loginLimiterKey groups IPv6 by /64 and unwraps IPv4-mapped addresses', () => {
+        const { loginLimiterKey } = require('../../src/api/auth');
+        assert.equal(loginLimiterKey('203.0.113.9'), '203.0.113.9');
+        assert.equal(loginLimiterKey('::ffff:203.0.113.9'), '203.0.113.9');
+        assert.equal(loginLimiterKey('2001:db8:1:2::5'), '2001:db8:1:2::/64');
+        assert.equal(
+            loginLimiterKey('2001:0db8:0001:0002:aaaa:bbbb:cccc:dddd'),
+            '2001:db8:1:2::/64',
+        );
+        assert.equal(loginLimiterKey('::1'), '0:0:0:0::/64');
+        assert.equal(loginLimiterKey('fe80::1%en0'), 'fe80:0:0:0::/64');
     });
 
     test('rejects a wrong password', async () => {
@@ -292,16 +306,79 @@ describe('auth session integration', () => {
         assert.equal(stillWorks.status, 200);
     });
 
-    test('a session created before a password change stays valid (not force-invalidated)', async () => {
+    test('the session that changed the password stays valid', async () => {
         const harness = await createHarness();
         const login = await harness.login('admin');
         const cookie = sessionCookieFrom(login);
         await harness.changePassword('admin', 'new-secure-pw', cookie);
 
-        // Documents actual behavior: change-password does not revoke the
-        // session that made the request.
         const res = await harness.logout(cookie);
         assert.equal(res.status, 200);
+    });
+
+    test('changing the password revokes every other session', async () => {
+        const harness = await createHarness();
+        const mine = sessionCookieFrom(await harness.login('admin'));
+        const stolen = sessionCookieFrom(await harness.login('admin'));
+        assert.equal(
+            (await harness.request('POST', '/api/auth/logout', undefined, stolen)).status,
+            200,
+        );
+        const stolen2 = sessionCookieFrom(await harness.login('admin'));
+
+        const res = await harness.changePassword('admin', 'new-secure-pw', mine);
+        assert.equal(res.status, 200);
+
+        const stolenUse = await harness.request('POST', '/api/auth/logout', undefined, stolen2);
+        assert.equal(stolenUse.status, 401);
+        const mineUse = await harness.request('POST', '/api/auth/logout', undefined, mine);
+        assert.equal(mineUse.status, 200);
+    });
+
+    test('rejects a new password shorter than 12 characters and keeps the old one', async () => {
+        const harness = await createHarness();
+        const cookie = sessionCookieFrom(await harness.login('admin'));
+
+        const res = await harness.changePassword('admin', 'short-pw', cookie);
+
+        assert.equal(res.status, 400);
+        assert.match(res.body.error, /at least 12/);
+        assert.equal((await harness.login('admin')).status, 200);
+    });
+
+    test('session tokens are stored only as hashes, never the cookie value', async () => {
+        const harness = await createHarness();
+        const login = await harness.login('admin');
+        const token = sessionCookieFrom(login).split('=')[1];
+
+        const stored = harness.db.listSessions();
+
+        assert.equal(stored.length, 1);
+        assert.notEqual(stored[0], token);
+        assert.match(stored[0], /^[0-9a-f]{64}$/);
+    });
+
+    test('marks the cookie Secure only when the request came over TLS', async () => {
+        const harness = await createHarness();
+
+        const plain = await harness.login('admin');
+        const tls = await harness.login('admin', undefined, { 'x-forwarded-proto': 'https' });
+
+        assert.doesNotMatch(plain.headers['set-cookie'], /Secure/);
+        assert.match(tls.headers['set-cookie'], /; Secure/);
+    });
+
+    test('IPv6 clients are rate limited per /64, so rotating addresses does not help', async () => {
+        const harness = await createHarness();
+        for (let i = 1; i <= 5; i++) {
+            await harness.login('wrong', `2001:db8:1:2::${i}`);
+        }
+
+        const sameNet = await harness.login('admin', '2001:db8:1:2:aaaa:bbbb:cccc:dddd');
+        const otherNet = await harness.login('admin', '2001:db8:1:3::1');
+
+        assert.equal(sameNet.status, 429);
+        assert.equal(otherNet.status, 200);
     });
 
     test('two independent logins produce independent sessions; logging out one leaves the other valid', async () => {

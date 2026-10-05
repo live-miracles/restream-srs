@@ -194,7 +194,7 @@ export function renderOutputCard(
         const codeClass = dupRefs
             ? 'text-xs font-normal text-warning whitespace-nowrap'
             : 'text-xs font-normal opacity-60 whitespace-nowrap';
-        inlineSink = `<code class="${codeClass}" title="${escapeHtml(output.url)}">${display}</code>${dupWarnBtn}`;
+        inlineSink = `<code class="${codeClass}" title="${escapeHtml(output.url)}">${escapeHtml(display)}</code>${dupWarnBtn}`;
     }
 
     const lastErrorIsCurrent = output.lastError !== null && output.lastErrorAt !== null;

@@ -777,7 +777,9 @@ function audioOptionsHtml(tracks: AudioTrackInfo[], selected: string): string {
     }
     if (!matched) {
         const label = /^\d+$/.test(selected) ? `Track ${Number(selected) + 1}` : selected;
-        options.push(`<option value="${selected}" selected>${escapeHtml(label)}</option>`);
+        options.push(
+            `<option value="${escapeHtml(selected)}" selected>${escapeHtml(label)}</option>`,
+        );
     }
     return options.join('');
 }

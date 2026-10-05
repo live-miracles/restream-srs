@@ -29,7 +29,7 @@ not targets to exceed:
 | Resource | Intended maximum |
 |---|---:|
 | Input pipelines | 50 |
-| Output forwards | 500 total |
+| Output forwards | 500 total (enforced in the database layer) |
 | Concurrent custom/transcoding outputs | A few at a time |
 | Concurrent dashboard clients | Approximately 10 |
 

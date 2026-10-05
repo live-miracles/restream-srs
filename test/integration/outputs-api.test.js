@@ -240,6 +240,189 @@ describe('Outputs API integration', () => {
         });
     });
 
+    describe('destination policy', () => {
+        const post = (harness, p, url) =>
+            harness.request('POST', `/api/pipelines/${p.id}/outputs`, { name: 'X', url });
+
+        test('rejects cloud-metadata, wrong-port loopback and numeric loopback spellings', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+            for (const url of [
+                'rtmp://169.254.169.254/live/k',
+                'rtmp://127.0.0.1:1985/live/k',
+                'rtmp://2130706433:8080/live/k',
+                'srt://0.0.0.0:9000',
+            ]) {
+                const res = await post(harness, p, url);
+                assert.equal(res.status, 400, url);
+            }
+            assert.equal(harness.db.listOutputs().length, 0);
+        });
+
+        test('allows the server’s own ports on loopback and private-LAN destinations', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+            for (const url of [
+                'rtmp://localhost:21935/live/key02_abc',
+                'rtmp://192.168.1.10:1935/live/k',
+                'srt://0.0.0.0:9000?mode=listener',
+            ]) {
+                const res = await post(harness, p, url);
+                assert.equal(res.status, 201, url);
+            }
+        });
+
+        test('bulk and update paths are checked too', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+            const bulk = await harness.request('POST', `/api/pipelines/${p.id}/outputs/bulk`, {
+                outputs: [
+                    { name: 'fine', url: 'rtmp://192.168.1.10/live/k' },
+                    { name: 'bad', url: 'rtmp://169.254.169.254/live/k' },
+                ],
+            });
+            assert.equal(bulk.status, 400);
+            assert.equal(harness.db.listOutputs().length, 0);
+
+            const o = harness.db.createOutput({
+                pipelineId: p.id,
+                name: 'O',
+                url: 'rtmp://h.example/x',
+            });
+            const upd = await harness.request('POST', `/api/pipelines/${p.id}/outputs/${o.id}`, {
+                name: 'O',
+                url: 'rtmp://127.0.0.1:1985/live/k',
+            });
+            assert.equal(upd.status, 400);
+            assert.equal(harness.db.getOutput(o.id).url, 'rtmp://h.example/x');
+        });
+    });
+
+    describe('input bounds', () => {
+        test('rejects over-long, empty, control-character and non-string output names', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+            for (const name of ['x'.repeat(81), '   ', 'a\nb', { trim: () => 'x' }, 42]) {
+                const res = await harness.request('POST', `/api/pipelines/${p.id}/outputs`, {
+                    name,
+                    url: 'rtmp://192.168.1.2/live/k',
+                });
+                assert.equal(res.status, 400, JSON.stringify(name));
+            }
+            assert.equal(harness.db.listOutputs().length, 0);
+        });
+
+        test('rejects destination URLs carrying markup or whitespace', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+            for (const url of ['rtmp://<svg onload=a()>', 'rtmp://h/live/a b', 'rtmp://h/"x']) {
+                const res = await harness.request('POST', `/api/pipelines/${p.id}/outputs`, {
+                    name: 'x',
+                    url,
+                });
+                assert.equal(res.status, 400, url);
+            }
+        });
+
+        test('rejects an audioEncoding with an out-of-range track index', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+            for (const audioEncoding of ['50', '0,99999999999']) {
+                const res = await harness.request('POST', `/api/pipelines/${p.id}/outputs`, {
+                    name: 'x',
+                    url: 'rtmp://192.168.1.2/live/k',
+                    audioEncoding,
+                });
+                assert.equal(res.status, 400, audioEncoding);
+            }
+        });
+    });
+
+    describe('output capacity limit', () => {
+        const fill = (db, pipelineId, count) =>
+            db.createOutputs(
+                Array.from({ length: count }, (_, i) => ({
+                    pipelineId,
+                    name: `o${i}`,
+                    url: `rtmp://h/live/k${i}`,
+                })),
+            );
+
+        test('creating the 501st output is refused with 409 and nothing is added', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+            fill(harness.db, p.id, 500);
+
+            const res = await harness.request('POST', `/api/pipelines/${p.id}/outputs`, {
+                name: 'one too many',
+                url: 'rtmp://a.rtmp.youtube.com/live2/key',
+            });
+
+            assert.equal(res.status, 409);
+            assert.match(res.body.error, /500/);
+            assert.equal(harness.db.listOutputs().length, 500);
+        });
+
+        test('a bulk create that would cross the limit is refused whole', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+            fill(harness.db, p.id, 499);
+
+            const res = await harness.request('POST', `/api/pipelines/${p.id}/outputs/bulk`, {
+                outputs: [
+                    { name: 'A', url: 'rtmp://a' },
+                    { name: 'B', url: 'rtmp://b' },
+                ],
+            });
+
+            assert.equal(res.status, 409);
+            assert.equal(harness.db.listOutputs().length, 499);
+        });
+
+        test('the limit counts outputs across all pipelines', async () => {
+            const harness = createHarness();
+            const p1 = harness.db.createPipeline();
+            const p2 = harness.db.createPipeline();
+            fill(harness.db, p1.id, 500);
+
+            const res = await harness.request('POST', `/api/pipelines/${p2.id}/outputs`, {
+                name: 'X',
+                url: 'rtmp://x',
+            });
+
+            assert.equal(res.status, 409);
+        });
+
+        test('a single bulk request larger than the limit is a 400', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+
+            const res = await harness.request('POST', `/api/pipelines/${p.id}/outputs/bulk`, {
+                outputs: Array.from({ length: 501 }, (_, i) => ({
+                    name: `o${i}`,
+                    url: 'rtmp://h/x',
+                })),
+            });
+
+            assert.equal(res.status, 400);
+        });
+
+        test('exactly 500 outputs is allowed, and deleting one frees a slot', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+            const created = fill(harness.db, p.id, 500);
+            assert.equal(harness.db.listOutputs().length, 500);
+
+            harness.db.deleteOutput(created[0].id);
+            const res = await harness.request('POST', `/api/pipelines/${p.id}/outputs`, {
+                name: 'fits',
+                url: 'rtmp://h/live/new',
+            });
+
+            assert.equal(res.status, 201);
+        });
+    });
+
     describe('POST /api/pipelines/:pipelineId/outputs/bulk', () => {
         test('creates every valid output in the array', async () => {
             const harness = createHarness();

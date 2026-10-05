@@ -4,6 +4,9 @@ import type { Db, TranslationInput } from '../types.js';
 import type { OutputService } from '../services/outputs.js';
 import type { HealthService } from '../services/health.js';
 import { cyan } from '../utils/ansiColor.js';
+import { MAX_OUTPUTS, OutputLimitError } from '../db/index.js';
+import { checkOutputDestination } from '../utils/destination.js';
+import { parseName } from '../utils/inputLimits.js';
 
 // Validate an output's destination from the request body. It needs a valid URL
 // and audio track selection; multiple tracks are only valid for an SRT
@@ -14,7 +17,9 @@ function parseDestination(
     const b = body as Record<string, unknown> | null | undefined;
     const url = (b?.url as string | undefined)?.trim();
     if (!url || !validateOutputUrl(url)) {
-        return { error: 'a valid url is required (rtmp://, rtmps://, srt://)' };
+        return {
+            error: 'a valid url is required (rtmp://, rtmps://, srt://; no spaces or < > " characters)',
+        };
     }
     const audioEncoding = validateAudioEncoding(b?.audioEncoding);
     if (audioEncoding === null) {
@@ -79,20 +84,23 @@ export function registerOutputApi(
     outputService: OutputService,
     healthService: HealthService,
 ): void {
-    app.post('/api/pipelines/:pipelineId/outputs', (req, res) => {
+    app.post('/api/pipelines/:pipelineId/outputs', async (req, res) => {
         const pipelineId = parseInt(req.params.pipelineId);
         if (isNaN(pipelineId)) return res.status(400).json({ error: 'invalid pipelineId' });
         const ownPipeline = db.getPipeline(pipelineId);
         if (!ownPipeline) return res.status(404).json({ error: 'Pipeline not found' });
 
-        const name = (req.body?.name as string | undefined)?.trim();
+        const parsedName = parseName(req.body?.name);
+        const name = 'name' in parsedName ? parsedName.name : '';
         const videoEncoding = (req.body?.videoEncoding as string | undefined)?.trim() || 'copy';
         const parsed = parseDestination(req.body);
 
-        if (!name) return res.status(400).json({ error: 'name is required' });
+        if ('error' in parsedName) return res.status(400).json({ error: parsedName.error });
         if (!ENCODINGS[videoEncoding])
             return res.status(400).json({ error: `unknown videoEncoding: ${videoEncoding}` });
         if ('error' in parsed) return res.status(400).json({ error: parsed.error });
+        const blockedReason = await checkOutputDestination(parsed.url);
+        if (blockedReason) return res.status(400).json({ error: blockedReason });
         const translation = parseTranslation(req.body);
         if (translation && 'error' in translation) return res.status(400).json(translation);
         if (translation && !db.getPipelineByStreamKey(translation.translatorStreamKey)) {
@@ -125,6 +133,9 @@ export function registerOutputApi(
                 translation,
             });
         } catch (error) {
+            if (error instanceof OutputLimitError) {
+                return res.status(409).json({ error: error.message });
+            }
             console.error('[outputs] failed to create output:', error);
             return res.status(500).json({
                 error: error instanceof Error ? error.message : 'could not create output',
@@ -134,7 +145,7 @@ export function registerOutputApi(
         return res.status(201).json(output);
     });
 
-    app.post('/api/pipelines/:pipelineId/outputs/bulk', (req, res) => {
+    app.post('/api/pipelines/:pipelineId/outputs/bulk', async (req, res) => {
         const pipelineId = parseInt(req.params.pipelineId);
         if (isNaN(pipelineId)) return res.status(400).json({ error: 'invalid pipelineId' });
         if (!db.getPipeline(pipelineId))
@@ -143,6 +154,10 @@ export function registerOutputApi(
         const rawOutputs = req.body?.outputs;
         if (!Array.isArray(rawOutputs) || rawOutputs.length === 0)
             return res.status(400).json({ error: 'outputs array is required' });
+        if (rawOutputs.length > MAX_OUTPUTS)
+            return res
+                .status(400)
+                .json({ error: `at most ${MAX_OUTPUTS} outputs can be created at once` });
 
         const validated: {
             name: string;
@@ -151,14 +166,21 @@ export function registerOutputApi(
             audioEncoding: string;
         }[] = [];
         for (const item of rawOutputs) {
-            const name = (item?.name as string | undefined)?.trim();
+            const parsedName = parseName(item?.name);
+            const name = 'name' in parsedName ? parsedName.name : '';
             const videoEncoding = (item?.videoEncoding as string | undefined)?.trim() || 'copy';
             const parsed = parseDestination(item);
 
-            if (!name) return res.status(400).json({ error: 'each output must have a name' });
+            if ('error' in parsedName) {
+                return res
+                    .status(400)
+                    .json({ error: `each output needs a valid name: ${parsedName.error}` });
+            }
             if (!ENCODINGS[videoEncoding])
                 return res.status(400).json({ error: `unknown videoEncoding: ${videoEncoding}` });
             if ('error' in parsed) return res.status(400).json({ error: parsed.error });
+            const blockedReason = await checkOutputDestination(parsed.url);
+            if (blockedReason) return res.status(400).json({ error: `${name}: ${blockedReason}` });
 
             validated.push({
                 name,
@@ -168,7 +190,18 @@ export function registerOutputApi(
             });
         }
 
-        const created = db.createOutputs(validated.map((v) => ({ pipelineId, ...v })));
+        let created: ReturnType<Db['createOutputs']>;
+        try {
+            created = db.createOutputs(validated.map((v) => ({ pipelineId, ...v })));
+        } catch (error) {
+            if (error instanceof OutputLimitError) {
+                return res.status(409).json({ error: error.message });
+            }
+            console.error('[outputs] failed to create outputs:', error);
+            return res.status(500).json({
+                error: error instanceof Error ? error.message : 'could not create outputs',
+            });
+        }
         console.log(
             cyan(
                 `[outputs] user add-bulk requested: pipeline=${pipelineId} count=${created.length}`,
@@ -210,7 +243,7 @@ export function registerOutputApi(
         return res.json({ ok: true });
     });
 
-    app.post('/api/pipelines/:pipelineId/outputs/:outId', (req, res) => {
+    app.post('/api/pipelines/:pipelineId/outputs/:outId', async (req, res) => {
         const { pipelineId, outId } = req.params;
         const output = db.getOutput(outId);
         if (!output || output.pipelineId !== parseInt(pipelineId)) {
@@ -227,15 +260,19 @@ export function registerOutputApi(
             return res.status(409).json({ error: 'Stop the output before editing it' });
         }
 
-        const name = (req.body?.name as string | undefined)?.trim() ?? output.name;
+        const parsedName =
+            req.body?.name === undefined ? { name: output.name } : parseName(req.body.name);
+        const name = 'name' in parsedName ? parsedName.name : '';
         const videoEncoding =
             (req.body?.videoEncoding as string | undefined)?.trim() ?? output.videoEncoding;
         const parsed = parseDestination(req.body);
 
-        if (!name) return res.status(400).json({ error: 'name is required' });
+        if ('error' in parsedName) return res.status(400).json({ error: parsedName.error });
         if (!ENCODINGS[videoEncoding])
             return res.status(400).json({ error: `unknown videoEncoding: ${videoEncoding}` });
         if ('error' in parsed) return res.status(400).json({ error: parsed.error });
+        const blockedReason = await checkOutputDestination(parsed.url);
+        if (blockedReason) return res.status(400).json({ error: blockedReason });
         const parsedTranslation = parseTranslation(req.body);
         if (parsedTranslation && 'error' in parsedTranslation)
             return res.status(400).json(parsedTranslation);

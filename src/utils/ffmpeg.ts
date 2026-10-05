@@ -1,3 +1,5 @@
+import { MAX_AUDIO_TRACKS, isCleanUrlText } from './inputLimits.js';
+
 interface VideoEncodingPreset {
     args: string[];
 }
@@ -272,7 +274,10 @@ export function buildTranslationMixerArgs(
 }
 
 export function validateOutputUrl(url: string): boolean {
-    return url.startsWith('rtmp://') || url.startsWith('rtmps://') || url.startsWith('srt://');
+    return (
+        isCleanUrlText(url) &&
+        (url.startsWith('rtmp://') || url.startsWith('rtmps://') || url.startsWith('srt://'))
+    );
 }
 
 export function validateAudioEncoding(value: unknown): string | null {
@@ -284,6 +289,7 @@ export function validateAudioEncoding(value: unknown): string | null {
     if (value === 'translation') return 'translation';
     if (typeof value !== 'string') return null;
     const parts = value.split(',').map((s) => s.trim());
-    if (!parts.every((p) => /^\d+$/.test(p))) return null;
+    if (parts.length > MAX_AUDIO_TRACKS) return null;
+    if (!parts.every((p) => /^\d+$/.test(p) && Number(p) < MAX_AUDIO_TRACKS)) return null;
     return parts.join(',');
 }

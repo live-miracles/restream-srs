@@ -1,6 +1,7 @@
 import dns from 'dns/promises';
 import net from 'net';
 import type { Express } from 'express';
+import { checkProbeAddress } from '../utils/destination.js';
 import type { Db, HostProbeSample, HostProbeSummary, HostProbeTarget } from '../types.js';
 
 const PROBE_INTERVAL_MS = 5_000;
@@ -34,6 +35,16 @@ async function probeTarget(target: HostProbeTarget): Promise<HostProbeSample> {
     try {
         const lookup = await dns.lookup(target.host, { family: 0 });
         resolvedAddress = lookup.address;
+        const notProbed = checkProbeAddress(lookup.address);
+        if (notProbed) {
+            return {
+                ts: Date.now(),
+                ok: false,
+                latencyMs: null,
+                error: notProbed,
+                resolvedAddress: null,
+            };
+        }
     } catch (err) {
         return {
             ts: Date.now(),

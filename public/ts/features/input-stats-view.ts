@@ -55,7 +55,7 @@ export function renderInputStats(input: InputHealth, deps: InputStatsDeps): stri
     const v = input.video;
     const a = input.audio;
     const compactStat = (label: string, val: string | number | null | undefined) =>
-        `<span class="input-meta-item"><span class="input-meta-label">${label}</span><span class="input-meta-value">${val ?? '—'}</span></span>`;
+        `<span class="input-meta-item"><span class="input-meta-label">${label}</span><span class="input-meta-value">${val == null ? '—' : escapeHtml(String(val))}</span></span>`;
 
     return `
         ${
@@ -86,8 +86,8 @@ export function renderInputStats(input: InputHealth, deps: InputStatsDeps): stri
                         return `<tr>
                         <td class="font-mono">${t.index + 1}</td>
                         ${input.audioTracks.some((x) => x.pid != null) ? `<td class="font-mono">${t.pid ?? '—'}</td>` : ''}
-                        <td>${t.codec || '—'}</td>
-                        <td>${t.profile || '—'}</td>
+                        <td>${escapeHtml(t.codec || '—')}</td>
+                        <td>${escapeHtml(t.profile || '—')}</td>
                         <td>${t.channels || '—'}</td>
                         <td>${t.sampleRate ? `${(t.sampleRate / 1000).toFixed(1)} kHz` : '—'}</td>
                         ${input.audioTracks.some((x) => x.language || x.title) ? `<td class="opacity-60">${label || ''}</td>` : ''}
@@ -127,8 +127,8 @@ export function renderCompactMetaRow(
         .map(
             (item) =>
                 `<span class="input-meta-item"><span class="input-meta-label"${
-                    item.labelTitle ? ` title="${item.labelTitle.replace(/"/g, '&quot;')}"` : ''
-                }>${item.label}</span><span class="input-meta-value">${item.value ?? '—'}</span></span>`,
+                    item.labelTitle ? ` title="${escapeHtml(item.labelTitle)}"` : ''
+                }>${item.label}</span><span class="input-meta-value">${item.value == null ? '—' : escapeHtml(String(item.value))}</span></span>`,
         )
         .join('')}</div>`;
 }

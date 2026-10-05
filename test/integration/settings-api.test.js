@@ -94,6 +94,19 @@ function createHarness() {
 
 describe('Settings API integration', () => {
     describe('POST /api/settings/general', () => {
+        test('rejects a publicHost that is not a hostname or IP, and an over-long server name', async () => {
+            const harness = createHarness();
+            for (const body of [
+                { name: 'S', publicHost: '<script>alert(1)</script>' },
+                { name: 'S', publicHost: 'a b' },
+                { name: 'S', publicHost: 123 },
+                { name: 'x'.repeat(81) },
+            ]) {
+                const res = await harness.request('POST', '/api/settings/general', body);
+                assert.equal(res.status, 400, JSON.stringify(body));
+            }
+        });
+
         test('updates the server name', async () => {
             const harness = createHarness();
             const res = await harness.request('POST', '/api/settings/general', {

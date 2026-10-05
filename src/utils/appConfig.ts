@@ -3,6 +3,12 @@ import path from 'path';
 
 export interface AppConfig {
     port: number;
+    // Loopback-only port serving SRS's on_publish/on_play hooks (never public).
+    hookPort: number;
+    // Number of reverse-proxy hops (e.g. 1 behind cloudflared/nginx) whose
+    // X-Forwarded-For is trusted for client IPs. 0 = none, the safe default when
+    // the port is reachable directly.
+    trustProxy: number;
     databasePath: string;
     srsConfigPath: string;
     ffmpegPath: string;
@@ -29,6 +35,8 @@ export interface OutputWatchdogConfig {
 
 interface RawAppConfig {
     port?: unknown;
+    hook_port?: unknown;
+    trust_proxy?: unknown;
     database_path?: unknown;
     srs_config_path?: unknown;
     ffmpeg_path?: unknown;
@@ -64,6 +72,7 @@ const DEFAULT_WATCHDOG_CONFIG: OutputWatchdogConfig = {
 };
 const DEFAULT_RAW_CONFIG = {
     port: 8080,
+    hook_port: 8082,
     database_path: './db.sqlite',
     srs_config_path: './srs.conf',
     ffmpeg_path: 'ffmpeg',
@@ -173,6 +182,14 @@ export function readAppConfig(): AppConfig {
             process.env.PORT ? Number(process.env.PORT) : undefined,
             asPort(raw.port, DEFAULT_RAW_CONFIG.port as number),
         ),
+        trustProxy:
+            typeof raw.trust_proxy === 'number' &&
+            Number.isInteger(raw.trust_proxy) &&
+            raw.trust_proxy >= 0 &&
+            raw.trust_proxy <= 10
+                ? raw.trust_proxy
+                : 0,
+        hookPort: asPort(raw.hook_port, DEFAULT_RAW_CONFIG.hook_port as number),
         databasePath: resolveFilePath(
             asString(
                 process.env.DATABASE_PATH,

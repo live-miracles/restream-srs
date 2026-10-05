@@ -58,7 +58,7 @@ export function renderHostConnectionsOverview(): void {
                 <td class="font-mono text-xs">${entry.averageLatencyMs != null ? `${Math.round(entry.averageLatencyMs)} ms` : '—'}</td>
                 <td class="font-mono text-xs">${entry.historyFailureCount}</td>
                 <td class="font-mono text-xs">${lastSeen}</td>
-                <td class="font-mono text-xs">${latest?.resolvedAddress ?? '—'}</td>
+                <td class="font-mono text-xs">${escapeHtml(latest?.resolvedAddress ?? '—')}</td>
             </tr>`;
 
         // "no recent failures" must reflect the visible window, not just the

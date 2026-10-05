@@ -209,11 +209,10 @@ function teardownMeter(): void {
 
 // ── HLS lifecycle ─────────────────────────────────────
 
-// The server reaps previews that receive no keepalive (so a closed tab cannot
-// leave a transcode running forever). Beat well inside the server's 90s TTL —
-// background tabs throttle timers to roughly one fire per minute, which still
-// keeps an intentionally-open preview alive.
-const KEEPALIVE_INTERVAL_MS = 15_000;
+// The server reaps a preview nobody is watching (no keepalive and no HLS fetch
+// within ~20s), so a crashed tab cannot leave a transcode running. Beat well
+// inside that TTL; the player's own playlist refreshes count too.
+const KEEPALIVE_INTERVAL_MS = 8_000;
 let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
 
 function startKeepalive(pipelineId: string): void {
@@ -282,6 +281,17 @@ export function setPreviewStarting(): void {
     if (btn) btn.disabled = true;
     const label = document.getElementById('preview-btn-label');
     if (label) label.textContent = 'Starting…';
+}
+
+// A closed/reloaded/navigated tab stops its preview right away instead of
+// waiting for the server's idle reaper. sendBeacon survives page teardown; if it
+// is lost (crash, network), the reaper is the fallback.
+if (typeof window !== 'undefined') {
+    window.addEventListener('pagehide', () => {
+        if (previewPipelineId) {
+            navigator.sendBeacon(`/api/pipelines/${previewPipelineId}/preview/stop`);
+        }
+    });
 }
 
 export function stopCurrentPreview(): void {

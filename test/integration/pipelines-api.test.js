@@ -164,6 +164,16 @@ describe('Pipelines API integration', () => {
             assert.equal(res.status, 404);
         });
 
+        test('rejects an over-long, control-character or non-string name', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+            for (const name of ['x'.repeat(81), 'a\nb', { trim: () => 'x' }, 7]) {
+                const res = await harness.request('POST', `/api/pipelines/${p.id}`, { name });
+                assert.equal(res.status, 400, JSON.stringify(name));
+            }
+            assert.equal(harness.db.getPipeline(p.id).name, p.name);
+        });
+
         test('rejects a missing name', async () => {
             const harness = createHarness();
             const p = harness.db.createPipeline();
