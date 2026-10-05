@@ -1,6 +1,16 @@
 import express from 'express';
 import type { Express } from 'express';
 import { requireAuth } from './auth.js';
+import { MAX_AUDIO_TRACKS } from '../utils/inputLimits.js';
+
+function isValidTrackCount(value: unknown): boolean {
+    return (
+        typeof value === 'number' &&
+        Number.isInteger(value) &&
+        value >= 1 &&
+        value <= MAX_AUDIO_TRACKS
+    );
+}
 import type { PreviewService } from '../services/preview.js';
 
 export function registerPreviewApi(app: Express, previewService: PreviewService): void {
@@ -9,10 +19,12 @@ export function registerPreviewApi(app: Express, previewService: PreviewService)
         if (isNaN(id)) return res.status(400).json({ error: 'invalid id' });
 
         const rawCount = req.body?.audioTrackCount;
-        const audioTrackCount =
-            typeof rawCount === 'number' && Number.isInteger(rawCount) && rawCount >= 1
-                ? rawCount
-                : 1;
+        if (rawCount !== undefined && !isValidTrackCount(rawCount)) {
+            return res.status(400).json({
+                error: `audioTrackCount must be an integer from 1 to ${MAX_AUDIO_TRACKS}`,
+            });
+        }
+        const audioTrackCount = rawCount === undefined ? 1 : (rawCount as number);
 
         try {
             return res.json(await previewService.start(id, audioTrackCount));

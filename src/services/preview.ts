@@ -7,6 +7,7 @@ import { INPUT_TIMEOUT_US } from '../utils/ffmpeg.js';
 import type { Db } from '../types.js';
 import type { InputState } from './inputState.js';
 import { redactSecrets, secretTokensFromUrl } from '../utils/redact.js';
+import { MAX_AUDIO_TRACKS } from '../utils/inputLimits.js';
 
 const FFMPEG_CMD = readAppConfig().ffmpegPath;
 const STDERR_TAIL_BYTES = 2000;
@@ -121,6 +122,9 @@ export function createPreviewService(
 
         // Multiple audio tracks (only possible on an SRT input) become switchable
         // HLS renditions via a master playlist; otherwise a single media playlist.
+        // The API already bounds this; clamp again so no caller can make this
+        // allocate an argv/array proportional to an arbitrary number.
+        audioTrackCount = Math.min(MAX_AUDIO_TRACKS, Math.max(1, Math.floor(audioTrackCount) || 1));
         const multiTrack = audioTrackCount > 1;
         const playlistName = multiTrack ? 'master.m3u8' : 'index.m3u8';
         const hlsUrl = `/hls/${pipelineId}/${playlistName}`;

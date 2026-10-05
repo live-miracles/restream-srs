@@ -1,4 +1,5 @@
 import type { Express } from 'express';
+import { parseName } from '../utils/inputLimits.js';
 import type { Db } from '../types.js';
 import type { OutputService } from '../services/outputs.js';
 import type { PreviewService } from '../services/preview.js';
@@ -35,8 +36,9 @@ export function registerPipelineApi(
         const existing = db.getPipeline(id);
         if (!existing) return res.status(404).json({ error: 'Pipeline not found' });
 
-        const name = (req.body?.name as string | undefined)?.trim();
-        if (!name) return res.status(400).json({ error: 'name is required' });
+        const parsedName = parseName(req.body?.name);
+        if ('error' in parsedName) return res.status(400).json({ error: parsedName.error });
+        const name = parsedName.name;
         const streamKeyId = req.body?.streamKeyId as number | undefined;
         const keyChanged = streamKeyId !== undefined && streamKeyId !== existing.streamKeyId;
 

@@ -211,7 +211,8 @@ window.previewToggleBtn = async () => {
     setPreviewStarting();
     const { startPreview } = await import('../core/api.js');
     const pipeline = state.pipelines.find((p) => p.id === id);
-    const audioTrackCount = Math.max(1, pipeline?.input.audioTracks.length ?? 1);
+    // The server accepts at most 50; a publisher can advertise more.
+    const audioTrackCount = Math.min(50, Math.max(1, pipeline?.input.audioTracks.length ?? 1));
     const result = await startPreview(id, audioTrackCount);
     if (result?.hlsUrl) {
         attachHls(id, result.hlsUrl);

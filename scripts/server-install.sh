@@ -169,15 +169,22 @@ else
     echo "User $SERVICE_USER already exists."
 fi
 mkdir -p "$APP_DIR" "$DATA_DIR" "$DATA_DIR/objs" "$CONF_DIR"
-chown -R "$SERVICE_USER:$SERVICE_USER" "$APP_DIR" "$DATA_DIR" "$DATA_DIR/objs" "$CONF_DIR"
+# The application tree is root-owned and read-only to the service user. Root
+# runs code from it on every update (this script, npm, the build, the password
+# reset), so a service user that owns it could turn a compromised SRS/FFmpeg/
+# Node process into root on the next update. The service user only writes to
+# the data and config directories.
+chown -R root:root "$APP_DIR"
+chmod -R go-w "$APP_DIR"
+chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR" "$DATA_DIR/objs" "$CONF_DIR"
 
 step "7/9 Application"
 if [[ ! -d "$APP_DIR/.git" ]]; then
     git clone "$REPO_URL" "$APP_DIR"
 else
     echo "Repository already present at $APP_DIR, pulling latest code."
-    sudo -u "$SERVICE_USER" git -C "$APP_DIR" fetch origin
-    sudo -u "$SERVICE_USER" git -C "$APP_DIR" reset --hard '@{u}'
+    git -C "$APP_DIR" fetch origin
+    git -C "$APP_DIR" reset --hard '@{u}'
 fi
 cd "$APP_DIR"
 # No dependency lifecycle scripts run as root: only the two native modules the
@@ -186,7 +193,13 @@ npm ci --ignore-scripts
 npm rebuild better-sqlite3 zeromq
 npm run build
 npm prune --omit=dev
-chown -R "$SERVICE_USER:$SERVICE_USER" "$APP_DIR"
+chown -R root:root "$APP_DIR"
+chmod -R go-w "$APP_DIR"
+# The service user runs `git log` (dashboard version panel) in a repo it does not
+# own; git refuses that unless the directory is marked safe.
+if ! git config --system --get-all safe.directory | grep -qxF "$APP_DIR"; then
+    git config --system --add safe.directory "$APP_DIR"
+fi
 echo "Build complete."
 
 step "8/9 Config and data"

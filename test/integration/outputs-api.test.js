@@ -298,6 +298,46 @@ describe('Outputs API integration', () => {
         });
     });
 
+    describe('input bounds', () => {
+        test('rejects over-long, empty, control-character and non-string output names', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+            for (const name of ['x'.repeat(81), '   ', 'a\nb', { trim: () => 'x' }, 42]) {
+                const res = await harness.request('POST', `/api/pipelines/${p.id}/outputs`, {
+                    name,
+                    url: 'rtmp://192.168.1.2/live/k',
+                });
+                assert.equal(res.status, 400, JSON.stringify(name));
+            }
+            assert.equal(harness.db.listOutputs().length, 0);
+        });
+
+        test('rejects destination URLs carrying markup or whitespace', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+            for (const url of ['rtmp://<svg onload=a()>', 'rtmp://h/live/a b', 'rtmp://h/"x']) {
+                const res = await harness.request('POST', `/api/pipelines/${p.id}/outputs`, {
+                    name: 'x',
+                    url,
+                });
+                assert.equal(res.status, 400, url);
+            }
+        });
+
+        test('rejects an audioEncoding with an out-of-range track index', async () => {
+            const harness = createHarness();
+            const p = harness.db.createPipeline();
+            for (const audioEncoding of ['50', '0,99999999999']) {
+                const res = await harness.request('POST', `/api/pipelines/${p.id}/outputs`, {
+                    name: 'x',
+                    url: 'rtmp://192.168.1.2/live/k',
+                    audioEncoding,
+                });
+                assert.equal(res.status, 400, audioEncoding);
+            }
+        });
+    });
+
     describe('output capacity limit', () => {
         const fill = (db, pipelineId, count) =>
             db.createOutputs(

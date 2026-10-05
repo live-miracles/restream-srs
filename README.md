@@ -275,6 +275,15 @@ Hardening that is on by default:
   keeping alive for 20s is stopped (closing the tab stops it at once). A dashboard
   tab left in the background for several minutes loses its preview and shows it
   stopped.
+- **Input bounds:** names are at most 80 characters with no control characters;
+  destination URLs are at most 2048 characters with no whitespace or `< > "`;
+  audio track counts/indexes are 0–49 (preview `audioTrackCount` 1–50); `publicHost`
+  must be a hostname or IP. The dashboard escapes everything it renders on top of
+  this. Existing longer names are kept but must comply when edited.
+- **Installer ownership:** `/opt/restream-srs` is root-owned and read-only to the
+  service user (root runs code from it on every update); the service user writes
+  only to the data and config directories. `server-reset-password.sh` also signs
+  out every existing session.
 - **Hooks:** `/api/srs/*` is served only on `127.0.0.1:<hook_port>`; client IPs in
   hook bodies must be IP literals, so a request cannot forge log lines.
 

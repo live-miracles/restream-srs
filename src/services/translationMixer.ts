@@ -15,7 +15,7 @@ import type { Db, Output, TranslationConfig } from '../types.js';
 import type { InputProtocol, InputState } from './inputState.js';
 import type { OutputService } from './outputs.js';
 import type { DiagnosticsLogger } from '../utils/diagnostics.js';
-import { redactSecrets, secretTokensFromUrl } from '../utils/redact.js';
+import { redactSecrets, redactUrl, secretTokensFromUrl } from '../utils/redact.js';
 
 const RECONCILE_INTERVAL_MS = 1000;
 const SIGKILL_DELAY_MS = 5000;
@@ -561,7 +561,9 @@ export function createTranslationMixerService(
             mode,
             sourcePipelineId: output.pipelineId,
             translatorPipelineId: translator?.id ?? null,
-            outputUrl: output.url,
+            // The destination URL embeds a third-party stream key: log only its
+            // scheme and host, never the URL itself.
+            outputDestination: redactUrl(output.url),
         });
 
         let progressBuffer = '';
