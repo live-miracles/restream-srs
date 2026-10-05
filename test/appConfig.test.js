@@ -67,6 +67,19 @@ describe('readAppConfig: file-level errors', () => {
     });
 });
 
+describe('readAppConfig: hook_port', () => {
+    test('defaults to 8082', () => {
+        assert.equal(loadAppConfig({})().hookPort, 8082);
+    });
+
+    test('uses a valid configured port and rejects invalid ones', () => {
+        assert.equal(loadAppConfig({ hook_port: 18082 })().hookPort, 18082);
+        for (const bad of [0, 70000, '8082', null, 1.5]) {
+            assert.equal(loadAppConfig({ hook_port: bad })().hookPort, 8082);
+        }
+    });
+});
+
 describe('readAppConfig: dashboard_password', () => {
     test('defaults to admin when absent', () => {
         assert.equal(loadAppConfig({})().dashboardPassword, 'admin');

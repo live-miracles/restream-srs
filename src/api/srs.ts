@@ -1,4 +1,5 @@
 import { execFile } from 'child_process';
+import net from 'net';
 import type { Express } from 'express';
 import type { Db } from '../types.js';
 import { kickSrsClientsByStream } from '../utils/srs.js';
@@ -58,6 +59,14 @@ async function readJournalOnlyTail(unit: string, maxLines: number): Promise<LogT
 // the whole map each window so it can't grow unbounded under a flood of
 // distinct (attacker-controlled) stream names.
 const KICK_COOLDOWN_MS = 5000;
+
+// Hook bodies come from SRS, but the hook listener is the one place that parses
+// network-supplied text into our logs and dashboard state. A client IP is only
+// ever an IP literal; anything else (newlines, markup) is dropped so a body can
+// never forge log lines or dashboard entries.
+function safeIp(raw: unknown): string {
+    return typeof raw === 'string' && net.isIP(raw) !== 0 ? raw : 'unknown';
+}
 const MAX_LISTED_REJECTIONS = 25;
 
 export function registerSrsHooks(
@@ -94,14 +103,10 @@ export function registerSrsHooks(
         recentlyKicked = new Map();
     }, KICK_COOLDOWN_MS).unref();
 
-    app.get('/api/ready', (_req, res) => {
-        res.json({ ok: true });
-    });
-
     app.post('/api/srs/on_publish', (req, res) => {
         const stream = req.body?.stream as string | undefined;
         const hookApp = req.body?.app as string | undefined;
-        const ip = (req.body?.ip as string | undefined) ?? 'unknown';
+        const ip = safeIp(req.body?.ip);
         const protocol = (req.body?.tcUrl as string | undefined)?.startsWith('srt://')
             ? 'srt'
             : 'rtmp';
@@ -175,7 +180,7 @@ export function registerSrsHooks(
     // no longer enough to watch a stream. SRT plays fire this hook too (SRS
     // calls on_play for native SRT connections even with srt_to_rtmp off).
     app.post('/api/srs/on_play', (req, res) => {
-        const ip = (req.body?.ip as string | undefined) ?? '';
+        const ip = safeIp(req.body?.ip) === 'unknown' ? '' : (req.body.ip as string);
         const stream = (req.body?.stream as string | undefined) ?? '';
         const loopback = ip === '::1' || ip.startsWith('127.') || ip.startsWith('::ffff:127.');
         if (!loopback) {

@@ -102,7 +102,7 @@ export function renderBondedLegs(legs: SrtBondingLeg[], deps: BondingViewDeps): 
                                const title = leg.healthReason ?? `Transport state: ${leg.state}`;
                                return `<tr>
                                    <td title="${escapeHtml(title)}"><span class="inline-flex items-center gap-1"><span class="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style="background:${color}"></span>${health}<span class="opacity-60">(${escapeHtml(leg.state)})</span></span></td>
-                                   <td class="font-mono text-xs">${leg.ip}</td>
+                                   <td class="font-mono text-xs">${escapeHtml(leg.ip)}</td>
                                    <td class="font-mono text-xs">${deps.fmtMs(leg.rttMs)}</td>
                                    <td class="font-mono text-xs">${deps.fmtMbpsValue(leg.recvRateMbps)}</td>
                                    <td class="font-mono text-xs">${deps.fmtMs(leg.rcvBufMs)}</td>

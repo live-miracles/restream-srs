@@ -1,5 +1,6 @@
 import type { Express } from 'express';
 import type { Db, HostProbeTarget } from '../types.js';
+import { checkProbeAddress, resolveAddresses } from '../utils/destination.js';
 
 const MAX_HOST_PROBE_TARGETS = 10;
 const MAX_PIPELINE_GROUPS = 50;
@@ -100,10 +101,18 @@ export function registerSettingsApi(app: Express, db: Db): void {
         });
     });
 
-    app.post('/api/settings/host-probes', (req, res) => {
+    app.post('/api/settings/host-probes', async (req, res) => {
         const hostProbeTargets = normalizeHostProbeTargets(req.body?.hostProbeTargets);
         if (hostProbeTargets === null) {
             return res.status(400).json({ error: 'Invalid host probe target configuration' });
+        }
+        // The probe re-checks the resolved address on every connect; rejecting
+        // here too just gives the operator the reason at save time.
+        for (const target of hostProbeTargets) {
+            for (const address of await resolveAddresses(target.host)) {
+                const reason = checkProbeAddress(address);
+                if (reason) return res.status(400).json({ error: `${target.label}: ${reason}` });
+            }
         }
 
         db.replaceHostProbeTargets(hostProbeTargets);

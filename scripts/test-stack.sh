@@ -6,7 +6,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
 WORK=${WORK:-${TMPDIR:-/tmp}/restream-srs-ui}
-APP_PORT=18080 RTMP_PORT=31935 API_PORT=31985 SRT_PORT=31080 CDP_PORT=9333
+APP_PORT=18080 HOOK_PORT=18082 RTMP_PORT=31935 API_PORT=31985 SRT_PORT=31080 CDP_PORT=9333
 B=http://127.0.0.1:$APP_PORT
 # start overwrites restream.json/srs.conf and deletes db.sqlite* in $WORK, so it
 # must never point at the repo (that would wipe a developer's real config and DB).
@@ -43,7 +43,7 @@ for pid,p in d['pipelines'].items():
 
 case "${1:-}" in
     start)
-        for port in $APP_PORT $RTMP_PORT $API_PORT $SRT_PORT $CDP_PORT; do
+        for port in $APP_PORT $HOOK_PORT $RTMP_PORT $API_PORT $SRT_PORT $CDP_PORT; do
             [ -z "$(listener $port)" ] || {
                 echo "port $port already in use - run 'stop' first"
                 exit 1
@@ -56,15 +56,15 @@ case "${1:-}" in
         }
         (cd "$REPO" && npx tsc -p tsconfig.json) # public/js is gitignored build output
         cat > "$WORK/restream.json" << JSON
-{ "port": $APP_PORT, "database_path": "./db.sqlite", "srs_config_path": "./srs.conf",
+{ "port": $APP_PORT, "hook_port": $HOOK_PORT, "database_path": "./db.sqlite", "srs_config_path": "./srs.conf",
   "ffmpeg_path": "$WORK/ffmpeg-shim.sh", "ffprobe_path": "$REPO/objs/ffprobe",
   "output_watchdog": { "warmup_ms": 90000, "stall_ms": 45000, "interval_ms": 5000,
                        "socket_warmup_ms": 3600000, "socket_grace_ms": 3600000 } }
 JSON
         sed -e "s/listen              21935;/listen              $RTMP_PORT;/" \
-            -e "s/listen          1985;/listen          $API_PORT;/" \
+            -e "s/listen          127.0.0.1:1985;/listen          127.0.0.1:$API_PORT;/" \
             -e "s/listen          10080;/listen          $SRT_PORT;/" \
-            -e "s#localhost:8080#localhost:$APP_PORT#g" "$REPO/srs.conf" > "$WORK/srs.conf"
+            -e "s#127.0.0.1:8082#127.0.0.1:$HOOK_PORT#g" "$REPO/srs.conf" > "$WORK/srs.conf"
         # Fake output ffmpeg: destination URL as last arg => healthy copy output
         # (progress on stdout, discontinuity flood on stderr while $WORK/flood exists);
         # anything else (preview) runs the real ffmpeg.

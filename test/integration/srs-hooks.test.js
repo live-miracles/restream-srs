@@ -115,13 +115,37 @@ function createHarness(assignedKeys, unassignedKeys = []) {
 }
 
 describe('SRS publish hook integration', () => {
-    test('exposes an unauthenticated readiness endpoint', async () => {
+    test('the hook listener does not serve readiness (that stays on the dashboard port)', async () => {
         const harness = createHarness([]);
 
-        const res = await harness.ready();
+        await assert.rejects(harness.ready());
+    });
 
-        assert.equal(res.status, 200);
-        assert.deepEqual(res.body, { ok: true });
+    test('a non-IP "ip" never reaches logs or the dashboard list (no log forging)', async (t) => {
+        const lines = [];
+        t.mock.method(console, 'log', (...args) => lines.push(args.join(' ')));
+        const harness = createHarness([]);
+        const forged = '6.6.6.6\n[srs-hook] allowed publish from 10.0.0.1: key01_<redacted>';
+
+        const res = await harness.publish({ app: 'live', stream: 'key01_deadbeef', ip: forged });
+        const rejected = await harness.rejected();
+
+        assert.equal(res.status, 403);
+        assert.ok(lines.length > 0);
+        assert.ok(
+            lines.every((l) => !l.includes('\n')),
+            'no embedded newline in any log line',
+        );
+        assert.ok(lines.every((l) => !l.includes('allowed publish')));
+        assert.equal(rejected.body.rejected[0].ip, null);
+    });
+
+    test('an invalid ip on a play is treated as non-loopback and refused (fail closed)', async () => {
+        const harness = createHarness([]);
+
+        const res = await harness.play({ app: 'live', stream: 'key01_good', ip: '127.0.0.1\nx' });
+
+        assert.equal(res.status, 403);
     });
 
     test('allows an assigned stream key', async () => {

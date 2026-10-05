@@ -15,6 +15,7 @@ import type { Db, Output, TranslationConfig } from '../types.js';
 import type { InputProtocol, InputState } from './inputState.js';
 import type { OutputService } from './outputs.js';
 import type { DiagnosticsLogger } from '../utils/diagnostics.js';
+import { redactSecrets, secretTokensFromUrl } from '../utils/redact.js';
 
 const RECONCILE_INTERVAL_MS = 1000;
 const SIGKILL_DELAY_MS = 5000;
@@ -54,6 +55,8 @@ interface MixerJob {
     translatorLive: boolean;
     translatorProtocol: 'srt' | 'rtmp' | null;
     stderrTail: string;
+    // Standalone secrets scrubbed from stderrTail before it is stored or logged.
+    redactTokens: string[];
     controller: MixerStateController;
     controlPort: number | null;
     startedAtMs: number;
@@ -406,8 +409,8 @@ export function createTranslationMixerService(
             opts.headline,
             `pid=${job.process.pid ?? 'unknown'}`,
             opts.contextLine,
-            job.stderrTail.trim()
-                ? `ffmpeg stderr tail:\n${job.stderrTail.trim()}`
+            redactedTail(job)
+                ? `ffmpeg stderr tail:\n${redactedTail(job)}`
                 : 'ffmpeg stderr tail: <empty>',
         ].join('\n');
         try {
@@ -446,6 +449,10 @@ export function createTranslationMixerService(
             outputUrl: output.url,
             videoEncoding: output.videoEncoding,
         });
+    }
+
+    function redactedTail(job: MixerJob): string {
+        return redactSecrets(job.stderrTail.trim(), job.redactTokens);
     }
 
     function jobFingerprint(
@@ -526,6 +533,13 @@ export function createTranslationMixerService(
             translatorLive: translator ? inputState.isLive(translator.id) : false,
             translatorProtocol,
             stderrTail: '',
+            redactTokens: [
+                ...secretTokensFromUrl(output.url),
+                ...secretTokensFromUrl(sourceUrl),
+                ...(translatorUrl ? secretTokensFromUrl(translatorUrl) : []),
+                source.streamKey,
+                ...(translator ? [translator.streamKey] : []),
+            ],
             controller,
             controlPort,
             startedAtMs: Date.now(),
@@ -627,7 +641,7 @@ export function createTranslationMixerService(
             if (current?.process === child) {
                 jobs.delete(output.id);
                 const message =
-                    current.stderrTail.trim() || `FFmpeg exited code=${code} signal=${signal}`;
+                    redactedTail(current) || `FFmpeg exited code=${code} signal=${signal}`;
                 diagnostics?.event('translation-mixer-exited', {
                     outputId: output.id,
                     pid: child.pid ?? null,
@@ -642,7 +656,7 @@ export function createTranslationMixerService(
                     try {
                         db.setOutputLastError(
                             output.id,
-                            wasStop ? current.stderrTail.trim() : message,
+                            wasStop ? redactedTail(current) : message,
                             wasStop ? 'stopped' : 'crash',
                         );
                     } catch {

@@ -2,7 +2,8 @@ import type { Express, Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import type { Db } from '../types.js';
 
-const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const MIN_PASSWORD_LENGTH = 12;
 const SESSION_PRUNE_INTERVAL_MS = 60 * 60 * 1000; // hourly
 
 // Failed-login rate limit, per client IP. /api/auth/login is unauthenticated
@@ -59,6 +60,35 @@ function clientIp(req: Request): string {
     return req.ip ?? req.socket.remoteAddress ?? 'unknown';
 }
 
+// Session tokens are stored (memory and SQLite) only as SHA-256 hashes, so a
+// copy of the database cannot be replayed as a live session cookie.
+function hashToken(token: string): string {
+    return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+// The rate-limit key. An IPv6 attacker usually controls a whole /64, so keying
+// on the full address would let them rotate for free; group by /64 instead.
+// IPv4-mapped IPv6 addresses count as the IPv4 address they carry.
+export function loginLimiterKey(ip: string): string {
+    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
+    if (mapped) return mapped[1];
+    if (!ip.includes(':')) return ip;
+    const [head, tail = ''] = ip.split('%')[0].toLowerCase().split('::');
+    const headGroups = head ? head.split(':') : [];
+    const tailGroups = ip.includes('::') && tail ? tail.split(':') : [];
+    const groups = ip.includes('::')
+        ? [
+              ...headGroups,
+              ...Array(8 - headGroups.length - tailGroups.length).fill('0'),
+              ...tailGroups,
+          ]
+        : headGroups;
+    return `${groups
+        .slice(0, 4)
+        .map((g) => g.replace(/^0+(?=.)/, ''))
+        .join(':')}::/64`;
+}
+
 // Returns how many seconds the caller must still wait, or 0 if allowed.
 function loginBlockedForSeconds(ip: string): number {
     const state = loginFailures.get(ip);
@@ -103,7 +133,7 @@ function getSessionToken(req: Request): string | null {
 
 export function checkIsAuthenticated(req: Request): boolean {
     const token = getSessionToken(req);
-    return token !== null && sessions.has(token);
+    return token !== null && sessions.has(hashToken(token));
 }
 
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
@@ -138,9 +168,18 @@ export async function initializePassword(db: Db, initialPassword = 'admin'): Pro
 }
 
 export function registerAuthApi(app: Express, db: Db): void {
+    // Secure is added when the request arrived over TLS (directly, or via a proxy
+    // that says so); the app itself never terminates TLS, and a plain-HTTP dev
+    // setup must keep working.
+    const sessionCookie = (req: Request, token: string, extra = ''): string => {
+        const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+        return `session=${token}; HttpOnly; Path=/; SameSite=Strict${secure ? '; Secure' : ''}${extra}`;
+    };
+
     app.post('/api/auth/login', async (req, res) => {
         const ip = clientIp(req);
-        const retryAfterSec = loginBlockedForSeconds(ip);
+        const limiterKey = loginLimiterKey(ip);
+        const retryAfterSec = loginBlockedForSeconds(limiterKey);
         if (retryAfterSec > 0) {
             res.setHeader('Retry-After', String(retryAfterSec));
             return res
@@ -154,24 +193,26 @@ export function registerAuthApi(app: Express, db: Db): void {
             // IP first, before anything attacker-influenced, so auth failures
             // stay easy to scan in logs.
             console.warn(`[auth] client_ip=${ip} rejected login: incorrect password`);
-            noteLoginFailure(ip);
+            noteLoginFailure(limiterKey);
             return res.status(401).json({ error: 'Incorrect password' });
         }
-        loginFailures.delete(ip);
+        loginFailures.delete(limiterKey);
         const token = crypto.randomBytes(32).toString('hex');
-        sessions.add(token);
-        db.createSession(token);
-        res.setHeader('Set-Cookie', `session=${token}; HttpOnly; Path=/; SameSite=Strict`);
+        sessions.add(hashToken(token));
+        db.createSession(hashToken(token));
+        console.log(`[auth] client_ip=${ip} login ok`);
+        res.setHeader('Set-Cookie', sessionCookie(req, token));
         return res.json({ ok: true });
     });
 
     app.post('/api/auth/logout', requireAuth, (req, res) => {
         const token = getSessionToken(req);
         if (token) {
-            sessions.delete(token);
-            db.deleteSession(token);
+            sessions.delete(hashToken(token));
+            db.deleteSession(hashToken(token));
+            console.log(`[auth] client_ip=${clientIp(req)} logout`);
         }
-        res.setHeader('Set-Cookie', 'session=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0');
+        res.setHeader('Set-Cookie', sessionCookie(req, '', '; Max-Age=0'));
         return res.json({ ok: true });
     });
 
@@ -181,11 +222,30 @@ export function registerAuthApi(app: Express, db: Db): void {
         if (!newPassword) {
             return res.status(400).json({ error: 'New password cannot be empty' });
         }
+        if (typeof newPassword !== 'string' || newPassword.length < MIN_PASSWORD_LENGTH) {
+            return res
+                .status(400)
+                .json({ error: `New password must be at least ${MIN_PASSWORD_LENGTH} characters` });
+        }
         const hash = db.getSetting('dashboardPasswordHash');
         if (!hash || !(await verifyPassword(currentPassword, hash))) {
             return res.status(403).json({ error: 'Current password is incorrect' });
         }
         db.setSetting('dashboardPasswordHash', await hashPassword(newPassword));
+        // A password change is the usual response to a suspected compromise, so
+        // every other session (including a stolen one) must stop working. The
+        // session that made the change stays.
+        const keep = hashToken(getSessionToken(req) ?? '');
+        let revoked = 0;
+        for (const hashed of db.listSessions()) {
+            if (hashed === keep) continue;
+            sessions.delete(hashed);
+            db.deleteSession(hashed);
+            revoked++;
+        }
+        console.log(
+            `[auth] client_ip=${clientIp(req)} password changed, ${revoked} other session(s) revoked`,
+        );
         return res.json({ ok: true });
     });
 }

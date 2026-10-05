@@ -33,7 +33,7 @@ not a target to exceed :)
 | Limit | Supported ceiling |
 |-------|-------------------|
 | Inputs (pipelines) | up to **50** |
-| Outputs (forwards) | up to **500** total |
+| Outputs (forwards) | up to **500** total — enforced: creating a 501st returns `409` |
 | Outputs using custom (transcoding) encoding | only **a few** at a time — see below |
 | Parallel dashboard clients | up to **~10** |
 
@@ -116,8 +116,12 @@ Default ports from `srs.conf` and `srt-bonding-relay.json`:
 | 10081 | UDP | SRT bonding input (passphrase required) |
 | 8080 | TCP | Dashboard + API |
 
-Do **not** expose 1985 (SRS HTTP API), 8080 (if the dashboard is served through
-a tunnel), or 8081 (relay status) — the app talks to those over loopback.
+Do **not** expose 8080 if the dashboard is served through a tunnel, or 8081 (relay
+status). The SRS HTTP API (1985) is bound to `127.0.0.1` in `srs.conf`, and SRS's
+publish/play hooks go to the app's separate loopback-only hook port (`hook_port`,
+default **8082**), so neither can be reached from outside even with a permissive
+firewall. Neither port needs a firewall rule; check with `ss -tlnp` after install
+that 1985 and 8082 listen only on `127.0.0.1`.
 
 ### Cloudflare Tunnel (dashboard access)
 
@@ -229,7 +233,7 @@ This clears the stored password and restarts the service, which re-seeds it from
 (see [Authentication](#authentication)) behind a session cookie — no
 per-user accounts, no MFA, no CSRF token beyond `SameSite=Strict`, and the
 app itself never terminates TLS (it's plain `app.listen` on 8080; the
-cookie isn't marked `Secure`). That's a deliberate tradeoff, not an
+cookie is only marked `Secure` when TLS is detected). That's a deliberate tradeoff, not an
 oversight: this app is designed to be reached through a zero-trust tunnel
 (e.g. Cloudflare Tunnel + Cloudflare Access) rather than exposed to the raw
 internet. The tunnel is expected to provide TLS, identity-based access
@@ -239,6 +243,40 @@ login-rate-limit (see `src/api/auth.ts`) against brute force if it's ever
 reached directly. If you expose port 8080 straight to the internet instead
 of through a tunnel, put a real reverse proxy (TLS + rate limiting) in front
 of it rather than relying on the dashboard password alone.
+
+Hardening that is on by default:
+- **Sessions:** 7-day lifetime, stored only as SHA-256 hashes; changing the
+  password signs out every other session; new passwords must be ≥ 12 characters;
+  the cookie gets `Secure` when the request came over TLS (directly or via
+  `X-Forwarded-Proto: https`). Logins, logouts and password changes are logged
+  with the client IP.
+- **Login rate limit:** 5 failures per minute per client, grouped per IPv6 /64.
+  Behind a proxy set `trust_proxy`, or every user shares the proxy's address.
+- **Headers:** `X-Frame-Options: DENY`, `frame-ancestors 'none'`, `nosniff`,
+  `Referrer-Policy: no-referrer`. A full CSP is not possible until the dashboard's
+  inline event handlers are removed.
+- **Secrets in logs:** FFmpeg echoes full URLs when it fails. Everything derived
+  from its stderr (stored last-error history, diagnostics, journald, the
+  dashboard) goes through `redactSecrets` (`src/utils/redact.ts`): host and app are
+  kept, destination stream keys, internal `keyNN_` keys, and SRT `passphrase=` /
+  `streamid=` values become `<redacted>`. Rows saved by older versions are
+  scrubbed on startup; **old `diagnostics-*.jsonl` files are not rewritten — delete
+  them after upgrading from a version without redaction.**
+- **Output destinations and host probes:** the server will not connect to
+  link-local/unspecified addresses (cloud metadata such as `169.254.169.254`), and
+  loopback only on the app's own RTMP/SRT ports (pipeline-to-pipeline restreams).
+  Hosts are resolved the way FFmpeg resolves them, so `2130706433` or `0x7f.1` are
+  treated as loopback. Private LAN ranges and SRT `mode=listener` outputs are
+  deliberately allowed. Outputs saved before the check existed are re-checked at
+  startup and stopped, with the reason shown in the dashboard. Host probes never
+  probe loopback. DNS that changes between the check and FFmpeg's own lookup
+  cannot be ruled out.
+- **HLS previews** require the session cookie, and a preview nobody is fetching or
+  keeping alive for 20s is stopped (closing the tab stops it at once). A dashboard
+  tab left in the background for several minutes loses its preview and shows it
+  stopped.
+- **Hooks:** `/api/srs/*` is served only on `127.0.0.1:<hook_port>`; client IPs in
+  hook bodies must be IP literals, so a request cannot forge log lines.
 
 **RTMP/SRT ingest ports (21935, 10080, 10081) are different** — they have
 to stay open to the raw internet so OBS/hardware encoders can reach them, so
@@ -288,7 +326,9 @@ as a built-in audio encoding option on any output.
 ## API
 
 All routes below sit behind the session-cookie auth middleware except
-`/api/ready`, `/api/auth/login`, and the SRS publish hook. An output pushes to a
+`/api/ready` and `/api/auth/login`. HLS preview files under `/hls` use the same
+session cookie. SRS's `on_publish`/`on_play` hooks are not on this port at all —
+they are served on the loopback-only hook port. An output pushes to a
 single destination: `url` and `audioEncoding`, plus `videoEncoding`. The input is
 pulled back over whatever protocol it was published with (SRT input → SRT pull,
 RTMP input → RTMP pull), so there is no pull-method setting.
@@ -308,7 +348,7 @@ RTMP input → RTMP pull), so there is no pull-method setting.
 | DELETE | `/api/pipelines/:id` | Delete pipeline (stream key is freed, not deleted) |
 | GET | `/api/pipelines/:id/logs` | Pipeline online/offline event log |
 | POST | `/api/pipelines/:id/preview/start` | Start an HLS preview `{ audioTrack? }` |
-| POST | `/api/pipelines/:id/preview/keepalive` | Refresh the preview TTL — previews with no keepalive for 90s are stopped automatically (covers closed browser tabs) |
+| POST | `/api/pipelines/:id/preview/keepalive` | Refresh the preview TTL — a preview with no keepalive and no HLS fetch for 20s is stopped automatically; closing the tab also stops it immediately |
 | POST | `/api/pipelines/:id/preview/stop` | Stop the HLS preview |
 | POST | `/api/pipelines/:id/outputs` | Create output `{ name, videoEncoding, url, audioEncoding }` |
 | POST | `/api/pipelines/:id/outputs/bulk` | Bulk create outputs `{ outputs: [{ name, videoEncoding, url, audioEncoding }] }` — validates all before creating any |
@@ -324,7 +364,7 @@ RTMP input → RTMP pull), so there is no pull-method setting.
 | POST | `/api/auth/login` | Login `{ password }` — sets session cookie |
 | POST | `/api/auth/logout` | Logout — clears session cookie |
 | POST | `/api/auth/change-password` | Change password `{ currentPassword, newPassword }` |
-| POST | `/api/srs/on_publish` | Unauthenticated SRS publish hook (called by SRS, not the dashboard) |
+| POST | `/api/srs/on_publish` | SRS publish hook (called by SRS on the loopback-only `hook_port`, not on the dashboard port) |
 
 ---
 
@@ -379,6 +419,8 @@ The app reads runtime settings from `restream.json` in the app root.
 | Field | Default | Description |
 |-------|---------|-------------|
 | `port` | `8080` | App HTTP port |
+| `hook_port` | `8082` | Loopback-only port for SRS's `on_publish`/`on_play` hooks. Must match the hook URLs in `srs.conf` |
+| `trust_proxy` | `0` | Reverse-proxy hops whose `X-Forwarded-For` is trusted for client IPs (login rate limit, logs). Set `1` behind cloudflared/nginx; leave `0` when the port is reachable directly |
 | `database_path` | `./db.sqlite` | SQLite database path |
 | `srs_config_path` | `./srs.conf` | SRS config path |
 | `ffmpeg_path` | `ffmpeg` | FFmpeg binary for outputs and previews |

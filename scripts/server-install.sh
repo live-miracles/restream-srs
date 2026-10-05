@@ -180,7 +180,10 @@ else
     sudo -u "$SERVICE_USER" git -C "$APP_DIR" reset --hard '@{u}'
 fi
 cd "$APP_DIR"
-npm ci
+# No dependency lifecycle scripts run as root: only the two native modules the
+# app needs are built, explicitly.
+npm ci --ignore-scripts
+npm rebuild better-sqlite3 zeromq
 npm run build
 npm prune --omit=dev
 chown -R "$SERVICE_USER:$SERVICE_USER" "$APP_DIR"
@@ -208,6 +211,15 @@ if [[ -f "$CONF_DIR/srt-bonding-relay.json" ]]; then
 else
     RELAY_SRT_PASSPHRASE="$NEW_SRT_PASSPHRASE"
     echo "SRT passphrase (srt-bonding-relay.json): generated new secret"
+fi
+# The repo ships a public default passphrase for dev. Never keep it on a server:
+# if either deployed file still has it (an old install, or a hand-copied config),
+# replace it in both so the two stay in sync.
+PUBLIC_DEFAULT_SRT_PASSPHRASE=restream-default-srt-passphrase
+if [[ "$SRS_SRT_PASSPHRASE" == "$PUBLIC_DEFAULT_SRT_PASSPHRASE" || "$RELAY_SRT_PASSPHRASE" == "$PUBLIC_DEFAULT_SRT_PASSPHRASE" ]]; then
+    SRS_SRT_PASSPHRASE="$NEW_SRT_PASSPHRASE"
+    RELAY_SRT_PASSPHRASE="$NEW_SRT_PASSPHRASE"
+    echo "SRT passphrase: replaced the public default with a generated secret"
 fi
 cp "$APP_DIR/srs.conf" "$CONF_DIR/srs.conf"
 cp "$APP_DIR/srt-bonding-relay.json" "$CONF_DIR/srt-bonding-relay.json"
@@ -282,8 +294,12 @@ if [[ -s "$DB_FILE" ]]; then
 fi
 touch "$DB_FILE"
 chown "$SERVICE_USER:$SERVICE_USER" "$CONF_DIR/srs.conf" "$CONF_DIR/srt-bonding-relay.json" "$APP_DIR/restream.json" "$DB_FILE"
-# restream.json now holds the dashboard password in plain text.
-chmod 600 "$APP_DIR/restream.json"
+# restream.json now holds the dashboard password in plain text. The database holds
+# the password hash, stream keys and destination URLs (platform stream keys), and
+# the two configs hold the SRT passphrase: nothing here is for other local users.
+chmod 600 "$APP_DIR/restream.json" "$DB_FILE"
+chmod 640 "$CONF_DIR/srs.conf" "$CONF_DIR/srt-bonding-relay.json"
+chmod 750 "$DATA_DIR" "$CONF_DIR"
 echo "Config: $CONF_DIR/srs.conf"
 echo "App config: $APP_DIR/restream.json"
 echo "Data:   $DB_FILE"
@@ -387,6 +403,8 @@ RestartSec=2
 LimitNOFILE=1048576
 TasksMax=infinity
 LimitNPROC=infinity
+# Files the app creates (database journal, HLS previews, diagnostics) are private.
+UMask=0077
 PrivateTmp=true
 ProtectSystem=full
 NoNewPrivileges=true

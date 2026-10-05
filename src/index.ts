@@ -14,7 +14,7 @@ import { registerConfigApi } from './api/config.js';
 import { registerMetricsApi, getProcessUsage } from './api/metrics.js';
 import { registerSettingsApi } from './api/settings.js';
 import { createPreviewService } from './services/preview.js';
-import { registerPreviewApi } from './api/preview.js';
+import { registerPreviewApi, registerHlsRoute } from './api/preview.js';
 import { registerRejectedPublishesApi, registerSrsHooks, registerSrsLogsApi } from './api/srs.js';
 import { createInputState } from './services/inputState.js';
 import { createRejectedPublishes } from './services/rejectedPublishes.js';
@@ -29,9 +29,23 @@ import { readAppConfig } from './utils/appConfig.js';
 import { createHostProbeService } from './services/hostProbes.js';
 import { createDiagnosticsLogger } from './utils/diagnostics.js';
 import { createTranslationMixerService } from './services/translationMixer.js';
+import { enforceDestinationPolicy } from './services/destinationPolicy.js';
+import { readSrsConfigValues } from './utils/srsConfig.js';
 
 const app = express();
 const PORT = readAppConfig().port;
+const HOOK_PORT = readAppConfig().hookPort;
+app.disable('x-powered-by');
+if (readAppConfig().trustProxy > 0) app.set('trust proxy', readAppConfig().trustProxy);
+// Baseline hardening headers. A full CSP is not possible yet (the dashboard
+// still uses inline event handlers); framing and sniffing are closed off.
+app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    next();
+});
 
 // gzip responses. The /api/config and /api/health JSON for 50 inputs / 500
 // outputs is large and re-fetched by every dashboard client on the 5s poll;
@@ -47,7 +61,8 @@ app.use(
         },
     }),
 );
-app.use(express.json());
+// Room for a 500-output bulk create with long destination URLs.
+app.use(express.json({ limit: '1mb' }));
 
 const db = createDb();
 const diagnostics = createDiagnosticsLogger(
@@ -76,8 +91,19 @@ const healthService = createHealthService(
     getProcessUsage,
 );
 
+// SRS hooks are unauthenticated and trusted, so they live on their own
+// loopback-only listener (see main()) — never on the public dashboard port.
+const hookApp = express();
+hookApp.disable('x-powered-by');
+hookApp.use(express.json());
+registerSrsHooks(hookApp, db, inputState, rejectedPublishes);
+
+// Readiness only: the installer's SRS unit waits on this before starting.
+app.get('/api/ready', (_req, res) => {
+    res.json({ ok: true });
+});
+
 // Unauthenticated routes
-registerSrsHooks(app, db, inputState, rejectedPublishes);
 registerAuthApi(app, db);
 
 // Auth middleware for all remaining /api/* routes
@@ -95,26 +121,7 @@ hostProbeService.registerRoutes(app);
 registerSrsLogsApi(app, healthService.getSrsEvents);
 registerRejectedPublishesApi(app, rejectedPublishes);
 
-app.use(
-    '/hls',
-    (_req, res, next) => {
-        // Live HLS must never be cached by browsers or intermediaries; a stale
-        // manifest is enough to make playback freeze on every refresh and then
-        // fall out of the live window entirely.
-        res.setHeader(
-            'Cache-Control',
-            'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0, no-transform',
-        );
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
-        res.setHeader('Surrogate-Control', 'no-store');
-        next();
-    },
-    express.static(previewService.baseDir, {
-        etag: false,
-        lastModified: false,
-    }),
-);
+registerHlsRoute(app, previewService);
 
 const publicDir = path.join(__dirname, '..', 'public');
 
@@ -159,17 +166,47 @@ app.use(
     }),
 );
 
+// The repo ships a public default passphrase for dev, and an empty one disables
+// the SRT handshake check. Neither is acceptable on a production host; say so
+// loudly (visible in journald) rather than refuse to start a live-event server.
+function warnOnWeakSrtPassphrase(): void {
+    if (process.env.NODE_ENV !== 'production') return;
+    try {
+        const passphrase = readSrsConfigValues().srtPassphrase;
+        if (!passphrase || passphrase === 'restream-default-srt-passphrase') {
+            console.warn(
+                `[security] SRT passphrase in srs.conf is ${passphrase ? 'the public default' : 'empty'}: anyone can publish SRT to this server if they guess a stream key`,
+            );
+            diagnostics.event('weak-srt-passphrase', { empty: !passphrase });
+        }
+    } catch (error) {
+        console.warn('[security] could not check the SRT passphrase:', error);
+    }
+}
+
 async function main(): Promise<void> {
     // Must finish before listen(): seeds the initial password hash (only if the
     // database has none) and loads persisted sessions, which the auth middleware
     // consults on every request.
     await initializePassword(db, readAppConfig().dashboardPassword);
 
+    void enforceDestinationPolicy(db, outputService, diagnostics);
+    warnOnWeakSrtPassphrase();
     srtRelayService.start();
     translationMixerService.start();
     healthService.start();
     hostProbeService.start();
 
+    // Hooks first: /api/ready (what SRS waits for) must not answer before the
+    // hook listener can. A hook-port failure is fatal on purpose — without it SRS
+    // would reject every publish.
+    await new Promise<void>((resolve, reject) => {
+        const server = hookApp.listen(HOOK_PORT, '127.0.0.1', () => {
+            console.log(`[server] SRS hooks listening on http://127.0.0.1:${HOOK_PORT}`);
+            resolve();
+        });
+        server.once('error', reject);
+    });
     app.listen(PORT, () => {
         console.log(`[server] listening on http://0.0.0.0:${PORT}`);
     });

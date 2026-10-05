@@ -23,8 +23,10 @@ function stripComments(conf: string): string {
         .join('\n');
 }
 
+// SRS `listen` entries are <[ip:]port> (e.g. `127.0.0.1:1985`); only the port
+// matters here because the app always reaches SRS over 127.0.0.1.
 function parsePort(value: string | undefined, fallback: number): number {
-    const port = Number(value);
+    const port = Number(value?.slice(value.lastIndexOf(':') + 1));
     return Number.isInteger(port) && port > 0 && port <= 65535 ? port : fallback;
 }
 

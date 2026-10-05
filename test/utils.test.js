@@ -544,6 +544,27 @@ describe('URL builders', () => {
         );
     });
 
+    test('ip:port listen entries (loopback-bound http_api) yield the port, not the default', () => {
+        reloadSrs(
+            'listen 21935;\nhttp_api {\n    listen 127.0.0.1:31985;\n}\nsrt_server {\n    listen 0.0.0.0:31080;\n}\n',
+        );
+        const { readSrsConfigValues } = require('../src/utils/srsConfig');
+        const values = readSrsConfigValues();
+        assert.equal(values.apiUrl, 'http://127.0.0.1:31985');
+        assert.equal(values.rtmpPort, 21935);
+        assert.equal(values.srtPort, 31080);
+    });
+
+    test('the shipped srs.conf binds the SRS API to loopback and parses to port 1985', () => {
+        reloadSrs(fs.readFileSync(path.join(__dirname, '..', 'srs.conf'), 'utf8'));
+        const { readSrsConfigValues } = require('../src/utils/srsConfig');
+        assert.equal(readSrsConfigValues().apiUrl, 'http://127.0.0.1:1985');
+        assert.match(
+            fs.readFileSync(path.join(__dirname, '..', 'srs.conf'), 'utf8'),
+            /listen\s+127\.0\.0\.1:1985;/,
+        );
+    });
+
     test('throws a descriptive error when srs.conf does not exist', () => {
         fs.rmSync(srsConfPath, { force: true });
         delete require.cache[require.resolve('../src/utils/srsConfig')];

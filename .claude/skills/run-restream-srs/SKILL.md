@@ -7,7 +7,7 @@ description: Run, start, drive and screenshot the Restream SRS dashboard in an i
 
 Paths are relative to the repo root. `scripts/test-stack.sh` (a tool-agnostic
 repo script; this skill is just its man page) starts a **separate** stack on
-its own ports (app 18080, SRS RTMP 31935 / API 31985 / SRT 31080, Chrome 9333)
+its own ports (app 18080, hooks 18082, SRS RTMP 31935 / API 31985 / SRT 31080, Chrome 9333)
 with a **fresh database** in `$WORK` (default `${TMPDIR:-/tmp}/restream-srs-ui`),
 so it never collides with a developer's own instance on 8080/1985. The
 control plane is the real code, and the test publisher, HLS preview and ffprobe
@@ -66,7 +66,7 @@ Run the repo's own tests separately with `npm test` (not part of this harness).
   never returned even though the stack was up.
 - **Hooks and ports come from `$WORK/srs.conf`**: the app reads SRS's API/RTMP/SRT
   ports from `srs_config_path` and SRS calls `on_publish`/`on_play` at
-  `localhost:8080` — the harness rewrites those to the isolated ports. Edit the
+  the app's loopback-only hook port (`127.0.0.1:8082`) — the harness rewrites those to the isolated ports. Edit the
   `sed` lines in `scripts/test-stack.sh` if `srs.conf` changes its listen lines.
 - **`WORK` must be outside the repo**: `start` overwrites `restream.json` and
   `srs.conf` and deletes `db.sqlite*` in it, so the script refuses a `WORK` at or

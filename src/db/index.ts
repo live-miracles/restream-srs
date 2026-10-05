@@ -2,6 +2,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import crypto from 'crypto';
 import { setupDatabaseSchema } from './schema.js';
 import { readAppConfig } from '../utils/appConfig.js';
+import { redactSecrets } from '../utils/redact.js';
 import type {
     Pipeline,
     PipelineGroup,
@@ -23,6 +24,16 @@ const PIPELINE_SELECT = `
 `;
 
 const STREAM_KEY_SLOTS = 99;
+// Supported ceiling for output forwards (README capacity table). Enforced on
+// every create path; existing rows above it are left alone, only new ones fail.
+export const MAX_OUTPUTS = 500;
+
+export class OutputLimitError extends Error {
+    constructor() {
+        super(`Output limit reached: at most ${MAX_OUTPUTS} outputs are supported`);
+        this.name = 'OutputLimitError';
+    }
+}
 const PIPELINE_LOG_CAP = 100;
 const LOG_RETENTION_LIMIT = 100;
 const OUTPUT_ERROR_HISTORY_LIMIT = 5;
@@ -128,6 +139,33 @@ export function createDb(dbPath?: string): Db {
         if (!existing) {
             const key = `key${String(slot).padStart(2, '0')}_${crypto.randomBytes(16).toString('hex')}`;
             sqlite.prepare('INSERT INTO stream_keys (slot, key) VALUES (?, ?)').run(slot, key);
+        }
+    }
+
+    // Older versions stored raw FFmpeg stderr (destination keys, stream keys,
+    // SRT passphrases) in the error history. Scrub whatever is already on disk;
+    // idempotent, and a handful of rows at most.
+    for (const row of sqlite
+        .prepare('SELECT id, last_error FROM outputs WHERE last_error IS NOT NULL')
+        .all() as { id: string; last_error: string }[]) {
+        try {
+            const history = JSON.parse(row.last_error) as Array<{ message?: unknown }>;
+            let changed = false;
+            for (const entry of history) {
+                if (typeof entry.message !== 'string') continue;
+                const clean = redactSecrets(entry.message);
+                if (clean !== entry.message) {
+                    entry.message = clean;
+                    changed = true;
+                }
+            }
+            if (changed) {
+                sqlite
+                    .prepare('UPDATE outputs SET last_error = ? WHERE id = ?')
+                    .run(JSON.stringify(history), row.id);
+            }
+        } catch {
+            // Unparseable legacy value: nothing structured to scrub.
         }
     }
 
@@ -296,6 +334,11 @@ export function createDb(dbPath?: string): Db {
         let id = 1;
         while (existing.some((p) => p.id === id)) id++;
         return id;
+    }
+
+    function assertOutputCapacity(adding: number): void {
+        const { n } = sqlite.prepare('SELECT COUNT(*) AS n FROM outputs').get() as { n: number };
+        if (n + adding > MAX_OUTPUTS) throw new OutputLimitError();
     }
 
     // Insert one output row without bumping the config revision — callers bump
@@ -502,6 +545,7 @@ export function createDb(dbPath?: string): Db {
         },
 
         createOutput(params): Output {
+            assertOutputCapacity(1);
             const id = insertOutput(params);
             bumpConfigRev();
             return getOutputById(id)!;
@@ -513,6 +557,7 @@ export function createDb(dbPath?: string): Db {
         createOutputs(paramsList): Output[] {
             const ids: string[] = [];
             sqlite.transaction(() => {
+                assertOutputCapacity(paramsList.length);
                 for (const params of paramsList) {
                     ids.push(insertOutput(params));
                 }
