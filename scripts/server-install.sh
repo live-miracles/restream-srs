@@ -220,6 +220,19 @@ node -e 'const fs=require("fs");const [p,pass]=process.argv.slice(1);const c=fs.
     "$CONF_DIR/srs.conf" "$SRS_SRT_PASSPHRASE"
 node -e 'const fs=require("fs");const [p,pass]=process.argv.slice(1);const c=JSON.parse(fs.readFileSync(p,"utf8"));c.passphrase=pass;fs.writeFileSync(p,JSON.stringify(c,null,4)+"\n");' \
     "$CONF_DIR/srt-bonding-relay.json" "$RELAY_SRT_PASSPHRASE"
+# Dashboard password: restream.json's dashboard_password only seeds a database
+# that has no password yet; the repo's restream.json carries none, so generate
+# one on first install and keep the deployed value on reinstall.
+DASHBOARD_PASSWORD=""
+if [[ -f "$APP_DIR/restream.json" ]]; then
+    DASHBOARD_PASSWORD="$(node -e 'const fs=require("fs");try{const c=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(typeof c.dashboard_password==="string"?c.dashboard_password:"");}catch{}' "$APP_DIR/restream.json")"
+fi
+if [[ -n "$DASHBOARD_PASSWORD" ]]; then
+    echo "Dashboard password (restream.json): keeping existing value"
+else
+    DASHBOARD_PASSWORD="$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')"
+    echo "Dashboard password (restream.json): generated new secret"
+fi
 cat > "$APP_DIR/restream.json" << EOF
 {
     "port": 8080,
@@ -236,6 +249,10 @@ cat > "$APP_DIR/restream.json" << EOF
     }
 }
 EOF
+# Written via node for the same reason as the passphrases above: a hand-typed
+# password containing quotes or backslashes must not corrupt the JSON.
+node -e 'const fs=require("fs");const [p,pass]=process.argv.slice(1);const c=JSON.parse(fs.readFileSync(p,"utf8"));c.dashboard_password=pass;fs.writeFileSync(p,JSON.stringify(c,null,4)+"\n");' \
+    "$APP_DIR/restream.json" "$DASHBOARD_PASSWORD"
 echo "Config: refreshed $APP_DIR/restream.json"
 # Database. We don't run data migrations, so a db.sqlite left over from an older
 # version could be schema-incompatible and cause hard-to-debug issues.
@@ -265,6 +282,8 @@ if [[ -s "$DB_FILE" ]]; then
 fi
 touch "$DB_FILE"
 chown "$SERVICE_USER:$SERVICE_USER" "$CONF_DIR/srs.conf" "$CONF_DIR/srt-bonding-relay.json" "$APP_DIR/restream.json" "$DB_FILE"
+# restream.json now holds the dashboard password in plain text.
+chmod 600 "$APP_DIR/restream.json"
 echo "Config: $CONF_DIR/srs.conf"
 echo "App config: $APP_DIR/restream.json"
 echo "Data:   $DB_FILE"
@@ -390,7 +409,9 @@ echo " Setup complete"
 echo "=============================="
 echo "Dashboard: http://<server-ip>:8080/"
 if [[ "$fresh_db" == "yes" ]]; then
-    echo "  Default password: admin"
+    echo "  Password: $DASHBOARD_PASSWORD"
+    echo "  (also stored as dashboard_password in $APP_DIR/restream.json;"
+    echo "   change it in Settings -> Change Password after logging in)"
 else
     echo "  Password: unchanged (kept existing database)"
     echo "  Forgot it? Run scripts/server-reset-password.sh"

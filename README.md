@@ -103,7 +103,7 @@ sudo bash /opt/restream-srs/scripts/server-install.sh
 sudo bash /opt/restream-srs/scripts/server-down.sh
 ```
 
-Open the dashboard: `http://SERVER_IP:8080` — default password is `admin`.
+Open the dashboard: `http://SERVER_IP:8080` — the installer prints the generated password on first install (it is also stored as `dashboard_password` in `restream.json`).
 
 ### Firewall ports needed
 
@@ -213,13 +213,13 @@ but not converted into firewall bans.
 
 ## Authentication
 
-The dashboard is protected by a password (default is `admin`). Change it in **Settings → Change Password** after logging in.
+The dashboard is protected by a password. `dashboard_password` in `restream.json` is only the *initial* password: it is hashed into the database on first boot, and ignored whenever the database already has a password. The installer generates a random one on first install and keeps it on reinstall; if the field is absent (e.g. a dev checkout) the initial password is `admin`. Change it in **Settings → Change Password** after logging in — that updates the database only, not `restream.json`.
 
 To reset a forgotten password:
 ```bash
 sudo bash /opt/restream-srs/scripts/server-reset-password.sh
 ```
-This resets the password to `admin` and restarts the service.
+This clears the stored password and restarts the service, which re-seeds it from `dashboard_password` in `restream.json` (`admin` if unset).
 
 ---
 
@@ -383,6 +383,7 @@ The app reads runtime settings from `restream.json` in the app root.
 | `srs_config_path` | `./srs.conf` | SRS config path |
 | `ffmpeg_path` | `ffmpeg` | FFmpeg binary for outputs and previews |
 | `ffprobe_path` | `ffprobe` | FFprobe binary for input media probing and validation |
+| `dashboard_password` | `admin` | Initial dashboard password, used only when the database has no password yet (first boot or after a reset). Stored in plain text; the installer sets the file to mode `0600` |
 | `output_watchdog.warmup_ms` | `90000` | Warmup before stall checks, shared by the output progress watchdog and the translation-mixer watchdogs below |
 | `output_watchdog.stall_ms` | `45000` | Output progress stall window before restarting FFmpeg |
 | `output_watchdog.translator_meter_stale_ms` | `10000` | How long a translation output's translator audio meter can go quiet (including never producing a sample) before the mixer is restarted |

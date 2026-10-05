@@ -67,6 +67,24 @@ describe('readAppConfig: file-level errors', () => {
     });
 });
 
+describe('readAppConfig: dashboard_password', () => {
+    test('defaults to admin when absent', () => {
+        assert.equal(loadAppConfig({})().dashboardPassword, 'admin');
+    });
+
+    test('is used as given, without trimming', () => {
+        const readAppConfig = loadAppConfig({ dashboard_password: '  s3cret pw ' });
+        assert.equal(readAppConfig().dashboardPassword, '  s3cret pw ');
+    });
+
+    for (const bad of ['', 12345, null, true, ['x']]) {
+        test(`rejects ${JSON.stringify(bad)} and falls back to admin`, () => {
+            const readAppConfig = loadAppConfig({ dashboard_password: bad });
+            assert.equal(readAppConfig().dashboardPassword, 'admin');
+        });
+    }
+});
+
 describe('readAppConfig: port validation (asPort)', () => {
     for (const bad of [0, -1, 65536, 8080.5, NaN, Infinity, '8080', null, true, [8080]]) {
         test(`rejects ${JSON.stringify(bad)} and falls back to the default 8080`, () => {

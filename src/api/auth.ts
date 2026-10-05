@@ -122,9 +122,11 @@ function pruneSessions(db: Db): void {
     }
 }
 
-export async function initializePassword(db: Db): Promise<void> {
+// initialPassword (restream.json's dashboard_password) only seeds a database
+// that has no password hash yet; an existing hash is never overwritten.
+export async function initializePassword(db: Db, initialPassword = 'admin'): Promise<void> {
     if (!db.getSetting('dashboardPasswordHash')) {
-        db.setSetting('dashboardPasswordHash', await hashPassword('admin'));
+        db.setSetting('dashboardPasswordHash', await hashPassword(initialPassword));
     }
     pruneSessions(db);
     for (const token of db.listSessions()) {

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Reset the dashboard password to 'admin'.
+# Reset the dashboard password to the dashboard_password value in restream.json
+# (or 'admin' if that field is absent).
 # Run this if you have forgotten the password.
 #
 # Usage:
@@ -20,4 +21,5 @@ cd "$APP_DIR"
 node -e "const fs=require('fs'); const path=require('path'); const config=JSON.parse(fs.readFileSync('restream.json','utf8')); const dbPath=path.isAbsolute(config.database_path) ? config.database_path : path.resolve(process.cwd(), config.database_path); const db=require('better-sqlite3')(dbPath); db.prepare(\"DELETE FROM settings WHERE key='dashboardPasswordHash'\").run()"
 systemctl restart restream-srs.service
 
-echo "Password reset to 'admin'. Change it in Settings after logging in."
+echo "Password reset to dashboard_password from $CONFIG_PATH ('admin' if unset)."
+echo "Change it in Settings after logging in."

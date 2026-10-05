@@ -7,6 +7,9 @@ export interface AppConfig {
     srsConfigPath: string;
     ffmpegPath: string;
     ffprobePath: string;
+    // Seeds the dashboard password hash on first boot only (when the database
+    // has none yet); changing it later has no effect on an existing database.
+    dashboardPassword: string;
     outputWatchdog: OutputWatchdogConfig;
 }
 
@@ -30,6 +33,7 @@ interface RawAppConfig {
     srs_config_path?: unknown;
     ffmpeg_path?: unknown;
     ffprobe_path?: unknown;
+    dashboard_password?: unknown;
     output_watchdog?: unknown;
 }
 
@@ -64,6 +68,7 @@ const DEFAULT_RAW_CONFIG = {
     srs_config_path: './srs.conf',
     ffmpeg_path: 'ffmpeg',
     ffprobe_path: 'ffprobe',
+    dashboard_password: 'admin',
 } as const;
 
 let cachedConfig: AppConfig | null = null;
@@ -187,6 +192,11 @@ export function readAppConfig(): AppConfig {
             asString(raw.ffprobe_path, DEFAULT_RAW_CONFIG.ffprobe_path as string),
             configDir,
         ),
+        // Not run through asString(): a password must not be trimmed.
+        dashboardPassword:
+            typeof raw.dashboard_password === 'string' && raw.dashboard_password !== ''
+                ? raw.dashboard_password
+                : DEFAULT_RAW_CONFIG.dashboard_password,
         outputWatchdog: readWatchdogConfig(raw.output_watchdog),
     };
     return cachedConfig;

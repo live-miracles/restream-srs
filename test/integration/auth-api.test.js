@@ -89,12 +89,12 @@ function makeDb() {
 
 // The auth module keeps sessions and the login rate limiter in module state,
 // so each test loads a fresh copy.
-async function createHarness() {
+async function createHarness(initialPassword, existingDb) {
     delete require.cache[require.resolve('../../src/api/auth')];
     const { registerAuthApi, initializePassword } = require('../../src/api/auth');
     const app = express();
-    const db = makeDb();
-    await initializePassword(db);
+    const db = existingDb ?? makeDb();
+    await initializePassword(db, initialPassword);
     registerAuthApi(app, db);
     return {
         db,
@@ -316,5 +316,30 @@ describe('auth session integration', () => {
 
         const bStillWorks = await harness.logout(cookieB);
         assert.equal(bStillWorks.status, 200);
+    });
+});
+
+describe('initial dashboard password', () => {
+    test('a configured initial password seeds an empty database instead of admin', async () => {
+        const harness = await createHarness('config-seeded-pw');
+        assert.equal((await harness.login('config-seeded-pw')).status, 200);
+        assert.equal((await harness.login('admin')).status, 401);
+    });
+
+    test('an existing password hash is never overwritten by the configured password', async () => {
+        const first = await createHarness('first-config-pw');
+        const login = await first.login('first-config-pw');
+        const changed = await first.changePassword(
+            'first-config-pw',
+            'changed-in-dashboard',
+            sessionCookieFrom(login),
+        );
+        assert.equal(changed.status, 200);
+
+        // Simulated restart: same database, different config value.
+        const second = await createHarness('other-config-pw', first.db);
+        assert.equal((await second.login('changed-in-dashboard')).status, 200);
+        assert.equal((await second.login('other-config-pw')).status, 401);
+        assert.equal((await second.login('first-config-pw')).status, 401);
     });
 });

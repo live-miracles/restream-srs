@@ -160,9 +160,10 @@ app.use(
 );
 
 async function main(): Promise<void> {
-    // Must finish before listen(): seeds the default password hash and loads
-    // persisted sessions, which the auth middleware consults on every request.
-    await initializePassword(db);
+    // Must finish before listen(): seeds the initial password hash (only if the
+    // database has none) and loads persisted sessions, which the auth middleware
+    // consults on every request.
+    await initializePassword(db, readAppConfig().dashboardPassword);
 
     srtRelayService.start();
     translationMixerService.start();
