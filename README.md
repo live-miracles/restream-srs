@@ -688,6 +688,45 @@ usually exits ffmpeg immediately with a clear error (`Error opening output files
 Input/output error`).
 
 The difference is timing: with RTMP pull, input stream info is available right
+### Outputs are not restarted when the encoder restarts, and a restart cannot be told apart from a network drop
+
+When an encoder stops and reconnects (for example a manual ffmpeg restart), the
+pipeline's input reconnects but its **outputs keep running and are not restarted**.
+If the encoder's timeline restarted (timestamps back near 0), the running outputs
+see a discontinuity and may log timestamp warnings until the condition clears (see
+[Input timestamp fault detection](#input-timestamp-fault-detection)); restarting the
+outputs by hand clears it, at the cost of dropping the destination connections.
+
+Restarting outputs automatically whenever the input restarts is **not implemented**
+because the server cannot reliably tell an encoder restart from a network
+interruption, and restarting after a mere network drop would add downtime to a line
+that would otherwise have recovered on its own. This was tested (SRS 6.0.184 and the
+SRT bonding relay, RTMP, SRT and bonded SRT inputs; network faults simulated with a
+userspace proxy that silently drops traffic, not kernel firewall rules, so RST/ICMP
+failures and NAT remapping were not covered) and **no deterministic signal exists**:
+
+- **Source ports do not distinguish them.** Every new connection gets a fresh
+  ephemeral source port — on every bonded leg too — whether the encoder was restarted
+  or reconnected after an outage. A port only survives when the connection never
+  broke (an SRT outage shorter than about 5 s causes no disconnect and no event).
+- **SRS hooks carry no cause.** `on_publish` / `on_unpublish` / `on_close` include the
+  client id, IP, stream and `tcUrl`, but no port and no reason.
+- **A killed or crashed encoder looks like a network loss.** For SRT the server sees
+  about 5 s of silence followed by `6002 SrtTimeout` in both cases. (Over RTMP a
+  killed process still closes its TCP connection, so it looks like a clean stop, while
+  a network loss is only detected after about 18 s.)
+- **Behind the bonding relay SRS sees nothing useful.** The relay always closes its
+  downstream side gracefully, so SRS logs the same `6001 SrtIo` for every end of a
+  bonded stream. Only the relay's own data differs.
+
+Only weak, heuristic signals exist: a graceful stop closes within about a second
+whereas a network loss or kill closes after about 5 s (SRT) or about 18 s (RTMP) of
+silence, and on a bonded input a single leg disappearing from the relay's `/status`
+while the group stays up points to a network problem on that leg rather than a
+restart. These are not reliable enough to trigger an output restart on. A more
+dependable basis for any future automatic restart would be the media timeline itself
+(did timestamps jump or reset on reconnect?) rather than guessing the cause.
+
 away, so ffmpeg opens the destination immediately and the rejection surfaces at
 `write_header` time, exiting non-zero. With SRT pull, ffmpeg must first probe the
 MPEG-TS input; by the time it connects, the destination accepts the handshake
