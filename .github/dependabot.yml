@@ -6,6 +6,12 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
+    groups:
+      # codeql-action/init and /analyze must stay on the same version; separate
+      # PRs for each leave the CodeQL workflow failing with a version mismatch.
+      codeql:
+        patterns:
+          - github/codeql-action/*
   - package-ecosystem: npm
     directory: /
     schedule:
