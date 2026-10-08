@@ -637,7 +637,7 @@ export function createOutputService(
                 lastAtMs: now,
                 count: 0,
                 timing: false,
-                firstLine: line,
+                firstLine: redactSecrets(line, p.redactTokens),
                 lastLine: line,
                 knownKinds: new Set<string>(),
                 lastSummaryAtMs: now,
