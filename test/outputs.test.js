@@ -78,6 +78,10 @@ function makeDb() {
     return {
         lastError: null,
         lastErrorKind: null,
+        // Output warnings must stay out of the pipeline History (input issues only).
+        appendPipelineLog() {
+            throw new Error('outputs must not write to the pipeline History');
+        },
         getPipeline(id) {
             return id === 1
                 ? { id: 1, name: 'Live', streamKey: 'stream-key', streamKeyId: 1 }
@@ -89,7 +93,10 @@ function makeDb() {
         listOutputsForPipeline() {
             return [output];
         },
+        errorRecords: [],
         setOutputLastError(_id, message, kind) {
+            this.errorRecords.push({ message, kind });
+            if (kind === 'warning') return;
             this.lastError = `${Date.now()}\n${message}`;
             this.lastErrorKind = kind;
         },
@@ -153,6 +160,7 @@ function makeReadyInputState(options = {}) {
             return options.highRes ?? false;
         },
         pullUrl(_pipelineId, streamKey) {
+            if (options.srt) return `srt://127.0.0.1:10080?streamid=${streamKey}`;
             return `rtmp://127.0.0.1:1935/live/${streamKey}`;
         },
     };
@@ -795,6 +803,103 @@ describe('output service control surface', () => {
         service.shutdown();
     });
 
+    test('a high-memory episode is recorded once, in the output Error History, when it clears', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const diagnostics = makeDiagnosticsSpy();
+        const createOutputService = loadOutputService(t, proc, { progressStallMs: 60_000 });
+        const service = createOutputService(db, makeReadyInputState(), diagnostics);
+        const mb = 1024 * 1024;
+        const usage = (rss) => ({ rssBytes: rss * mb, limitBytes: 200 * mb, cpuPercent: 1 });
+
+        service.reportExternalStatus('out1', 'running', 4242);
+        service.reportExternalUsage('out1', usage(150));
+        service.reportExternalUsage('out1', usage(160));
+        assert.equal(db.errorRecords.length, 0, 'nothing is recorded while the episode is open');
+
+        service.reportExternalUsage('out1', usage(100));
+        assert.deepEqual(
+            db.errorRecords.map((r) => r.kind),
+            ['warning'],
+        );
+        assert.match(db.errorRecords[0].message, /High memory usage: 150MB.*lasted \d+s\)/);
+        assert.deepEqual(
+            diagnostics.events.map((e) => [e.event, e.kind]),
+            [
+                ['ffmpeg-warning-started', 'memory'],
+                ['ffmpeg-warning-ended', 'memory'],
+            ],
+        );
+
+        // An episode still open when the process stops is recorded on exit.
+        service.reportExternalUsage('out1', usage(150));
+        service.reportExternalStatus('out1', 'stopped', null);
+        assert.equal(db.errorRecords.length, 1, 'second episode is inside the 10 min limit');
+        assert.equal(diagnostics.events.at(-1).reason, 'ended with ffmpeg exit');
+
+        service.shutdown();
+    });
+
+    test('an unhealthy destination socket episode that clears by itself is recorded', async (t) => {
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const diagnostics = makeDiagnosticsSpy();
+        const createOutputService = loadOutputService(t, proc, {
+            progressStallMs: 1e9,
+            socketWarmupMs: 10,
+            socketGraceMs: 1e9,
+            ssOutput:
+                'CLOSE-WAIT 57 0 10.160.0.30:47178 192.178.174.134:1935 users:(("ffmpeg",pid=1234,fd=6))\n',
+        });
+        const service = createOutputService(db, makeReadyInputState(), diagnostics);
+
+        await service.start('out1');
+        await sleep(80);
+        assert.match(service.getStats('out1').warningReason, /CLOSE-WAIT/);
+        assert.equal(db.errorRecords.length, 0);
+
+        await service.stopAndWait('out1');
+        const warning = db.errorRecords.find((r) => r.kind === 'warning');
+        assert.match(warning.message, /Destination socket unhealthy: .*CLOSE-WAIT.*lasted/);
+        assert.ok(diagnostics.events.some((e) => e.event === 'ffmpeg-warning-started'));
+        assert.ok(diagnostics.events.some((e) => e.event === 'ffmpeg-warning-ended'));
+
+        service.shutdown();
+    });
+
+    test('a media clock running-fast episode is recorded when pacing returns to realtime', async (t) => {
+        const clock = { now: Date.now() };
+        t.mock.method(Date, 'now', () => clock.now);
+        const proc = new FakeFfmpeg();
+        const db = makeDb();
+        const diagnostics = makeDiagnosticsSpy();
+        const createOutputService = loadOutputService(t, proc, { progressStallMs: 1e9 });
+        const service = createOutputService(db, makeReadyInputState({ srt: true }), diagnostics);
+
+        await service.start('out1');
+        let outTimeUs = 1_000_000;
+        const progress = async (wallMs, mediaUs) => {
+            clock.now += wallMs;
+            outTimeUs += mediaUs;
+            proc.stdout.write(`out_time_ms=${outTimeUs}\n`);
+            await sleep(10);
+        };
+        await progress(0, 0);
+        for (let i = 0; i < 12; i++) await progress(1000, 2_000_000);
+        assert.match(service.getStats('out1').warningReason, /running fast/);
+        assert.equal(db.errorRecords.length, 0);
+
+        await progress(1000, 1_000_000);
+        assert.equal(service.getStats('out1').warningReason, null);
+        assert.deepEqual(
+            db.errorRecords.map((r) => r.kind),
+            ['warning'],
+        );
+        assert.match(db.errorRecords[0].message, /media clock is running fast.*lasted/);
+
+        service.shutdown();
+    });
+
     test('start() throws for an unknown output id and never spawns', async (t) => {
         const proc = new FakeFfmpeg();
         const db = makeDb();
@@ -878,7 +983,6 @@ describe('output service control surface', () => {
             lastTotalSizeBytes: null,
             progressAgeMs: null,
             outputProgressAgeMs: null,
-            timestampInstability: null,
         });
 
         service.shutdown();
@@ -1304,7 +1408,6 @@ describe('output diagnostics events', () => {
                 2,
                 '400 lines of two kinds (audio/video) log one event each, not one per line',
             );
-            assert.deepEqual(service.getStats('out1').timestampInstability, { sinceMs: t0 });
             assert.equal(eventsNamed(diagnostics, 'ffmpeg-timestamp-warning-summary').length, 0);
 
             // Every gap stays under the 30 s quiet window, and the assertions
@@ -1346,21 +1449,21 @@ describe('output diagnostics events', () => {
                 'every suppressed line (502 total minus the 2 logged individually) is counted',
             );
             const after = service.getStats('out1');
-            assert.equal(after.timestampInstability, null);
             assert.equal(after.warningReason, null);
 
             service.shutdown();
         });
 
-        test('decode errors alone are logged but do not count as input timestamp instability', async (t) => {
-            startWithClock(t);
+        test('decode errors alone are logged, shown on the card only once sustained', async (t) => {
+            const clock = startWithClock(t);
             const proc = new FakeFfmpeg();
             const diagnostics = makeDiagnosticsSpy();
             const createOutputService = loadOutputService(t, proc, {
                 progressStallMs: 1e9,
                 socketWarmupMs: 1e9,
             });
-            const service = createOutputService(makeDb(), makeReadyInputState(), diagnostics);
+            const db = makeDb();
+            const service = createOutputService(db, makeReadyInputState(), diagnostics);
 
             await service.start('out1');
             proc.stderr.write(
@@ -1369,8 +1472,143 @@ describe('output diagnostics events', () => {
             await sleep(25);
 
             assert.equal(eventsNamed(diagnostics, 'ffmpeg-timestamp-warning').length, 2);
-            assert.equal(service.getStats('out1').timestampInstability, null);
+            // Brief join noise is not shown on the output card...
+            assert.equal(service.getStats('out1').warningReason, null);
+            assert.equal(db.errorRecords.length, 0);
+
+            // ...but a burst that persists past the grace period is.
+            clock.now += 11_000;
+            proc.stderr.write('[h264 @ 0x580060534940] decode_slice_header error\n');
+            await sleep(25);
             assert.match(service.getStats('out1').warningReason, /decode_slice_header error/);
+
+            // The finished burst is recorded in the output's own Error History.
+            clock.now += 31_000;
+            await sleep(40);
+            assert.equal(db.errorRecords.length, 1);
+            assert.equal(db.errorRecords[0].kind, 'warning');
+            assert.match(
+                db.errorRecords[0].message,
+                /decode warnings stopped.*First: .*non-existing PPS/,
+            );
+            assert.equal(db.lastErrorKind, null, 'a warning is not the output error');
+
+            service.shutdown();
+        });
+
+        test('brief join-noise bursts are never written to the output History', async (t) => {
+            const clock = startWithClock(t);
+            const proc = new FakeFfmpeg();
+            const diagnostics = makeDiagnosticsSpy();
+            const createOutputService = loadOutputService(t, proc, {
+                progressStallMs: 1e9,
+                socketWarmupMs: 1e9,
+            });
+            const db = makeDb();
+            const service = createOutputService(db, makeReadyInputState(), diagnostics);
+            const noise = '[h264 @ 0x580060534940] non-existing PPS 0 referenced\n';
+
+            await service.start('out1');
+            proc.stderr.write(noise);
+            await sleep(25);
+            clock.now += 31_000;
+            await sleep(40);
+            assert.equal(eventsNamed(diagnostics, 'ffmpeg-timestamp-recovered').length, 1);
+
+            // Also when the burst is cut short by the output being stopped.
+            proc.stderr.write(noise);
+            await sleep(25);
+            await service.stopAndWait('out1');
+
+            assert.deepEqual(
+                db.errorRecords.map((r) => r.kind),
+                ['stopped'],
+            );
+
+            service.shutdown();
+        });
+
+        test('a timestamp burst is recorded once, at its end, in the output Error History', async (t) => {
+            const clock = startWithClock(t);
+            const proc = new FakeFfmpeg();
+            const createOutputService = loadOutputService(t, proc, {
+                progressStallMs: 1e9,
+                socketWarmupMs: 1e9,
+            });
+            const db = makeDb();
+            const service = createOutputService(db, makeReadyInputState(), makeDiagnosticsSpy());
+
+            await service.start('out1');
+            proc.stderr.write(flood(50));
+            await sleep(25);
+            assert.equal(db.errorRecords.length, 0, 'nothing while the burst is still open');
+
+            clock.now += 31_000;
+            await sleep(40);
+            assert.deepEqual(
+                db.errorRecords.map((r) => r.kind),
+                ['warning'],
+            );
+            assert.match(db.errorRecords[0].message, /timestamp warnings stopped.*100 warnings/);
+
+            service.shutdown();
+        });
+
+        test('timestamp bursts reach the output Error History at most once per interval', async (t) => {
+            const clock = startWithClock(t);
+            const proc = new FakeFfmpeg();
+            const createOutputService = loadOutputService(t, proc, {
+                progressStallMs: 1e9,
+                socketWarmupMs: 1e9,
+            });
+            const db = makeDb();
+            const service = createOutputService(db, makeReadyInputState(), makeDiagnosticsSpy());
+
+            await service.start('out1');
+            proc.stderr.write(flood(5));
+            await sleep(25);
+            clock.now += 31_000;
+            await sleep(40);
+            assert.equal(db.errorRecords.length, 1);
+
+            // A flapping input: another burst inside the interval writes nothing.
+            proc.stderr.write(flood(5));
+            await sleep(25);
+            clock.now += 31_000;
+            await sleep(40);
+            assert.equal(db.errorRecords.length, 1);
+
+            // After the interval a new burst is recorded again.
+            clock.now += 10 * 60_000;
+            proc.stderr.write(flood(5));
+            await sleep(25);
+            clock.now += 31_000;
+            await sleep(40);
+            assert.equal(db.errorRecords.length, 2);
+
+            service.shutdown();
+        });
+
+        test('a timestamp burst cut short by an output stop is recorded before the stop marker', async (t) => {
+            startWithClock(t);
+            const proc = new FakeFfmpeg();
+            const createOutputService = loadOutputService(t, proc, {
+                progressStallMs: 1e9,
+                socketWarmupMs: 1e9,
+            });
+            const db = makeDb();
+            const service = createOutputService(db, makeReadyInputState(), makeDiagnosticsSpy());
+
+            await service.start('out1');
+            proc.stderr.write(flood(5));
+            await sleep(25);
+            await service.stopAndWait('out1');
+
+            assert.deepEqual(
+                db.errorRecords.map((r) => r.kind),
+                ['warning', 'stopped'],
+            );
+            assert.match(db.errorRecords[0].message, /ended with ffmpeg exit/);
 
             service.shutdown();
         });

@@ -47,9 +47,21 @@ const MEMORY_WARNING_RATIO = 0.7;
 const TIMESTAMP_QUIET_MS = 30_000;
 const TIMESTAMP_SUMMARY_MS = 30_000;
 const TIMESTAMP_MAX_KINDS = 8;
+// Decode errors alone ("non-existing PPS", "decode_slice_header error") are
+// normal for a second or two while an output joins the stream mid-GOP, before
+// the next keyframe carries SPS/PPS. They only show on the output card once
+// they persist past this grace period, and a decode-only burst shorter than
+// that is never written to History (it happens on every output start).
+const DECODE_WARNING_GRACE_MS = 10_000;
+// A finished burst is also recorded in the output's own Error History (capped,
+// shared with crashes). Per output, each class of burst (timing, sustained
+// decode) is recorded at most once per interval, so a flapping input cannot
+// fill the history's warning slots with near-identical records. Diagnostics
+// events always record every burst.
+const BURST_HISTORY_INTERVAL_MS = 10 * 60_000;
 // `timing` marks warnings that point at the input's timestamps (as opposed to
-// decode errors, which also appear harmlessly while joining mid-GOP) — only
-// those feed the pipeline-level "input timestamps unstable" alert.
+// decode errors, which also appear harmlessly while joining mid-GOP) — decode-only
+// bursts are shown on the output card and written to History less eagerly.
 const TIMESTAMP_WARNING_PATTERNS: { pattern: RegExp; timing: boolean }[] = [
     { pattern: /timestamp discontinuity/i, timing: true },
     { pattern: /non[- ]monotonous DTS/i, timing: true },
@@ -64,6 +76,9 @@ const TIMESTAMP_WARNING_PATTERNS: { pattern: RegExp; timing: boolean }[] = [
 function timestampWarningKind(line: string): string {
     return line.replace(/0x[0-9a-f]+/gi, '0x').replace(/-?\d+/g, '#');
 }
+
+const WARNING_KINDS = ['memory', 'socket', 'media-clock'] as const;
+type WarningKind = (typeof WARNING_KINDS)[number];
 
 function formatDuration(ms: number): string {
     const totalSec = Math.round(ms / 1000);
@@ -88,10 +103,6 @@ interface OutputStats {
     lastTotalSizeBytes: number | null;
     progressAgeMs: number | null;
     outputProgressAgeMs: number | null;
-    // Set while this output is in a burst of timestamp-related ffmpeg warnings
-    // (see TIMESTAMP_* above), so the health service can tell when several
-    // outputs of one pipeline are reporting the same input timing fault.
-    timestampInstability: { sinceMs: number } | null;
 }
 
 interface TimestampBurst {
@@ -99,6 +110,7 @@ interface TimestampBurst {
     lastAtMs: number;
     count: number;
     timing: boolean;
+    firstLine: string;
     lastLine: string;
     knownKinds: Set<string>;
     lastSummaryAtMs: number;
@@ -217,6 +229,9 @@ export function createOutputService(
     let tcpSocketSnapshotUsable = false;
     let socketSnapshotInProgress = false;
     const stopRequested = new Set<string>();
+    const burstHistoryAtMs = new Map<string, number>();
+    // Open episodes of the card-only warnings (see warningStarted).
+    const warningEpisodes = new Map<string, { startedAtMs: number; message: string }>();
     const watchdogKills = new Set<string>();
     const startLocks = new Set<string>();
     let shuttingDown = false;
@@ -247,11 +262,6 @@ export function createOutputService(
             lastTotalSizeBytes: p?.lastTotalSize ?? null,
             progressAgeMs: p ? Date.now() - p.lastProgressAtMs : null,
             outputProgressAgeMs: p ? Date.now() - p.lastOutputProgressAtMs : null,
-            timestampInstability:
-                p?.timestampBurst?.timing &&
-                Date.now() - p.timestampBurst.lastAtMs < TIMESTAMP_QUIET_MS
-                    ? { sinceMs: p.timestampBurst.startedAtMs }
-                    : null,
         };
     }
 
@@ -265,6 +275,7 @@ export function createOutputService(
             startTimes.set(outputId, Date.now());
         } else {
             startTimes.delete(outputId);
+            endWarningEpisodes(outputId, 'ended with ffmpeg exit');
             progress.delete(outputId);
             socketWarnings.delete(outputId);
             memoryWarnings.delete(outputId);
@@ -311,20 +322,10 @@ export function createOutputService(
         if (statuses.get(outputId)?.status !== 'running') return;
         if (usage.rssBytes != null) {
             memoryUsage.set(outputId, { rssBytes: usage.rssBytes, limitBytes: usage.limitBytes });
-            if (usage.rssBytes >= usage.limitBytes * MEMORY_WARNING_RATIO) {
-                memoryWarnings.set(
-                    outputId,
-                    `High memory usage: ${Math.round(usage.rssBytes / (1024 * 1024))}MB / ${Math.round(
-                        usage.limitBytes / (1024 * 1024),
-                    )}MB limit (${Math.round((usage.rssBytes / usage.limitBytes) * 100)}%)`,
-                );
-            } else {
-                memoryWarnings.delete(outputId);
-            }
         } else {
             memoryUsage.delete(outputId);
-            memoryWarnings.delete(outputId);
         }
+        updateMemoryWarning(outputId, usage.rssBytes, usage.limitBytes);
         if (usage.cpuPercent != null) cpuUsage.set(outputId, usage.cpuPercent);
         else cpuUsage.delete(outputId);
     }
@@ -442,23 +443,12 @@ export function createOutputService(
                         p.fastMediaSinceMs ??= now;
                         if (now - p.fastMediaSinceMs >= 10_000) {
                             const warning = `FFmpeg media clock is running fast (${speed.toFixed(2)}x realtime).`;
-                            if (!p.mediaClockWarning) {
-                                diagnostics?.event('ffmpeg-media-clock-warning', {
-                                    outputId,
-                                    speed,
-                                    message: warning,
-                                });
-                            }
+                            warningStarted(outputId, 'media-clock', warning);
                             p.mediaClockWarning = warning;
                         }
                     } else {
                         p.fastMediaSinceMs = null;
-                        if (p.mediaClockWarning) {
-                            diagnostics?.event('ffmpeg-media-clock-recovered', {
-                                outputId,
-                                message: 'FFmpeg media clock returned to realtime pacing.',
-                            });
-                        }
+                        warningEnded(outputId, 'media-clock', 'cleared');
                         p.mediaClockWarning = null;
                     }
                 }
@@ -476,10 +466,13 @@ export function createOutputService(
 
     function timingWarningFor(p: OutputProgress, now: number): string | null {
         if (p.mediaClockWarning) return p.mediaClockWarning;
+        const burst = p.timestampBurst;
         if (
             p.lastTimestampWarning &&
             p.lastTimestampWarningAtMs !== null &&
-            now - p.lastTimestampWarningAtMs <= TIMESTAMP_QUIET_MS
+            now - p.lastTimestampWarningAtMs <= TIMESTAMP_QUIET_MS &&
+            burst &&
+            (burst.timing || burst.lastAtMs - burst.startedAtMs >= DECODE_WARNING_GRACE_MS)
         ) {
             return p.lastTimestampWarning;
         }
@@ -504,6 +497,97 @@ export function createOutputService(
         burst.lastSummaryAtMs = now;
     }
 
+    // True (and records the claim) if this output's burst class has not been
+    // written to its Error History within the interval.
+    function claimBurstHistory(outputId: string, cls: string, now: number): boolean {
+        const key = `${outputId}:${cls}`;
+        const last = burstHistoryAtMs.get(key);
+        if (last !== undefined && now - last < BURST_HISTORY_INTERVAL_MS) return false;
+        burstHistoryAtMs.set(key, now);
+        return true;
+    }
+
+    // Writes one 'warning' record to the output's Error History, at most once
+    // per interval per output and class (see BURST_HISTORY_INTERVAL_MS).
+    function recordWarningHistory(
+        outputId: string,
+        cls: string,
+        startedAtMs: number,
+        text: string,
+    ) {
+        if (!claimBurstHistory(outputId, cls, startedAtMs)) return;
+        try {
+            db.setOutputLastError(outputId, text, 'warning');
+        } catch (err) {
+            console.warn(
+                red(`[outputs] ${outputId} failed to record warning history:`),
+                err instanceof Error ? err.message : err,
+            );
+        }
+    }
+
+    // Warnings that otherwise only show on the output card (high memory,
+    // unhealthy destination socket, media clock running fast) are tracked as
+    // episodes: one diagnostics event when one starts, and one event plus one
+    // Error History record when it ends (it clears, or the process exits).
+    function warningStarted(outputId: string, kind: WarningKind, message: string): void {
+        const key = `${outputId}:${kind}`;
+        if (warningEpisodes.has(key)) return;
+        warningEpisodes.set(key, { startedAtMs: Date.now(), message });
+        diagnostics?.event('ffmpeg-warning-started', { outputId, kind, message });
+    }
+
+    function warningEnded(outputId: string, kind: WarningKind, reason: string): void {
+        const key = `${outputId}:${kind}`;
+        const episode = warningEpisodes.get(key);
+        if (!episode) return;
+        warningEpisodes.delete(key);
+        const durationMs = Date.now() - episode.startedAtMs;
+        diagnostics?.event('ffmpeg-warning-ended', {
+            outputId,
+            kind,
+            durationMs,
+            reason,
+            message: episode.message,
+        });
+        recordWarningHistory(
+            outputId,
+            kind,
+            episode.startedAtMs,
+            `${episode.message} (lasted ${formatDuration(durationMs)}${reason === 'cleared' ? '' : `, ${reason}`})`,
+        );
+    }
+
+    function endWarningEpisodes(outputId: string, reason: string): void {
+        for (const kind of WARNING_KINDS) warningEnded(outputId, kind, reason);
+    }
+
+    function updateMemoryWarning(outputId: string, rssBytes: number | null, limitBytes: number) {
+        if (rssBytes != null && rssBytes >= limitBytes * MEMORY_WARNING_RATIO) {
+            const message = `High memory usage: ${Math.round(rssBytes / (1024 * 1024))}MB / ${Math.round(
+                limitBytes / (1024 * 1024),
+            )}MB limit (${Math.round((rssBytes / limitBytes) * 100)}%)`;
+            memoryWarnings.set(outputId, message);
+            warningStarted(outputId, 'memory', message);
+        } else {
+            memoryWarnings.delete(outputId);
+            warningEnded(outputId, 'memory', 'cleared');
+        }
+    }
+
+    function recordBurstEnd(outputId: string, burst: TimestampBurst, reason: string): void {
+        const durationMs = burst.lastAtMs - burst.startedAtMs;
+        // Join noise (a short decode-only burst) is routine, not history.
+        if (!burst.timing && durationMs < DECODE_WARNING_GRACE_MS) return;
+        const kind = burst.timing ? 'timestamp' : 'decode';
+        recordWarningHistory(
+            outputId,
+            kind,
+            burst.startedAtMs,
+            `FFmpeg ${kind} warnings ${reason} after ${formatDuration(durationMs)} (${burst.count} warnings). First: ${burst.firstLine}`,
+        );
+    }
+
     // Advances a burst's state: quiet period over -> recovered, pending counts
     // -> periodic summary. Called on every new warning and from the watchdog
     // tick (which is what notices the quiet).
@@ -519,6 +603,7 @@ export function createOutputService(
                 count: burst.count,
                 quietMs: TIMESTAMP_QUIET_MS,
             });
+            recordBurstEnd(outputId, burst, 'stopped');
             console.log(
                 green(
                     `[outputs] ${outputId} ffmpeg timestamp warnings stopped after ${formatDuration(durationMs)} (${burst.count} warnings)`,
@@ -552,6 +637,7 @@ export function createOutputService(
                 lastAtMs: now,
                 count: 0,
                 timing: false,
+                firstLine: line,
                 lastLine: line,
                 knownKinds: new Set<string>(),
                 lastSummaryAtMs: now,
@@ -683,6 +769,7 @@ export function createOutputService(
         if (existing?.reason === reason) return existing;
         const next = { reason, badSinceMs: existing?.badSinceMs ?? now };
         socketWarnings.set(outputId, next);
+        warningStarted(outputId, 'socket', `Destination socket unhealthy: ${reason}`);
         return next;
     }
 
@@ -764,6 +851,7 @@ export function createOutputService(
                     if (maybeKillForSocketWarning(output, proc, socketWarning, now)) continue;
                 } else {
                     socketWarnings.delete(outputId);
+                    warningEnded(outputId, 'socket', 'cleared');
                 }
             }
 
@@ -799,17 +887,7 @@ export function createOutputService(
                     void killProcess(outputId, proc, false);
                     continue;
                 }
-                if (rssBytes != null && rssBytes >= limitBytes * MEMORY_WARNING_RATIO) {
-                    const percent = Math.round((rssBytes / limitBytes) * 100);
-                    memoryWarnings.set(
-                        outputId,
-                        `High memory usage: ${Math.round(rssBytes / (1024 * 1024))}MB / ${Math.round(
-                            limitBytes / (1024 * 1024),
-                        )}MB limit (${percent}%)`,
-                    );
-                } else {
-                    memoryWarnings.delete(outputId);
-                }
+                updateMemoryWarning(outputId, rssBytes, limitBytes);
             }
 
             if (now - startedAtMs < OUTPUT_WATCHDOG_WARMUP_MS) continue;
@@ -953,6 +1031,7 @@ export function createOutputService(
             // setStatus() below drops the progress entry, so capture any open
             // timestamp-warning burst now to record it on the exit event.
             const openBurst = progress.get(output.id)?.timestampBurst ?? null;
+            if (openBurst) recordBurstEnd(output.id, openBurst, 'ended with ffmpeg exit');
             processes.delete(output.id);
             setStatus(output.id, status, null);
             const exitColor = status === 'failed' ? red : green;

@@ -91,8 +91,10 @@ export interface PipelineLog {
 // diagnostic breadcrumb, but the marker itself exists so it becomes the
 // newest history entry and supersedes any earlier crash — a stop always
 // clears "is there a current error", regardless of whether stderr had
-// anything to say.
-export type OutputErrorKind = 'crash' | 'stopped';
+// anything to say. 'warning' records an FFmpeg warning burst (timestamp or
+// decode errors) on a still-running output: it is informational, never counts
+// as the current error, and has its own, smaller share of the history.
+export type OutputErrorKind = 'crash' | 'stopped' | 'warning';
 
 export interface OutputErrorRecord {
     ts: number;

@@ -431,21 +431,48 @@ describe('Output CRUD', () => {
         );
     });
 
-    test('setOutputLastError keeps the five most recent errors', () => {
+    test('setOutputLastError keeps the ten most recent errors', () => {
         const db = makeDb();
         const p = db.createPipeline();
         const o = db.createOutput({ pipelineId: p.id, name: 'X', url: 'rtmp://x' });
 
-        for (let i = 1; i <= 6; i++) db.setOutputLastError(o.id, `error ${i}`, 'crash');
+        for (let i = 1; i <= 12; i++) db.setOutputLastError(o.id, `error ${i}`, 'crash');
 
         const history = db.getOutputErrorHistory(o.id);
         assert.deepEqual(
             history.map((e) => e.message),
-            ['error 2', 'error 3', 'error 4', 'error 5', 'error 6'],
+            Array.from({ length: 10 }, (_, i) => `error ${i + 3}`),
         );
 
         const got = db.getOutput(o.id);
-        assert.match(got?.lastError ?? '', /error 6$/);
+        assert.match(got?.lastError ?? '', /error 12$/);
+    });
+
+    test('warning entries never supersede a crash and never push crashes out', () => {
+        const db = makeDb();
+        const p = db.createPipeline();
+        const o = db.createOutput({ pipelineId: p.id, name: 'X', url: 'rtmp://x' });
+
+        db.setOutputLastError(o.id, 'ffmpeg crashed', 'crash');
+        db.setOutputLastError(o.id, 'timestamp warnings stopped', 'warning');
+        // A warning after the crash does not clear it as the current error.
+        assert.match(db.getOutput(o.id)?.lastError ?? '', /ffmpeg crashed$/);
+
+        for (let i = 1; i <= 20; i++) db.setOutputLastError(o.id, `warning ${i}`, 'warning');
+        const history = db.getOutputErrorHistory(o.id);
+        assert.equal(history.filter((e) => e.kind === 'warning').length, 5);
+        assert.deepEqual(
+            history.filter((e) => e.kind === 'warning').map((e) => e.message),
+            ['warning 16', 'warning 17', 'warning 18', 'warning 19', 'warning 20'],
+        );
+        assert.ok(
+            history.some((e) => e.message === 'ffmpeg crashed'),
+            'crash is retained',
+        );
+
+        // A stop still supersedes the crash even with warnings after it.
+        db.setOutputLastError(o.id, '', 'stopped');
+        assert.equal(db.getOutput(o.id)?.lastError, null);
     });
 
     test('a stopped entry after a crash supersedes it as the current error', () => {

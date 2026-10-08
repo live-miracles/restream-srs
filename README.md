@@ -657,37 +657,43 @@ logging each line:
 | Warning | First timestamp warning of a kind on an output | `ffmpeg-timestamp-warning` diagnostics event with the FFmpeg line (one per distinct kind per burst, at most 8); the output shows a yellow warning |
 | Summary | Further warnings in the same burst | One `ffmpeg-timestamp-warning-summary` event every 30 s with the suppressed line count per kind, so the volume stays small while the total stays exact |
 | Recovered | No timestamp warning for 30 s | `ffmpeg-timestamp-recovered` event with duration and total count. If the process exits mid-burst, the burst's duration and count are added to the `ffmpeg-exited` event instead |
-| Input alert | Two outputs of one pipeline (or the only running output) are in a timestamp burst at the same time | A single pipeline alert `input-timestamps-unstable` ("Input timestamps are unstable ... Check the encoder.") in addition to the per-output warnings, so the shared cause (the input, not any one output) is visible at pipeline level; logged as `input-timestamps-unstable` / `input-timestamps-recovered` diagnostics events on transition |
 
 Decode-error lines (`non-existing PPS`, `decode_slice_header error`, `corrupt
-input`) go through the same grouping, but do not raise the input alert, since
-they also appear briefly when an output joins mid-GOP.
+input`) go through the same grouping, but are treated as less serious, since
+they also appear briefly when an output joins mid-GOP: FFmpeg probes the
+stream before the next keyframe has delivered SPS/PPS, so for a second or two
+it cannot decode and prints these lines (even in copy mode). This is expected
+and harmless. A decode-only burst shorter than 10 s is treated as this routine
+join noise: it is not shown on the output card and not written to History (the
+diagnostics events still record it). Longer ones are shown and recorded.
+
+Warnings stay output warnings: there is deliberately no pipeline-level "input is
+unstable" alert, and nothing is written to the pipeline **History** (which is for
+input and pipeline issues only), because the cause (encoder, network, relay or the
+output itself) cannot be told from the warnings alone. Each finished burst (a
+timestamp burst, or a decode-only burst of 10 s or more; stopped after 30 s of
+quiet, or ended with the ffmpeg exit) is recorded in the output's own **Error
+History** (the error button on the output) as a `warning` record with the duration,
+warning count and first line. Per output, each class of burst is recorded at most
+once per 10 minutes, and the diagnostics events always carry every burst. That
+history keeps the last 10 records per output, of which at most 5 may be warnings, so
+warnings can never push crashes and stops out; warnings never count as the output's
+current error. Crashes, watchdog restarts and stops are recorded there as before.
+
+The warnings that otherwise only show on the output card are recorded the same way,
+once per episode: high memory usage (70 % or more of the output's limit), an
+unhealthy destination socket, and the FFmpeg media clock running fast. An episode
+logs an `ffmpeg-warning-started` diagnostics event, and when it clears (or the
+process exits) an `ffmpeg-warning-ended` event with the duration plus one `warning`
+record in the output's Error History. These share the 5 warning slots and the
+10-minute-per-kind limit above. A warning that escalates to a watchdog restart
+therefore appears twice: the build-up as a `warning`, then the restart as a crash.
 
 This is detection and reporting only: outputs are not restarted automatically,
 because the offset originates in the incoming stream and restarting would drop
 the destination connections during a live event. The fix is on the encoder side; in the
 observed incident, reconnecting the encoder cleared the condition.
 
-### SRT bonding relay
-
-The relay exists to work around two constraints:
-
-1. **ffmpeg cannot accept bonded SRT group connections.** ffmpeg's SRT handler does not set `SRTO_GROUPCONNECT=1` on its listener socket, so bonded connection attempts from encoders like AJA Bridge Live are rejected at the handshake level.
-
-2. **SRS has no native SRT bonding support.** SRS accepts normal SRT publishers, but it does not accept bonded/redundant SRT groups directly.
-
-**How it is fixed:** `srt-bonding-relay` starts as its own systemd service, listens on `10081` with `SRTO_GROUPCONNECT=1`, accepts each bonded source session, reads its incoming `streamid`, and opens a normal SRT publisher connection to SRS using the same `streamid`. It only connects to SRS after an encoder connects, so SRS's idle-publisher timeout is not triggered by an empty boot-time publisher.
-
-### SRT-input output stalls are recovered by a watchdog
-
-The input is pulled back over its own protocol, so an output on an **SRT input**
-always pulls over SRT. When the destination rejects such a stream (e.g. a wrong
-YouTube stream key) or drops the RTMP connection mid-publish, ffmpeg can get
-stuck instead of exiting. An output on an **RTMP input** (pulled over RTMP)
-usually exits ffmpeg immediately with a clear error (`Error opening output files:
-Input/output error`).
-
-The difference is timing: with RTMP pull, input stream info is available right
 ### Outputs are not restarted when the encoder restarts, and a restart cannot be told apart from a network drop
 
 When an encoder stops and reconnects (for example a manual ffmpeg restart), the
@@ -727,6 +733,26 @@ restart. These are not reliable enough to trigger an output restart on. A more
 dependable basis for any future automatic restart would be the media timeline itself
 (did timestamps jump or reset on reconnect?) rather than guessing the cause.
 
+### SRT bonding relay
+
+The relay exists to work around two constraints:
+
+1. **ffmpeg cannot accept bonded SRT group connections.** ffmpeg's SRT handler does not set `SRTO_GROUPCONNECT=1` on its listener socket, so bonded connection attempts from encoders like AJA Bridge Live are rejected at the handshake level.
+
+2. **SRS has no native SRT bonding support.** SRS accepts normal SRT publishers, but it does not accept bonded/redundant SRT groups directly.
+
+**How it is fixed:** `srt-bonding-relay` starts as its own systemd service, listens on `10081` with `SRTO_GROUPCONNECT=1`, accepts each bonded source session, reads its incoming `streamid`, and opens a normal SRT publisher connection to SRS using the same `streamid`. It only connects to SRS after an encoder connects, so SRS's idle-publisher timeout is not triggered by an empty boot-time publisher.
+
+### SRT-input output stalls are recovered by a watchdog
+
+The input is pulled back over its own protocol, so an output on an **SRT input**
+always pulls over SRT. When the destination rejects such a stream (e.g. a wrong
+YouTube stream key) or drops the RTMP connection mid-publish, ffmpeg can get
+stuck instead of exiting. An output on an **RTMP input** (pulled over RTMP)
+usually exits ffmpeg immediately with a clear error (`Error opening output files:
+Input/output error`).
+
+The difference is timing: with RTMP pull, input stream info is available right
 away, so ffmpeg opens the destination immediately and the rejection surfaces at
 `write_header` time, exiting non-zero. With SRT pull, ffmpeg must first probe the
 MPEG-TS input; by the time it connects, the destination accepts the handshake

@@ -36,7 +36,10 @@ export class OutputLimitError extends Error {
 }
 const PIPELINE_LOG_CAP = 100;
 const LOG_RETENTION_LIMIT = 100;
-const OUTPUT_ERROR_HISTORY_LIMIT = 5;
+const OUTPUT_ERROR_HISTORY_LIMIT = 10;
+// Warning records may take at most this many of those slots, so a run of
+// warnings can never push crashes and stops out of the history.
+const OUTPUT_WARNING_HISTORY_LIMIT = 5;
 
 // Output.lastError's wire format predates the history array and stays
 // "<ts_ms>\n<message>" so existing frontend parsing keeps working. It only
@@ -49,9 +52,24 @@ function toLastErrorString(error: OutputErrorRecord | null): string | null {
     return error ? `${error.ts}\n${error.message}` : null;
 }
 
+// Warnings are informational and do not affect whether a crash is current.
 function currentCrashRecord(history: OutputErrorRecord[]): OutputErrorRecord | null {
-    const latest = history[history.length - 1];
+    const latest = history.filter((e) => e.kind !== 'warning').at(-1);
     return latest && latest.kind === 'crash' ? latest : null;
+}
+
+function trimOutputErrorHistory(history: OutputErrorRecord[]): OutputErrorRecord[] {
+    // Drop the oldest warnings beyond their share, then the oldest of anything
+    // beyond the total.
+    let warningsToDrop =
+        history.filter((e) => e.kind === 'warning').length - OUTPUT_WARNING_HISTORY_LIMIT;
+    return history
+        .filter((e) => {
+            if (e.kind !== 'warning' || warningsToDrop <= 0) return true;
+            warningsToDrop--;
+            return false;
+        })
+        .slice(-OUTPUT_ERROR_HISTORY_LIMIT);
 }
 
 function deriveOutputErrorFields(history: OutputErrorRecord[]): {
@@ -71,13 +89,13 @@ function parseOutputErrorHistory(raw: string | null): OutputErrorRecord[] {
     >;
     // Records written before 'kind' existed have none — they all predate this
     // feature and were all crash/watchdog errors, so default them as such.
-    return parsed
-        .slice(-OUTPUT_ERROR_HISTORY_LIMIT)
-        .map((e) => ({ ts: e.ts, message: e.message, kind: e.kind ?? 'crash' }));
+    return trimOutputErrorHistory(
+        parsed.map((e) => ({ ts: e.ts, message: e.message, kind: e.kind ?? 'crash' })),
+    );
 }
 
 function encodeOutputErrorHistory(history: OutputErrorRecord[]): string {
-    return JSON.stringify(history.slice(-OUTPUT_ERROR_HISTORY_LIMIT));
+    return JSON.stringify(trimOutputErrorHistory(history));
 }
 
 function rowToPipeline(row: Record<string, unknown>): Pipeline {
@@ -654,9 +672,7 @@ export function createDb(dbPath?: string): Db {
 
         setOutputLastError(id: string, message: string, kind: OutputErrorKind): void {
             const existing = loadOutputErrorHistory(id);
-            const next = [...existing, { ts: Date.now(), message, kind }].slice(
-                -OUTPUT_ERROR_HISTORY_LIMIT,
-            );
+            const next = trimOutputErrorHistory([...existing, { ts: Date.now(), message, kind }]);
             stmtSetLastError.run(encodeOutputErrorHistory(next), id);
         },
 

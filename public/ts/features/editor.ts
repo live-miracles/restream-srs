@@ -1324,16 +1324,29 @@ function renderOutputErrorHistory(
             // and text stay neutral so they read as diagnostic info rather
             // than an error. They're written on every stop, so the message
             // is often empty (nothing to add beyond "stopped here").
-            const isCrash = entry.kind !== 'stopped';
-            const badgeClass = isCrash ? 'badge-error' : 'badge-neutral';
+            // 'warning' entries are FFmpeg warning bursts on an output that kept
+            // running — informational, shown in the warning colour.
+            const isCrash = entry.kind === 'crash';
+            const isWarning = entry.kind === 'warning';
+            const badgeClass = isCrash
+                ? 'badge-error'
+                : isWarning
+                  ? 'badge-warning'
+                  : 'badge-neutral';
             const badgeLabel = isCrash
                 ? idx === 0
                     ? 'latest crash'
                     : 'crash'
-                : entry.message
-                  ? 'stopped (stderr)'
-                  : 'stopped';
-            const textClass = isCrash ? 'text-error opacity-80' : 'opacity-60';
+                : isWarning
+                  ? 'warning'
+                  : entry.message
+                    ? 'stopped (stderr)'
+                    : 'stopped';
+            const textClass = isCrash
+                ? 'text-error opacity-80'
+                : isWarning
+                  ? 'text-warning opacity-80'
+                  : 'opacity-60';
             const body = entry.message
                 ? `<pre class="text-xs ${textClass} whitespace-pre-wrap break-all overflow-x-auto">${escapeHtml(entry.message)}</pre>`
                 : '';

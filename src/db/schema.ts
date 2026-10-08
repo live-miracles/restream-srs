@@ -32,8 +32,8 @@ export function setupDatabaseSchema(db: Database.Database): void {
     // single destination (url + audioEncoding). The pull protocol isn't stored
     // — it's derived at runtime from how the input is currently published (SRT
     // input -> SRT pull, RTMP input -> RTMP pull).
-    // last_error stores up to five recent ffmpeg failures as JSON:
-    // [{ts:<ms>,message:<text>}].
+    // last_error stores up to ten recent ffmpeg failures, stops and warnings as
+    // JSON: [{ts:<ms>,message:<text>,kind}].
     db.prepare(
         `CREATE TABLE IF NOT EXISTS outputs (
             id              TEXT PRIMARY KEY,
