@@ -115,11 +115,51 @@ configuration, or diagnostics are high-risk and should be tested for:
 and fresh database, with a fake output ffmpeg that can emit an FFmpeg
 timestamp-discontinuity flood) that does not touch a developer's own
 `npm run dev`; use it to exercise these paths and the dashboard end to end.
-`.claude/skills/run-restream-srs/SKILL.md` documents it.
+`skills/run-restream-srs/SKILL.md` documents it.
 
 Prefer small, reversible changes. Keep the README and this guide aligned when
 capacity, service behavior, supported protocols, or operational guarantees
 change.
+
+## Code map
+
+Navigation only; correct an entry when a change makes it stale, and add one
+only for a new module.
+
+- `src/index.ts` - app bootstrap: middleware, auth gate, route registration,
+  service wiring, graceful shutdown.
+- `src/services/outputs.ts` - one FFmpeg process per output: start/stop/retry,
+  stall/socket/memory watchdogs, timestamp-warning bursts and warning episodes,
+  output Error History writes. `outputSockets.ts` parses `ss` for destination
+  socket health.
+- `src/services/health.ts` - the 5 s poll behind `/api/health`: SRS and relay
+  state, input live/media state (schedules ffprobe via `mediaProbe.ts`),
+  alerts, the per-minute diagnostics snapshot. `inputState.ts` holds per-input
+  readiness/protocol and builds the pull URL outputs read.
+- `src/services/srtRelay.ts` (bonding relay), `translationMixer.ts`
+  (translation output mixer), `preview.ts` (HLS previews with a keepalive TTL),
+  `rejectedPublishes.ts`, `hostProbes.ts`.
+- `src/api/*` - REST routes. `srs.ts` has the SRS `on_publish`/`on_play` hooks
+  and journal log tails; `auth.ts` login/sessions.
+- `src/utils/ffmpeg.ts` builds FFmpeg arguments; `appConfig.ts` reads
+  `restream.json` (watchdog defaults); `diagnostics.ts` is the rotated JSONL
+  writer; `srs*.ts`/`relayConfig.ts` generate and read SRS and relay config.
+- `src/db/` - SQLite schema and access (output Error History lives in
+  `outputs.last_error` as JSON).
+- `public/ts/` - dashboard TypeScript, compiled to untracked `public/js/`.
+- `test/*.test.js` unit tests and `test/integration/` API tests (`npm test`).
+
+## Repo skills
+
+Skills live in `skills/` and are shared with Claude Code and Codex through the
+symlinks `.claude/skills` and `.agents/skills`; add new ones there, not in a
+tool folder.
+
+- `run-restream-srs` - isolated local test stack and dashboard screenshots.
+- `investigate-prod` - read-only inspection of the production VM (logs,
+  diagnostics, deployed version).
+- `write-fail-report` - incident write-ups in `fail-reports/` and the redaction
+  checklist for this public repository.
 
 ## Data model and compatibility
 
@@ -138,6 +178,9 @@ Before committing any change, review the complete diff carefully and
 double-check the implementation for bugs, regressions, unsafe assumptions, and
 unintended changes. Always run the applicable formatting and format-check
 commands for every change, including documentation and UI changes.
+
+Never run `git push` (or force-push, tag, or open/merge a PR) unless the user
+explicitly asks for it in that request; committing stays local.
 
 **This repository is public on GitHub.** Never commit real stream keys, SRT
 passphrases, destination RTMP/SRT URLs (they can embed a third-party
@@ -167,6 +210,8 @@ the API. New features should be covered by meaningful tests that exercise
 their important behavior, failure cases, and relevant integration points. A
 strict test-driven-development workflow is not required, but the test suite
 should remain comprehensive enough to catch regressions and give confidence in
-production behavior. Preserve existing behavior unless the change explicitly
+production behavior. For a bug fix, write a regression test first and
+run it to confirm it fails for the intended reason before fixing the code.
+Preserve existing behavior unless the change explicitly
 requires a behavioral adjustment, and document any known limitation or
 operational tradeoff.
